@@ -137,7 +137,10 @@ mod tests {
 
     use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
     use kernel::{
-        domain::driver::{DriverError, DriverName},
+        domain::{
+            driver::{DriverError, DriverName},
+            io_error::IoError,
+        },
         message::{AudioEvent, DriverEvent, Message},
     };
     use rstest::rstest;
@@ -195,64 +198,43 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_panicking_driver_becomes_died() {
+    #[rstest]
+    #[case::panicking(
+        |_: &Receiver<()>, _: &Sender<Message>, _: &Congestion| panic!("boom"),
+        DriverEvent::Died(DriverError::Panicked)
+    )]
+    #[case::failing(
+        |_: &Receiver<()>, _: &Sender<Message>, _: &Congestion| Err(DriverError::Spawn {
+            error: IoError::Other
+        }),
+        DriverEvent::Died(DriverError::Spawn {
+            error: IoError::Other
+        })
+    )]
+    #[case::returning(
+        |_: &Receiver<()>, _: &Sender<Message>, _: &Congestion| Ok(()),
+        DriverEvent::Stopped
+    )]
+    #[case::closed_cmd_receiver(
+        |cmd_receiver: &Receiver<()>, _: &Sender<Message>, _: &Congestion| {
+            assert!(cmd_receiver.recv().is_err());
+            Ok(())
+        },
+        DriverEvent::Stopped
+    )]
+    fn a_finished_driver_reports_how_it_ended(
+        #[case] run: impl FnOnce(
+            &Receiver<()>,
+            &Sender<Message>,
+            &Congestion,
+        ) -> Result<(), DriverError>
+        + Send
+        + 'static,
+        #[case] expected: DriverEvent,
+    ) {
         let (inbox, reports) = unbounded();
-        let thread = spawn_driver(
-            registry::row(DriverName::Audio),
-            |_cmd_receiver: &Receiver<()>, _: &Sender<Message>, _: &Congestion| {
-                panic!("boom")
-            },
-            &inbox,
-        )
-        .unwrap();
-
-        thread.handle.join().unwrap();
-        let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
-
-        assert_eq!(
-            message,
-            Message::Driver {
-                driver_name: DriverName::Audio,
-                event: DriverEvent::Died(DriverError::Panicked)
-            }
-        );
-    }
-
-    #[test]
-    fn a_returning_driver_becomes_stopped() {
-        let (inbox, reports) = unbounded();
-        let thread = spawn_driver(
-            registry::row(DriverName::Library),
-            |_cmd_receiver: &Receiver<()>, _: &Sender<Message>, _: &Congestion| Ok(()),
-            &inbox,
-        )
-        .unwrap();
-
-        thread.handle.join().unwrap();
-        let message = reports.recv_timeout(RECV_TIMEOUT).unwrap();
-
-        assert_eq!(
-            message,
-            Message::Driver {
-                driver_name: DriverName::Library,
-                event: DriverEvent::Stopped
-            }
-        );
-    }
-
-    #[test]
-    fn a_closed_cmd_receiver_stops_the_driver() {
-        let (inbox, reports) = unbounded();
-        let thread = spawn_driver(
-            registry::row(DriverName::Macos),
-            |cmd_receiver: &Receiver<()>, _: &Sender<Message>, _: &Congestion| {
-                assert!(cmd_receiver.recv().is_err());
-                Ok(())
-            },
-            &inbox,
-        )
-        .unwrap();
+        let thread =
+            spawn_driver(registry::row(DriverName::Audio), run, &inbox).unwrap();
         drop(thread.cmd_sender);
 
         thread.handle.join().unwrap();
@@ -261,8 +243,8 @@ mod tests {
         assert_eq!(
             message,
             Message::Driver {
-                driver_name: DriverName::Macos,
-                event: DriverEvent::Stopped
+                driver_name: DriverName::Audio,
+                event: expected
             }
         );
     }

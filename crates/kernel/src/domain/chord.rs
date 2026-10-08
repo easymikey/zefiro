@@ -11,7 +11,7 @@ pub struct ChordError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Chord {
     Key(Key),
-    Sequence { prefix: ChordPrefix, key: Key },
+    Sequence { chord_prefix: ChordPrefix, key: Key },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,8 +43,8 @@ impl ChordPrefix {
 impl fmt::Display for Chord {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Sequence { prefix, key } => {
-                write!(formatter, "{prefix}")?;
+            Self::Sequence { chord_prefix, key } => {
+                write!(formatter, "{chord_prefix}")?;
                 Self::Key(*key).fmt(formatter)
             }
             Self::Key(Key { code, modifiers }) => {
@@ -98,7 +98,7 @@ impl std::str::FromStr for Chord {
         let modifiers = ctrl.with(shift);
         if spelling == "gg" && modifiers == Modifiers::NONE {
             return Ok(Self::Sequence {
-                prefix: ChordPrefix::G,
+                chord_prefix: ChordPrefix::G,
                 key: ChordPrefix::G.key(),
             });
         }

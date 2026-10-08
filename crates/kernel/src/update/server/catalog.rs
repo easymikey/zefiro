@@ -1,7 +1,7 @@
 use crate::{
     cmd::{Cmd, Effect, RemoteCmd},
     domain::{
-        catalog::{BrowseLevel, Catalog, PAGE_LEAD, Paging},
+        catalog::{Catalog, PAGE_LEAD, Paging},
         cursor::Cursor,
         favorites::Favorites,
         overlay::Overlay,
@@ -9,69 +9,52 @@ use crate::{
         server::{PAGE_ROWS, Page, RemoteError, ServerStatus},
         track::{CatalogRow, TrackSource},
     },
-    message::RemoteEvent,
+    message::{CatalogPage, ServerFavorite},
     update::{machine::Unhandled, overlay::search, server::ServerParts},
 };
 
-pub(crate) fn update(
-    mut server_parts: ServerParts<'_>,
-    event: RemoteEvent,
+pub(crate) fn listed(
+    server_parts: &mut ServerParts<'_>,
+    catalog_page: CatalogPage,
 ) -> Result<Cmd, Unhandled> {
-    match event {
-        RemoteEvent::Listed {
-            server_name,
-            listing,
-            page,
-            catalog_rows,
-            favorites,
-            revision,
-        } => {
-            match revision.freshness(server_parts.revisions.list) {
-                Freshness::Awaited => {}
-                Freshness::Stale => return Err(Unhandled),
-            }
-            let level = server_parts
-                .catalogs
-                .iter_mut()
-                .find(|catalog| catalog.server_name == server_name)
-                .map(Catalog::level)
-                .ok_or(Unhandled)?;
-            if level.listing != listing || level.paging != Paging::Loading(page) {
-                return Err(Unhandled);
-            }
-            stars(server_parts.favorites, &catalog_rows, &favorites);
-            listed(level, page, catalog_rows);
-            Ok(Cmd::none())
-        }
-        RemoteEvent::Found {
-            server_name: _server_name,
-            result,
-            revision,
-        } => found(&mut server_parts, result, revision),
-        RemoteEvent::Starred {
-            server_name,
-            server_track_id,
-            favorite,
-        } => {
-            let track_source = TrackSource::Server {
-                server_name,
-                server_track_id,
-            };
-            if server_parts.favorites.favorite(&track_source) == favorite {
-                return Err(Unhandled);
-            }
-            server_parts.favorites.set(track_source, favorite);
-            Ok(Cmd::none())
-        }
-        RemoteEvent::Connected { .. }
-        | RemoteEvent::Error(_)
-        | RemoteEvent::Fetched { .. }
-        | RemoteEvent::Restored(_)
-        | RemoteEvent::Unsaved(_) => Err(Unhandled),
+    let CatalogPage {
+        server_name,
+        listing,
+        page,
+        catalog_rows,
+        favorites,
+        revision,
+    } = catalog_page;
+    match revision.freshness(server_parts.revisions.list) {
+        Freshness::Awaited => {}
+        Freshness::Stale => return Err(Unhandled),
     }
+    let level = server_parts
+        .catalogs
+        .iter_mut()
+        .find(|catalog| catalog.server_name == server_name)
+        .map(Catalog::level)
+        .ok_or(Unhandled)?;
+    if level.listing != listing || level.paging != Paging::Loading(page) {
+        return Err(Unhandled);
+    }
+    stars(server_parts.favorites, &catalog_rows, &favorites);
+    level.paging = if catalog_rows.len() < PAGE_ROWS {
+        Paging::Complete
+    } else {
+        Paging::Next(Page(page.0 + 1))
+    };
+    if page == Page::default() {
+        level.cursor = Cursor::new(catalog_rows.len());
+        level.catalog_rows = catalog_rows;
+    } else {
+        level.catalog_rows.extend(catalog_rows);
+        level.cursor = level.cursor.resize(level.catalog_rows.len());
+    }
+    Ok(Cmd::none())
 }
 
-fn found(
+pub(crate) fn found(
     server_parts: &mut ServerParts<'_>,
     result: Result<(Vec<CatalogRow>, Favorites), RemoteError>,
     revision: Revision,
@@ -91,19 +74,24 @@ fn found(
     Ok(cmd)
 }
 
-fn listed(level: &mut BrowseLevel, page: Page, catalog_rows: Vec<CatalogRow>) {
-    level.paging = if catalog_rows.len() < PAGE_ROWS {
-        Paging::Complete
-    } else {
-        Paging::Next(Page(page.0 + 1))
+pub(crate) fn starred(
+    server_parts: &mut ServerParts<'_>,
+    server_favorite: ServerFavorite,
+) -> Result<Cmd, Unhandled> {
+    let ServerFavorite {
+        server_name,
+        server_track_id,
+        favorite,
+    } = server_favorite;
+    let track_source = TrackSource::Server {
+        server_name,
+        server_track_id,
     };
-    if page == Page::default() {
-        level.cursor = Cursor::new(catalog_rows.len());
-        level.catalog_rows = catalog_rows;
-    } else {
-        level.catalog_rows.extend(catalog_rows);
-        level.cursor = level.cursor.resize(level.catalog_rows.len());
+    if server_parts.favorites.favorite(&track_source) == favorite {
+        return Err(Unhandled);
     }
+    server_parts.favorites.set(track_source, favorite);
+    Ok(Cmd::none())
 }
 
 pub(crate) fn list(

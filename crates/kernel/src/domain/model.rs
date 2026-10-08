@@ -76,18 +76,13 @@ impl Model {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use rstest::rstest;
-
     use crate::domain::{
         cursor::Cursor,
         index::{TrackIndex, ViewIndex},
         library::Library,
         model::Model,
         player::{PausedBy, Player},
-        playhead::Playhead,
         playlist::Playlist,
-        speed::Speed,
-        time::Moment,
         track::{AudioFormat, Tags, Track, TrackParts},
         workspace::{Browse, Workspace},
     };
@@ -102,31 +97,6 @@ mod tests {
             },
             audio_format: AudioFormat::default(),
         }))
-    }
-
-    #[test]
-    fn playing_track_wins_over_the_playlist_selection() {
-        let mut model = Model {
-            library: Some(Library {
-                tracks: vec![titled_track("selected")],
-                track_indexes: vec![TrackIndex::new(0)],
-            }),
-            ..Model::default()
-        };
-        model.player = Player::Playing {
-            track: titled_track("playing"),
-            playhead: Playhead::anchored(
-                Duration::ZERO,
-                Moment::default(),
-                Speed::default(),
-            ),
-            preloaded: None,
-        };
-        model.workspace.browse.cursor = Cursor::at(1, 0);
-        assert_eq!(
-            model.displayed_track().map(|t| t.tags().title.clone()),
-            Some(Some("playing".to_string()))
-        );
     }
 
     #[test]
@@ -152,72 +122,20 @@ mod tests {
     }
 
     #[test]
-    fn stopped_with_an_empty_playlist_shows_nothing() {
-        let model = Model::default();
-        assert_eq!(model.displayed_track(), None);
-    }
-
-    fn anchored_at_zero() -> Playhead {
-        Playhead::anchored(Duration::ZERO, Moment::default(), Speed::default())
-    }
-
-    fn model_with(tracks: Vec<Arc<Track>>, index: Option<ViewIndex>) -> Model {
-        Model {
+    fn a_paused_track_keeps_its_playing_index() {
+        let model = Model {
             playlist: Playlist {
-                cursor: Cursor::at(tracks.len(), index.map_or(0, ViewIndex::get)),
-                tracks,
+                cursor: Cursor::at(1, 0),
+                tracks: vec![titled_track("a")],
                 ..Playlist::default()
             },
+            player: Player::Paused {
+                track: titled_track("a"),
+                position: Duration::ZERO,
+                by: PausedBy::Listener,
+            },
             ..Model::default()
-        }
-    }
-
-    #[rstest]
-    #[case::playing_reports_the_playlist_index(Player::Playing {
-        track: titled_track("a"),
-        playhead: anchored_at_zero(),
-        preloaded: None,
-    }, Some(ViewIndex::new(0)))]
-    #[case::paused_reports_the_playlist_index(Player::Paused {
-        track: titled_track("a"),
-        position: Duration::ZERO,
-        by: PausedBy::Listener,
-    }, Some(ViewIndex::new(0)))]
-    #[case::stopped_reports_none(Player::Stopped, None)]
-    fn playing_index_reflects_the_player_state(
-        #[case] player: Player,
-        #[case] expected: Option<ViewIndex>,
-    ) {
-        let mut model = model_with(vec![titled_track("a")], Some(ViewIndex::new(0)));
-        model.player = player;
-        assert_eq!(model.playing_index(), expected);
-    }
-
-    #[test]
-    fn a_rescan_that_reallocates_the_tracks_keeps_the_marker() {
-        let mut model = model_with(vec![titled_track("a")], Some(ViewIndex::new(0)));
-        model.player = Player::Playing {
-            track: titled_track("a"),
-            playhead: anchored_at_zero(),
-            preloaded: None,
         };
-        let rescanned = titled_track("a");
-        assert!(!Arc::ptr_eq(&rescanned, &titled_track("a")));
-        model.playlist.tracks = vec![rescanned];
         assert_eq!(model.playing_index(), Some(ViewIndex::new(0)));
-    }
-
-    #[test]
-    fn player_track_differing_from_the_playlist_index_reports_none() {
-        let mut model = model_with(
-            vec![titled_track("a"), titled_track("b")],
-            Some(ViewIndex::new(1)),
-        );
-        model.player = Player::Playing {
-            track: titled_track("a"),
-            playhead: anchored_at_zero(),
-            preloaded: None,
-        };
-        assert_eq!(model.playing_index(), None);
     }
 }

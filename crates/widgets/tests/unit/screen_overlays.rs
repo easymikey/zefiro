@@ -4,6 +4,7 @@ use kernel::domain::{
     setting_row::SettingRow,
 };
 use ratatui::layout::Rect;
+use rstest::rstest;
 use widgets::screen::{frame_layout::FrameLayout, root::ScreenWidget};
 
 use crate::support::fixtures::{SceneSources, model_with_tracks, rendered, track};
@@ -24,53 +25,21 @@ fn frame_with_overlay(overlay: Overlay) -> String {
     .to_string()
 }
 
-#[test]
-fn the_help_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::Help);
-    assert!(text.contains("KEYS"), "got {text:?}");
-}
-
-#[test]
-fn the_search_overlay_is_painted_over_the_full_frame() {
-    let text =
-        frame_with_overlay(Overlay::Search(CursorOver::new(SearchQuery::default(), 0)));
-    assert!(text.contains("SEARCH"), "got {text:?}");
-}
-
-#[test]
-fn the_history_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::History(CursorOver::new((), 0)));
-    assert!(text.contains("HISTORY"), "got {text:?}");
-}
-
-#[test]
-fn the_settings_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::Settings(SettingRow::Theme));
-    assert!(text.contains("SETTINGS"), "got {text:?}");
-}
-
-#[test]
-fn the_confirm_trash_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::ConfirmTrash(track("Moon River")));
-    assert!(text.contains("MOVE TO TRASH?"), "got {text:?}");
-}
-
-#[test]
-fn the_jump_to_time_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::JumpToTime(TextEntry::default()));
-    assert!(text.contains("JUMP TO TIME"), "got {text:?}");
-}
-
-#[test]
-fn the_track_details_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::TrackDetails(track("Moon River")));
-    assert!(text.contains("TRACK INFO"), "got {text:?}");
-}
-
-#[test]
-fn the_music_dir_overlay_is_painted_over_the_full_frame() {
-    let text = frame_with_overlay(Overlay::MusicDir(TextEntry::default()));
-    assert!(text.contains("LIBRARY FOLDER"), "got {text:?}");
+#[rstest]
+#[case::help(Overlay::Help, "KEYS")]
+#[case::search(Overlay::Search(CursorOver::new(SearchQuery::default(), 0)), "SEARCH")]
+#[case::history(Overlay::History(CursorOver::new((), 0)), "HISTORY")]
+#[case::settings(Overlay::Settings(SettingRow::Theme), "SETTINGS")]
+#[case::confirm_trash(Overlay::ConfirmTrash(track("Moon River")), "MOVE TO TRASH?")]
+#[case::jump_to_time(Overlay::JumpToTime(TextEntry::default()), "JUMP TO TIME")]
+#[case::track_details(Overlay::TrackDetails(track("Moon River")), "TRACK INFO")]
+#[case::music_dir(Overlay::MusicDir(TextEntry::default()), "LIBRARY FOLDER")]
+fn an_overlay_is_painted_over_the_full_frame(
+    #[case] overlay: Overlay,
+    #[case] title: &str,
+) {
+    let text = frame_with_overlay(overlay);
+    assert!(text.contains(title), "got {text:?}");
 }
 
 #[test]

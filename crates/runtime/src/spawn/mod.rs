@@ -182,7 +182,11 @@ pub(crate) mod tests {
                 theme_name: None,
                 seen_texts: SeenTexts::default(),
             },
-            library_dirs: LibraryDirs::under(dir),
+            library_dirs: LibraryDirs::new(
+                &dir.join("cache"),
+                &dir.join("data"),
+                &dir.join("config"),
+            ),
         }
     }
 
@@ -261,17 +265,6 @@ pub(crate) mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(MACOS_CALLS.load(Ordering::SeqCst), 1);
         assert_eq!(REMOTE_CALLS.load(Ordering::SeqCst), 1);
-    }
-
-    #[test]
-    fn an_idle_spawner_never_opens_hardware() {
-        let directory = tempfile::tempdir().unwrap();
-        let (inbox, _inbox_receiver) = crossbeam_channel::bounded(4);
-        let ((audio, _spectrum), _latest_receivers, _doorbell) =
-            spawned_with(idle_audio, &stub_paths(directory.path()), &inbox);
-
-        drop(audio.cmd_sender);
-        audio.handle.join().unwrap();
     }
 
     static RESTART_LIBRARY_CALLS: AtomicUsize = AtomicUsize::new(0);

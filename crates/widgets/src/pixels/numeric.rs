@@ -1,43 +1,49 @@
 use num_traits::{Bounded, NumCast, ToPrimitive, Unsigned};
 
-fn saturate<T: Unsigned + Bounded + NumCast>(raw: f32) -> T {
-    if raw.is_nan() || raw <= 0.0 {
+fn saturate<T: Unsigned + Bounded + NumCast>(scalar: f32) -> T {
+    if scalar.is_nan() || scalar <= 0.0 {
         T::zero()
     } else {
-        T::from(raw).unwrap_or_else(T::max_value)
+        T::from(scalar).unwrap_or_else(T::max_value)
     }
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn floor<T: Unsigned + Bounded + NumCast>(raw: f32) -> T {
-    saturate(raw.floor())
+pub(crate) fn floor<T: Unsigned + Bounded + NumCast>(scalar: f32) -> T {
+    saturate(scalar.floor())
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn round<T: Unsigned + Bounded + NumCast>(raw: f32) -> T {
-    saturate(raw.round())
+pub(crate) fn round<T: Unsigned + Bounded + NumCast>(scalar: f32) -> T {
+    saturate(scalar.round())
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn unit_fraction(raw: f64) -> f32 {
-    let clamped = if raw.is_nan() {
+pub(crate) fn ceil<T: Unsigned + Bounded + NumCast>(scalar: f32) -> T {
+    saturate(scalar.ceil())
+}
+
+#[inline]
+#[must_use]
+pub(crate) fn unit_fraction(scalar: f64) -> f32 {
+    let clamped = if scalar.is_nan() {
         0.0
     } else {
-        raw.clamp(0.0, 1.0)
+        scalar.clamp(0.0, 1.0)
     };
     clamped.to_f32().unwrap_or(0.0)
 }
 
 #[inline]
 #[must_use]
-pub(crate) fn channel_byte(raw: f32) -> u8 {
-    if raw.is_nan() {
+pub(crate) fn channel_byte(scalar: f32) -> u8 {
+    if scalar.is_nan() {
         return 0;
     }
-    raw.clamp(0.0, 255.0).to_u8().unwrap_or(u8::MAX)
+    scalar.clamp(0.0, 255.0).to_u8().unwrap_or(u8::MAX)
 }
 
 #[inline]
@@ -54,7 +60,10 @@ pub(crate) fn small_count_u16(count: impl TryInto<u16>) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use crate::pixels::numeric::{
+        ceil,
         channel_byte,
         dimension_f32,
         floor,
@@ -62,24 +71,55 @@ mod tests {
         unit_fraction,
     };
 
-    #[test]
-    fn floor_rounds_down_and_clamps_negatives() {
-        assert_eq!(floor::<u32>(3.9), 3);
-        assert_eq!(floor::<usize>(3.9), 3);
-        assert_eq!(floor::<u32>(-1.5), 0);
+    struct RoundingRow {
+        to_u32: fn(f32) -> u32,
+        to_usize: fn(f32) -> usize,
+        scalar: f32,
+        expected: u8,
     }
 
-    #[test]
-    fn round_rounds_to_nearest_and_clamps_negatives() {
-        assert_eq!(round::<u32>(3.5), 4);
-        assert_eq!(round::<usize>(3.5), 4);
-        assert_eq!(round::<u32>(-1.5), 0);
+    #[rstest]
+    #[case::floor_rounds_down(RoundingRow {
+        to_u32: floor::<u32>,
+        to_usize: floor::<usize>,
+        scalar: 3.9,
+        expected: 3,
+    })]
+    #[case::round_rounds_to_nearest(RoundingRow {
+        to_u32: round::<u32>,
+        to_usize: round::<usize>,
+        scalar: 3.5,
+        expected: 4,
+    })]
+    #[case::ceil_rounds_up(RoundingRow {
+        to_u32: ceil::<u32>,
+        to_usize: ceil::<usize>,
+        scalar: 3.1,
+        expected: 4,
+    })]
+    fn rounding_lands_on_a_whole_count_and_clamps_negatives(
+        #[case] rounding_row: RoundingRow,
+    ) {
+        let RoundingRow {
+            to_u32,
+            to_usize,
+            scalar,
+            expected,
+        } = rounding_row;
+        assert_eq!(to_u32(scalar), u32::from(expected));
+        assert_eq!(to_usize(scalar), usize::from(expected));
+        assert_eq!(to_u32(-1.5), 0);
     }
 
-    #[test]
-    fn floor_saturates_on_nan_and_overflow() {
-        assert_eq!(floor::<u32>(f32::NAN), 0);
-        assert_eq!(floor::<u8>(1000.0), u8::MAX);
+    #[rstest]
+    #[case::floor(floor::<u32>, floor::<u8>)]
+    #[case::ceil(ceil::<u32>, ceil::<u8>)]
+    fn rounding_saturates_on_nan_and_overflow(
+        #[case] to_u32: fn(f32) -> u32,
+        #[case] to_u8: fn(f32) -> u8,
+    ) {
+        assert_eq!(to_u32(f32::NAN), 0);
+        assert_eq!(to_u8(1000.0), u8::MAX);
     }
 
     #[test]

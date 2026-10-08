@@ -428,43 +428,21 @@ impl RemoteError {
     #[must_use]
     pub fn server_name(&self) -> &ServerName {
         match self {
-            Self::Unreachable {
-                server_name,
-                source: _source,
-            }
-            | Self::Keychain {
-                server_name,
-                source: _source,
-            }
-            | Self::Cache {
-                server_name,
-                source: _source,
-            } => server_name,
-            Self::Status {
-                server_name,
-                http_status: _http_status,
-            } => server_name,
-            Self::Api {
-                server_name,
-                api_code: _api_code,
-            } => server_name,
-            Self::Parse {
-                server_name,
-                diagnostic: _diagnostic,
-            } => server_name,
-            Self::Moved { server_name } | Self::NoPassword { server_name } => {
-                server_name
-            }
+            Self::Unreachable { server_name, .. }
+            | Self::Keychain { server_name, .. }
+            | Self::Cache { server_name, .. }
+            | Self::Status { server_name, .. }
+            | Self::Api { server_name, .. }
+            | Self::Parse { server_name, .. }
+            | Self::Moved { server_name }
+            | Self::NoPassword { server_name } => server_name,
         }
     }
 
     #[must_use]
     pub fn is_credentials(&self) -> bool {
         match self {
-            Self::Api {
-                server_name: _server_name,
-                api_code,
-            } => CREDENTIAL_CODES.contains(api_code),
+            Self::Api { api_code, .. } => CREDENTIAL_CODES.contains(api_code),
             Self::NoPassword { .. } => true,
             Self::Unreachable { .. }
             | Self::Status { .. }
@@ -478,10 +456,7 @@ impl RemoteError {
     #[must_use]
     pub fn is_refusal(&self) -> bool {
         match self {
-            Self::Status {
-                server_name: _server_name,
-                http_status,
-            } => (400..500).contains(&http_status.0),
+            Self::Status { http_status, .. } => (400..500).contains(&http_status.0),
             Self::Api { .. } | Self::Parse { .. } => true,
             Self::Unreachable { .. }
             | Self::Moved { .. }

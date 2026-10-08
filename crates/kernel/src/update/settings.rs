@@ -45,9 +45,9 @@ fn step_appearance(
     let ConfigParts {
         themes,
         settings,
-        workspace: _workspace,
-        revisions: _revisions,
-        music_dir: _music_dir,
+        workspace: _,
+        revisions: _,
+        music_dir: _,
     } = config_parts;
     let row = field.row();
     let option = field_choice(field, settings.appearance_settings)

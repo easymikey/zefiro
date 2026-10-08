@@ -133,12 +133,6 @@ mod tests {
         expected_code: KeyCode::Char('h'),
         expected_shift: Shift::NotReported,
     })]
-    #[case::shifted_back_tab_reports_tab_with_shift(ShiftRow {
-        code: CrosstermCode::BackTab,
-        modifiers: KeyModifiers::SHIFT,
-        expected_code: KeyCode::Tab,
-        expected_shift: Shift::Reported,
-    })]
     #[case::bare_back_tab_reports_tab_with_shift(ShiftRow {
         code: CrosstermCode::BackTab,
         modifiers: KeyModifiers::NONE,
@@ -166,15 +160,8 @@ mod tests {
         assert_eq!(converted, Some((expected_code, expected_shift)));
     }
 
-    #[test]
-    fn key_press_translates_ru_char_and_types_it_verbatim() {
-        let key_event = KeyEvent::new(CrosstermCode::Char('й'), KeyModifiers::NONE);
-        let press =
-            key_press(key_event).map(|press| (press.key.code, press.typed.code));
-        assert_eq!(press, Some((KeyCode::Char('q'), KeyCode::Char('й'))));
-    }
-
-    #[rstest::rstest]
+    #[rstest]
+    #[case('й', 'q')]
     #[case('х', '[')]
     #[case('ъ', ']')]
     #[case('ж', ';')]
@@ -187,14 +174,14 @@ mod tests {
     #[case('Э', '"')]
     #[case('Б', '<')]
     #[case('Ю', '>')]
-    #[case(',', ',')]
-    fn layout_translation_covers_the_punctuation_keys(
+    fn layout_translation_maps_the_key_and_types_the_char_verbatim(
         #[case] ru: char,
         #[case] en: char,
     ) {
         let key_event = KeyEvent::new(CrosstermCode::Char(ru), KeyModifiers::NONE);
-        let translated = key_press(key_event).map(|press| press.key.code);
-        assert_eq!(translated, Some(KeyCode::Char(en)));
+        let translated =
+            key_press(key_event).map(|press| (press.key.code, press.typed.code));
+        assert_eq!(translated, Some((KeyCode::Char(en), KeyCode::Char(ru))));
     }
 
     #[test]

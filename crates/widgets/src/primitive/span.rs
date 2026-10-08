@@ -70,68 +70,29 @@ pub(crate) fn width<'a>(spans: &'a [Span<'a>]) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-
     use ratatui::{
         style::{Color, Modifier, Style},
         text::Span,
     };
+    use rstest::rstest;
 
-    use crate::primitive::span::{line, text};
+    use crate::primitive::span::{StyledText, text};
 
-    #[test]
-    fn fg_and_bold_produce_the_expected_span() {
-        let span: Span<'static> = text("hello").fg(Color::Red).bold().into();
-        let expected = Span::styled(
-            "hello",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        );
-        assert_eq!(span, expected);
-    }
-
-    #[test]
-    fn row_of_three_pieces_yields_a_line_with_three_spans() {
-        let line = line([text("a"), text("b").bold(), text("c").fg(Color::Blue)]);
-        assert_eq!(line.spans.len(), 3);
-        assert_eq!(line.spans.first(), Some(&Span::raw("a")));
-        assert_eq!(
-            line.spans.get(1),
-            Some(&Span::styled(
-                "b",
-                Style::default().add_modifier(Modifier::BOLD)
-            ))
-        );
-        assert_eq!(
-            line.spans.get(2),
-            Some(&Span::styled("c", Style::default().fg(Color::Blue)))
-        );
-    }
-
-    #[test]
-    fn borrowed_literal_stays_borrowed() {
-        let piece = text("literal");
-        assert!(matches!(piece.content, Cow::Borrowed(_)));
-    }
-
-    #[test]
-    fn bg_sets_the_background_color() {
-        let span: Span<'static> = text("x").bg(Color::Green).into();
-        assert_eq!(span, Span::styled("x", Style::default().bg(Color::Green)));
-    }
-
-    #[test]
-    fn dim_sets_the_dim_modifier() {
-        let span: Span<'static> = text("x").dim().into();
-        let expected = Style::default().add_modifier(Modifier::DIM);
-        assert_eq!(span, Span::styled("x", expected));
-    }
-
-    #[test]
-    fn style_replaces_the_whole_style() {
-        let replacement = Style::default()
-            .fg(Color::Magenta)
-            .add_modifier(Modifier::BOLD);
-        let span: Span<'static> = text("x").fg(Color::Red).style(replacement).into();
-        assert_eq!(span, Span::styled("x", replacement));
+    #[rstest]
+    #[case::fg_and_bold(
+        text("x").fg(Color::Red).bold(),
+        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+    )]
+    #[case::bg(text("x").bg(Color::Green), Style::default().bg(Color::Green))]
+    #[case::dim(text("x").dim(), Style::default().add_modifier(Modifier::DIM))]
+    #[case::style_replaces_the_whole_style(
+        text("x").fg(Color::Red).bold().style(Style::default().fg(Color::Magenta)),
+        Style::default().fg(Color::Magenta)
+    )]
+    fn each_style_step_produces_the_expected_span(
+        #[case] styled_text: StyledText<'static>,
+        #[case] style: Style,
+    ) {
+        assert_eq!(Span::from(styled_text), Span::styled("x", style));
     }
 }

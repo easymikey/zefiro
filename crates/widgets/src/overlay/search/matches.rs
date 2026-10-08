@@ -75,7 +75,7 @@ pub(crate) fn paint_match_pane(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
         area,
         search_query,
         colors,
-        tracks: _tracks,
+        tracks: _,
         lead,
     } = *list;
     let search_query = match search_query {
@@ -125,8 +125,8 @@ pub(crate) fn paint_match_rows(list: &SearchMatchList<'_>, buffer: &mut Buffer) 
         area,
         search_query,
         colors,
-        tracks: _tracks,
-        lead: _lead,
+        tracks: _,
+        lead: _,
     } = *list;
     if area.height == 0 {
         return;
@@ -192,8 +192,8 @@ fn paint_rows(
         area,
         colors,
         lead,
-        tracks: _tracks,
-        search_query: _search_query,
+        tracks: _,
+        search_query: _,
     } = *list;
     let catalog_rows = &server_query.content.catalog_rows;
     if let Some(placeholder) = placeholder(&server_query.content) {
@@ -247,7 +247,7 @@ fn paint_rows(
 
 fn placeholder(server_query: &ServerQuery) -> Option<&'static str> {
     let ServerQuery {
-        server_name: _server_name,
+        server_name: _,
         input,
         catalog_rows,
         revision,

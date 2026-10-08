@@ -36,9 +36,19 @@ use kernel::{
             UserName,
         },
         time::Moment,
+        toast::TOAST_LIFETIME,
         track::{CatalogRow, Track, TrackSource},
     },
-    message::{BrowseRequest, Message, QueueRequest, RemoteEvent, ServerRequest},
+    message::{
+        BrowseRequest,
+        CatalogPage,
+        Message,
+        QueueRequest,
+        RemoteEvent,
+        ServerFavorite,
+        ServerRequest,
+        Timer,
+    },
     update::machine::Unhandled,
 };
 use rstest::rstest;
@@ -138,66 +148,9 @@ fn tab_goes_from_local_to_the_server_and_back() {
 }
 
 #[test]
-fn an_added_server_gets_its_own_tab() {
-    let mut model = Model::default();
-    let connection = Connection {
-        account: Account {
-            server_name: home(),
-            endpoint: Endpoint::parse("https://music.example.com").unwrap(),
-            user_name: UserName::new("ann").unwrap(),
-        },
-        credential: Credential::Typed(Secret::new("hunter2").unwrap()),
-    };
-    let added = update(
-        &mut model,
-        Message::Server(ServerRequest::Add {
-            connection,
-            origin_server_name: None,
-        }),
-        Moment::default(),
-    );
-    assert!(added.is_ok());
-
-    let answer = browse(&mut model, BrowseRequest::StepCatalog(Direction::Next));
-
-    assert_eq!(answer, Ok(Cmd::none()));
-    assert_eq!(model.catalog_name, CatalogName::Server(home()));
-    assert_eq!(model.catalogs, vec![Catalog::new(home())]);
-}
-
-#[test]
-fn adding_a_known_server_again_starts_its_tab_afresh() {
+fn enter_on_an_album_lists_its_tracks_sets_their_stars_and_backspace_closes_it() {
     let mut model = server_model(online(), 3);
-    let connection = Connection {
-        account: model.servers[0].account.clone(),
-        credential: Credential::Typed(Secret::new("hunter2").unwrap()),
-    };
-
-    let added = update(
-        &mut model,
-        Message::Server(ServerRequest::Add {
-            connection,
-            origin_server_name: None,
-        }),
-        Moment::default(),
-    );
-    assert!(added.is_ok());
-
-    assert_eq!(model.catalogs, vec![Catalog::new(home())]);
-}
-
-#[test]
-fn backspace_at_the_root_is_refused() {
-    let mut model = server_model(online(), 3);
-
-    assert_eq!(browse(&mut model, BrowseRequest::LevelUp), Err(Unhandled));
-    model.catalog_name = CatalogName::Local;
-    assert_eq!(browse(&mut model, BrowseRequest::LevelUp), Err(Unhandled));
-}
-
-#[test]
-fn enter_on_an_album_lists_its_tracks_and_backspace_closes_it() {
-    let mut model = server_model(online(), 3);
+    model.favorites = [server_track("c41d")].into_iter().collect();
     drop(browse(&mut model, BrowseRequest::CursorBy { rows: 1 }));
 
     let answer = browse(&mut model, BrowseRequest::PlaySelected);
@@ -210,6 +163,28 @@ fn enter_on_an_album_lists_its_tracks_and_backspace_closes_it() {
             .as_ref()
             .map(|level| &level.listing),
         Some(&listing)
+    );
+    let revision = model.revisions.list;
+    let starred_tracks = update(
+        &mut model,
+        Message::Remote(RemoteEvent::Listed(CatalogPage {
+            server_name: home(),
+            listing,
+            page: Page(0),
+            catalog_rows: vec![track_row("c41d"), track_row("e7a2")],
+            favorites: [server_track("e7a2")].into_iter().collect(),
+            revision,
+        })),
+        Moment::default(),
+    );
+    assert_eq!(starred_tracks, Ok(Cmd::none()));
+    assert_eq!(
+        model.favorites.favorite(&server_track("c41d")),
+        Favorite::No
+    );
+    assert_eq!(
+        model.favorites.favorite(&server_track("e7a2")),
+        Favorite::Yes
     );
     let closed = browse(&mut model, BrowseRequest::LevelUp);
     assert_eq!(closed, listed(&model, newest(), Page(1)));
@@ -233,35 +208,25 @@ fn a_cursor_into_the_last_rows_asks_the_next_page_once() {
     );
 }
 
-#[test]
-fn backspace_after_enter_during_a_page_load_asks_that_page_again() {
+#[rstest]
+#[case::backspace_after_enter(BrowseRequest::PlaySelected, BrowseRequest::LevelUp)]
+#[case::tab_away_and_back(
+    BrowseRequest::StepCatalog(Direction::Next),
+    BrowseRequest::StepCatalog(Direction::Next)
+)]
+fn coming_back_to_a_loading_album_list_asks_its_page_again(
+    #[case] away_request: BrowseRequest,
+    #[case] back_request: BrowseRequest,
+) {
     let mut model = server_model(online(), PAGE_ROWS);
     drop(browse(&mut model, BrowseRequest::SelectLast));
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
+    drop(browse(&mut model, away_request));
 
-    let answer = browse(&mut model, BrowseRequest::LevelUp);
+    let answer = browse(&mut model, back_request);
 
     assert_eq!(answer, listed(&model, newest(), Page(1)));
-    assert_eq!(model.catalogs[0].album_level, None);
-    assert_eq!(
-        model.catalogs[0].albums_level.paging,
-        Paging::Loading(Page(1))
-    );
-}
-
-#[test]
-fn tab_away_from_a_loading_server_and_back_asks_the_page_again() {
-    let mut model = server_model(online(), PAGE_ROWS);
-    drop(browse(&mut model, BrowseRequest::SelectLast));
-    drop(browse(
-        &mut model,
-        BrowseRequest::StepCatalog(Direction::Next),
-    ));
-
-    let answer = browse(&mut model, BrowseRequest::StepCatalog(Direction::Next));
-
     assert_eq!(model.catalog_name, CatalogName::Server(home()));
-    assert_eq!(answer, listed(&model, newest(), Page(1)));
+    assert_eq!(model.catalogs[0].album_level, None);
     assert_eq!(
         model.catalogs[0].albums_level.paging,
         Paging::Loading(Page(1))
@@ -286,14 +251,14 @@ fn listed_appends_a_later_page_and_completes_on_a_short_one() {
 
     let answer = update(
         &mut model,
-        Message::Remote(RemoteEvent::Listed {
+        Message::Remote(RemoteEvent::Listed(CatalogPage {
             server_name: home(),
             listing: newest(),
             page: Page(1),
             catalog_rows: vec![album_row(PAGE_ROWS)],
             favorites: Favorites::default(),
             revision,
-        }),
+        })),
         Moment::default(),
     );
 
@@ -305,53 +270,29 @@ fn listed_appends_a_later_page_and_completes_on_a_short_one() {
 }
 
 #[test]
-fn a_stale_listed_is_dropped() {
-    let mut model = server_model(online(), 0);
-    drop(browse(&mut model, BrowseRequest::CycleSort));
+fn o_cycles_the_album_order_lists_again_and_drops_a_stale_listed() {
+    let mut model = server_model(online(), 3);
 
-    let answer = update(
+    let sorted = browse(&mut model, BrowseRequest::CycleSort);
+
+    let listing = Listing::Albums(AlbumOrder::Recent);
+    assert_eq!(sorted, listed(&model, listing.clone(), Page(0)));
+    assert_eq!(model.catalogs[0].albums_level.listing, listing);
+    let catalog_rows = model.catalogs[0].albums_level.catalog_rows.clone();
+    let stale = update(
         &mut model,
-        Message::Remote(RemoteEvent::Listed {
+        Message::Remote(RemoteEvent::Listed(CatalogPage {
             server_name: home(),
-            listing: Listing::Albums(AlbumOrder::Recent),
+            listing,
             page: Page(0),
             catalog_rows: vec![album_row(0)],
             favorites: Favorites::default(),
             revision: Revision::default(),
-        }),
+        })),
         Moment::default(),
     );
-
-    assert_eq!(answer, Err(Unhandled));
-    assert!(model.catalogs[0].albums_level.catalog_rows.is_empty());
-}
-
-#[test]
-fn o_cycles_the_album_order_and_lists_again() {
-    let mut model = server_model(online(), 3);
-
-    let answer = browse(&mut model, BrowseRequest::CycleSort);
-
-    let listing = Listing::Albums(AlbumOrder::Recent);
-    assert_eq!(answer, listed(&model, listing.clone(), Page(0)));
-    assert_eq!(model.catalogs[0].albums_level.listing, listing);
-}
-
-#[test]
-fn an_offline_tab_refuses_enter() {
-    let mut model = server_model(
-        ServerStatus::Offline(RemoteError::Unreachable {
-            server_name: home(),
-            source: IoError::Other,
-        }),
-        3,
-    );
-
-    assert_eq!(
-        browse(&mut model, BrowseRequest::PlaySelected),
-        Err(Unhandled)
-    );
-    assert_eq!(model.catalogs[0].album_level, None);
+    assert_eq!(stale, Err(Unhandled));
+    assert_eq!(model.catalogs[0].albums_level.catalog_rows, catalog_rows);
 }
 
 #[test]
@@ -422,72 +363,102 @@ fn request(model: &mut Model, server_request: ServerRequest) -> Result<Cmd, Unha
     update(model, Message::Server(server_request), Moment::default())
 }
 
-#[test]
-fn add_gives_connecting_and_a_connect() {
+struct AddRow {
+    model: Model,
+    connection: Connection,
+    servers: Vec<Server>,
+    catalogs: Vec<Catalog>,
+    toasts: Vec<String>,
+    toast_cmd: Cmd,
+}
+
+fn add_beside_a_known_server() -> AddRow {
+    let model = server_model(ServerStatus::Connecting, 0);
     let added = connection("https://music.example.com", "ann");
-    let mut model = server_model(ServerStatus::Connecting, 0);
-    let known = model.servers[0].clone();
-
-    let answer = request(
-        &mut model,
-        ServerRequest::Add {
-            connection: added.clone(),
-            origin_server_name: None,
-        },
-    );
-
-    assert_eq!(
-        answer,
-        connect_and_save(
-            added.clone(),
-            vec![known.account.clone(), added.account.clone()]
-        )
-    );
-    assert_eq!(model.servers, vec![known, connecting(&added)]);
+    AddRow {
+        servers: vec![model.servers[0].clone(), connecting(&added)],
+        catalogs: vec![
+            model.catalogs[0].clone(),
+            Catalog::new(added.account.server_name.clone()),
+        ],
+        toasts: Vec::new(),
+        toast_cmd: Cmd::none(),
+        connection: added,
+        model,
+    }
 }
 
-#[test]
-fn add_of_a_known_host_replaces_it_and_connects_again() {
-    let known = connection("https://music.example.com", "ann");
-    let added = connection("https://music.example.com/navidrome", "bob");
-    let mut model = Model {
-        servers: vec![Server {
-            account: known.account,
-            server_status: online(),
-        }],
-        ..Model::default()
+fn add_of_a_known_name() -> AddRow {
+    let connection = Connection {
+        account: Account {
+            server_name: home(),
+            endpoint: Endpoint::parse("https://music.example.com/navidrome").unwrap(),
+            user_name: UserName::new("bob").unwrap(),
+        },
+        credential: Credential::Typed(Secret::new("hunter2").unwrap()),
     };
+    AddRow {
+        model: server_model(online(), 3),
+        servers: vec![connecting(&connection)],
+        catalogs: vec![Catalog::new(home())],
+        toasts: Vec::new(),
+        toast_cmd: Cmd::none(),
+        connection,
+    }
+}
+
+fn add_of_an_http_link() -> AddRow {
+    let added = connection("http://10.0.0.2:4533", "ann");
+    AddRow {
+        model: Model::default(),
+        servers: vec![connecting(&added)],
+        catalogs: vec![Catalog::new(added.account.server_name.clone())],
+        toasts: vec![
+            "10.0.0.2 uses http://, so its sign-in travels unencrypted".to_owned(),
+        ],
+        toast_cmd: Cmd::from_iter([
+            Effect::Animate(Cue::ToastRaised),
+            Effect::After {
+                delay: TOAST_LIFETIME,
+                timer: Timer::Toast(Revision::default().next()),
+            },
+        ]),
+        connection: added,
+    }
+}
+
+#[rstest]
+#[case::beside_a_known_server(add_beside_a_known_server())]
+#[case::of_a_known_name(add_of_a_known_name())]
+#[case::of_an_http_link(add_of_an_http_link())]
+fn add_gives_connecting_a_connect_and_a_fresh_tab(#[case] row: AddRow) {
+    let AddRow {
+        mut model,
+        connection,
+        servers,
+        catalogs,
+        toasts,
+        toast_cmd,
+    } = row;
+    let accounts = servers
+        .iter()
+        .map(|server| server.account.clone())
+        .collect();
 
     let answer = request(
         &mut model,
         ServerRequest::Add {
-            connection: added.clone(),
+            connection: connection.clone(),
             origin_server_name: None,
         },
     );
 
     assert_eq!(
         answer,
-        connect_and_save(added.clone(), vec![added.account.clone()])
+        connect_and_save(connection, accounts).map(|cmd| cmd.then(toast_cmd))
     );
-    assert_eq!(model.servers, vec![connecting(&added)]);
-}
-
-#[test]
-fn add_of_an_http_link_warns_that_the_sign_in_is_unencrypted() {
-    let added = connection("http://10.0.0.2:4533", "ann");
-    let mut model = Model::default();
-
-    let answer = request(
-        &mut model,
-        ServerRequest::Add {
-            connection: added.clone(),
-            origin_server_name: None,
-        },
-    );
-
-    assert!(answer.is_ok());
-    assert_eq!(model.servers, vec![connecting(&added)]);
+    assert_eq!(model.servers, servers);
+    assert_eq!(model.catalogs, catalogs);
     assert_eq!(
         model
             .workspace
@@ -495,19 +466,13 @@ fn add_of_an_http_link_warns_that_the_sign_in_is_unencrypted() {
             .iter()
             .map(|toast| toast.title.clone())
             .collect::<Vec<_>>(),
-        vec!["10.0.0.2 uses http://, so its sign-in travels unencrypted".to_owned()]
+        toasts
     );
 }
 
 #[test]
 fn reconnect_gives_connecting_and_a_connect_with_the_stored_password() {
-    let mut model = server_model(
-        ServerStatus::Offline(RemoteError::Unreachable {
-            server_name: home(),
-            source: IoError::Other,
-        }),
-        0,
-    );
+    let mut model = offline_model();
     let account = model.servers[0].account.clone();
 
     let answer = request(&mut model, ServerRequest::Reconnect(home()));
@@ -522,10 +487,14 @@ fn reconnect_gives_connecting_and_a_connect_with_the_stored_password() {
     assert_eq!(model.servers[0].server_status, ServerStatus::Connecting);
 }
 
-#[test]
-fn remove_drops_the_server_and_its_tab() {
+#[rstest]
+#[case::from_the_local_tab(CatalogName::Local)]
+#[case::from_its_own_tab(CatalogName::Server(home()))]
+fn remove_drops_the_server_and_its_tab_and_leaves_the_local_tab_open(
+    #[case] catalog_name: CatalogName,
+) {
     let mut model = server_model(online(), 3);
-    model.catalog_name = CatalogName::Local;
+    model.catalog_name = catalog_name;
     let account = model.servers[0].account.clone();
 
     let answer = request(&mut model, ServerRequest::Remove(home()));
@@ -533,33 +502,7 @@ fn remove_drops_the_server_and_its_tab() {
     assert_eq!(answer, removed(account));
     assert_eq!(model.servers, Vec::new());
     assert_eq!(model.catalogs, Vec::new());
-}
-
-#[test]
-fn remove_of_the_server_whose_tab_is_open_returns_to_the_local_tab() {
-    let mut model = server_model(online(), 3);
-    let account = model.servers[0].account.clone();
-
-    let answer = request(&mut model, ServerRequest::Remove(home()));
-
-    assert_eq!(answer, removed(account));
     assert_eq!(model.catalog_name, CatalogName::Local);
-    assert_eq!(model.catalogs, Vec::new());
-}
-
-#[rstest]
-#[case::reconnect(ServerRequest::Reconnect(ServerName::new("gone")))]
-#[case::remove(ServerRequest::Remove(ServerName::new("gone")))]
-fn a_request_for_an_unknown_server_is_refused_and_changes_nothing(
-    #[case] server_request: ServerRequest,
-) {
-    let mut model = server_model(ServerStatus::Connecting, 3);
-    let servers = model.servers.clone();
-    let catalogs = model.catalogs.clone();
-
-    assert_eq!(request(&mut model, server_request), Err(Unhandled));
-    assert_eq!(model.servers, servers);
-    assert_eq!(model.catalogs, catalogs);
 }
 
 fn server_track(id: &str) -> TrackSource {
@@ -582,11 +525,11 @@ fn album_model(ids: &[&str]) -> Model {
 }
 
 fn starred(id: &str, favorite: Favorite) -> Message {
-    Message::Remote(RemoteEvent::Starred {
+    Message::Remote(RemoteEvent::Starred(ServerFavorite {
         server_name: home(),
         server_track_id: ServerTrackId::new(id),
         favorite,
-    })
+    }))
 }
 
 #[test]
@@ -611,23 +554,6 @@ fn f_on_a_server_track_flips_its_star_at_once_and_orders_the_star() {
         model.favorites.favorite(&server_track("c41d")),
         Favorite::Yes
     );
-}
-
-#[test]
-fn f_on_an_album_row_or_an_offline_tab_is_refused() {
-    let mut albums = server_model(online(), 1);
-    let mut offline = album_model(&["c41d"]);
-    offline.servers[0].server_status = ServerStatus::Connecting;
-
-    assert_eq!(
-        browse(&mut albums, BrowseRequest::ToggleFavorite),
-        Err(Unhandled)
-    );
-    assert_eq!(
-        browse(&mut offline, BrowseRequest::ToggleFavorite),
-        Err(Unhandled)
-    );
-    assert_eq!(offline.favorites, Favorites::default());
 }
 
 #[test]
@@ -662,37 +588,6 @@ fn a_starred_answer_sets_the_star_the_server_holds_and_a_failed_star_toasts() {
             .map(|toast| toast.title.clone())
             .collect::<Vec<_>>(),
         vec![remote_error.to_string()]
-    );
-}
-
-#[test]
-fn a_listed_album_sets_each_tracks_star_from_the_server() {
-    let mut model = server_model(online(), 1);
-    model.favorites = [server_track("c41d")].into_iter().collect();
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-    let revision = model.revisions.list;
-
-    let answer = update(
-        &mut model,
-        Message::Remote(RemoteEvent::Listed {
-            server_name: home(),
-            listing: Listing::Album(AlbumId::new("al-0")),
-            page: Page(0),
-            catalog_rows: vec![track_row("c41d"), track_row("e7a2")],
-            favorites: [server_track("e7a2")].into_iter().collect(),
-            revision,
-        }),
-        Moment::default(),
-    );
-
-    assert_eq!(answer, Ok(Cmd::none()));
-    assert_eq!(
-        model.favorites.favorite(&server_track("c41d")),
-        Favorite::No
-    );
-    assert_eq!(
-        model.favorites.favorite(&server_track("e7a2")),
-        Favorite::Yes
     );
 }
 
@@ -746,6 +641,28 @@ fn a_found_track_shows_the_star_the_server_holds_only_for_the_current_revision()
     );
 }
 
+fn offline_model() -> Model {
+    server_model(
+        ServerStatus::Offline(RemoteError::Unreachable {
+            server_name: home(),
+            source: IoError::Other,
+        }),
+        3,
+    )
+}
+
+fn local_tab_model() -> Model {
+    let mut model = server_model(online(), 3);
+    model.catalog_name = CatalogName::Local;
+    model
+}
+
+fn connecting_album_model() -> Model {
+    let mut model = album_model(&["c41d"]);
+    model.servers[0].server_status = ServerStatus::Connecting;
+    model
+}
+
 fn local_playlist_behind_a_server_tab() -> Model {
     let tab = server_model(online(), 3);
     let mut model = queued(moon_library_scanned(), &[0, 1, 2]);
@@ -757,20 +674,61 @@ fn local_playlist_behind_a_server_tab() -> Model {
 }
 
 #[rstest]
-#[case::dequeue(Message::Queue(QueueRequest::Dequeue))]
-#[case::move_up(Message::Queue(QueueRequest::Move(Direction::Previous)))]
-#[case::move_down(Message::Queue(QueueRequest::Move(Direction::Next)))]
-#[case::save_playlist(Message::Browse(BrowseRequest::SavePlaylist(
-    PlaylistFileName::new("mix").unwrap()
-)))]
-#[case::trash(Message::Browse(BrowseRequest::Trash(TrackSource::Local(
-    PathBuf::from("/m/1.flac")
-))))]
-#[case::rescan(Message::Browse(BrowseRequest::Rescan))]
-fn a_server_tab_refuses_the_local_playlist_keys_and_changes_nothing(
+#[case::level_up_at_the_root(
+    server_model(online(), 3),
+    Message::Browse(BrowseRequest::LevelUp)
+)]
+#[case::level_up_in_the_local_tab(
+    local_tab_model(),
+    Message::Browse(BrowseRequest::LevelUp)
+)]
+#[case::enter_offline(offline_model(), Message::Browse(BrowseRequest::PlaySelected))]
+#[case::favorite_on_an_album_row(
+    server_model(online(), 1),
+    Message::Browse(BrowseRequest::ToggleFavorite)
+)]
+#[case::favorite_while_connecting(
+    connecting_album_model(),
+    Message::Browse(BrowseRequest::ToggleFavorite)
+)]
+#[case::reconnect_an_unknown_server(
+    server_model(ServerStatus::Connecting, 3),
+    Message::Server(ServerRequest::Reconnect(ServerName::new("gone")))
+)]
+#[case::remove_an_unknown_server(
+    server_model(ServerStatus::Connecting, 3),
+    Message::Server(ServerRequest::Remove(ServerName::new("gone")))
+)]
+#[case::dequeue(
+    local_playlist_behind_a_server_tab(),
+    Message::Queue(QueueRequest::Dequeue)
+)]
+#[case::move_up(
+    local_playlist_behind_a_server_tab(),
+    Message::Queue(QueueRequest::Move(Direction::Previous))
+)]
+#[case::move_down(
+    local_playlist_behind_a_server_tab(),
+    Message::Queue(QueueRequest::Move(Direction::Next))
+)]
+#[case::save_playlist(
+    local_playlist_behind_a_server_tab(),
+    Message::Browse(BrowseRequest::SavePlaylist(PlaylistFileName::new("mix").unwrap()))
+)]
+#[case::trash(
+    local_playlist_behind_a_server_tab(),
+    Message::Browse(BrowseRequest::Trash(TrackSource::Local(PathBuf::from(
+        "/m/1.flac"
+    ))))
+)]
+#[case::rescan(
+    local_playlist_behind_a_server_tab(),
+    Message::Browse(BrowseRequest::Rescan)
+)]
+fn a_request_the_server_tab_cannot_take_is_refused_and_changes_nothing(
+    #[case] mut model: Model,
     #[case] message: Message,
 ) {
-    let mut model = local_playlist_behind_a_server_tab();
     let before = model.clone();
 
     assert_eq!(

@@ -10,7 +10,7 @@ use fast_image_resize::{
 use image::RgbaImage;
 use thiserror::Error;
 
-use crate::pixels::numeric::{dimension_f32, floor};
+use crate::pixels::numeric::{dimension_f32, round};
 
 pub(crate) fn cover_crop_resize(
     image: &RgbaImage,
@@ -30,15 +30,13 @@ pub(crate) fn cover_crop_resize(
     let source_aspect = dimension_f32(source_width) / dimension_f32(source_height);
     let (crop_width, crop_height) = if source_aspect > target_aspect {
         let crop_height = source_height;
-        let crop_width =
-            floor::<u32>((dimension_f32(source_height) * target_aspect).round())
-                .clamp(1, source_width);
+        let crop_width = round::<u32>(dimension_f32(source_height) * target_aspect)
+            .clamp(1, source_width);
         (crop_width, crop_height)
     } else {
         let crop_width = source_width;
-        let crop_height =
-            floor::<u32>((dimension_f32(source_width) / target_aspect).round())
-                .clamp(1, source_height);
+        let crop_height = round::<u32>(dimension_f32(source_width) / target_aspect)
+            .clamp(1, source_height);
         (crop_width, crop_height)
     };
     let crop = CropBox {
@@ -95,9 +93,78 @@ pub(crate) fn resample(
 #[cfg(test)]
 mod tests {
     use fast_image_resize::CropBox;
-    use image::RgbaImage;
+    use image::{Rgba, RgbaImage};
+    use rstest::rstest;
 
-    use crate::pixels::resample::{ResampleError, resample};
+    use crate::pixels::resample::{ResampleError, cover_crop_resize, resample};
+
+    struct CropRow {
+        source_width: u32,
+        source_height: u32,
+        target_width: u32,
+        target_height: u32,
+        crop: CropBox,
+    }
+
+    fn gradient(width: u32, height: u32) -> RgbaImage {
+        RgbaImage::from_fn(width, height, |x, y| {
+            Rgba([
+                u8::try_from(x * 25).unwrap_or(u8::MAX),
+                u8::try_from(y * 25).unwrap_or(u8::MAX),
+                u8::try_from((x + y) * 12).unwrap_or(u8::MAX),
+                255,
+            ])
+        })
+    }
+
+    #[rstest]
+    #[case::a_wider_source_loses_its_side_columns(CropRow {
+        source_width: 6,
+        source_height: 4,
+        target_width: 4,
+        target_height: 4,
+        crop: CropBox { left: 1.0, top: 0.0, width: 4.0, height: 4.0 },
+    })]
+    #[case::a_taller_source_loses_its_top_and_bottom_rows(CropRow {
+        source_width: 4,
+        source_height: 6,
+        target_width: 4,
+        target_height: 4,
+        crop: CropBox { left: 0.0, top: 1.0, width: 4.0, height: 4.0 },
+    })]
+    #[case::a_wide_target_keeps_the_full_height_at_its_aspect(CropRow {
+        source_width: 9,
+        source_height: 2,
+        target_width: 3,
+        target_height: 1,
+        crop: CropBox { left: 1.0, top: 0.0, width: 6.0, height: 2.0 },
+    })]
+    #[case::a_tall_target_keeps_the_full_width_at_its_aspect(CropRow {
+        source_width: 2,
+        source_height: 9,
+        target_width: 1,
+        target_height: 3,
+        crop: CropBox { left: 0.0, top: 1.0, width: 2.0, height: 6.0 },
+    })]
+    fn cover_crop_resize_resamples_the_centred_crop_of_the_target_aspect(
+        #[case] row: CropRow,
+    ) {
+        let CropRow {
+            source_width,
+            source_height,
+            target_width,
+            target_height,
+            crop,
+        } = row;
+        let source = gradient(source_width, source_height);
+
+        let resized = cover_crop_resize(&source, target_width, target_height);
+
+        assert_eq!(
+            Some(resized),
+            resample(&source, crop, (target_width, target_height)).ok()
+        );
+    }
 
     #[test]
     fn resample_of_a_crop_beyond_the_source_answers_the_resize_error() {

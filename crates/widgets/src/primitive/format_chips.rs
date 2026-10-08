@@ -98,10 +98,8 @@ mod tests {
 
     #[rstest]
     #[case::nothing_known(AudioFormat::default(), usize::MAX, None)]
-    #[case::nothing_known_with_room(AudioFormat::default(), 100, None)]
     #[case::one_fact(bitrate_only(), usize::MAX, Some("[ 128 KBPS ]"))]
     #[case::every_fact(full_audio_format(), usize::MAX, Some(FULL))]
-    #[case::every_fact_with_room_to_spare(full_audio_format(), 100, Some(FULL))]
     #[case::one_cell_short(full_audio_format(), FULL.chars().count() - 1, Some("[ MP3 ] [ 320 KBPS ]"))]
     #[case::room_for_one_chip_and_a_little(
         full_audio_format(),

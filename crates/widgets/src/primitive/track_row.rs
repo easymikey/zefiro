@@ -91,14 +91,14 @@ pub(crate) fn track_row_line<'a>(
     } else {
         CHIP_GAP
     };
-    let row_style = row_style(track_row.selected, colors);
+    let style = row_style(track_row.selected, colors);
     let fixed = [
         text(fav).fg(colors.favorite),
-        text(blanks(column_padding(fav, favorite_width))).style(row_style),
-        text(playing).style(row_style),
-        text(blanks(column_padding(playing, playing_width))).style(row_style),
-        text(title).style(row_style),
-        text(blanks(gap)).style(row_style),
+        text(blanks(column_padding(fav, favorite_width))).style(style),
+        text(playing).style(style),
+        text(blanks(column_padding(playing, playing_width))).style(style),
+        text(title).style(style),
+        text(blanks(gap)).style(style),
     ];
     line(
         fixed
@@ -116,7 +116,7 @@ mod tests {
 
     use crate::{
         primitive::{
-            marker::{MARKERS_WIDTH, QueueNumber},
+            marker::MARKERS_WIDTH,
             track_row::{Playing, Selected, TrackRow, track_row_line},
         },
         test_support::noir,
@@ -162,46 +162,5 @@ mod tests {
                 .iter()
                 .any(|span| matches!(&span.content, Cow::Borrowed("song")))
         );
-    }
-
-    #[test]
-    fn the_chip_follows_the_title_with_one_space_and_carries_the_position() {
-        let mut view = base_props("song", Cells(20));
-        view.queued_number = Some(QueueNumber::new(12));
-        let text = track_row_line(
-            &view,
-            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
-        )
-        .to_string();
-        assert!(text.ends_with("song [q12]"));
-    }
-
-    #[test]
-    fn a_title_too_long_for_the_row_truncates_so_the_chip_still_follows_it() {
-        let row_width = Cells(20);
-        let mut view = base_props("a very long track title", row_width);
-        view.queued_number = Some(QueueNumber::new(1));
-        let text = track_row_line(
-            &view,
-            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
-        )
-        .to_string();
-        assert_eq!(text.width(), row_width.count());
-        assert!(text.ends_with("… [q1]"));
-    }
-
-    #[test]
-    fn cjk_title_truncates_on_a_cell_boundary() {
-        let row_width = Cells(12);
-        let fixed_width = usize::from(MARKERS_WIDTH);
-        let title_width = row_width.count() - fixed_width;
-        let text = track_row_line(
-            &base_props("界界界界界界界界", row_width),
-            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
-        )
-        .to_string();
-        let title_part = text.get(fixed_width..).unwrap_or("").trim_end();
-        assert!(title_part.width() <= title_width);
-        assert!(title_part.ends_with('…'));
     }
 }

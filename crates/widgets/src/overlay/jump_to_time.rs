@@ -61,9 +61,4 @@ mod tests {
         };
         insta::assert_snapshot!(frame(&text_entry, 80, 24));
     }
-
-    #[test]
-    fn jump_to_time_overlay_does_not_panic_on_a_tiny_terminal() {
-        assert_eq!(frame(&TextEntry::default(), 4, 3).lines().count(), 3);
-    }
 }

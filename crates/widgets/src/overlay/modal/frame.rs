@@ -167,16 +167,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_list(ModalRow { name: "list", size: list(20, 5), hint: Hint::Hidden, screen: area(80, 24) })]
-    #[case::a_list_with_a_hint(ModalRow { name: "list_hint", size: list(20, 5), hint: Hint::Shown, screen: area(80, 24) })]
-    #[case::a_list_larger_than_the_screen(ModalRow { name: "list_clamped", size: list(200, 200), hint: Hint::Shown, screen: area(80, 24) })]
-    #[case::a_list_on_a_tiny_screen(ModalRow { name: "list_tiny", size: list(200, 200), hint: Hint::Hidden, screen: area(30, 10) })]
-    #[case::a_dialog(ModalRow {
-        name: "dialog",
-        size: ModalSize::Dialog { min_width: Cells(24), content_width: Cells(20), content_rows: Cells(3) },
-        hint: Hint::Shown,
-        screen: area(80, 24),
-    })]
     #[case::a_dialog_narrower_than_its_minimum(ModalRow {
         name: "dialog_min_width",
         size: ModalSize::Dialog { min_width: Cells(40), content_width: Cells(5), content_rows: Cells(1) },

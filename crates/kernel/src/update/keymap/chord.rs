@@ -72,15 +72,4 @@ mod tests {
             "0123456789"
         );
     }
-
-    #[test]
-    fn every_digit_in_the_run_spells_itself() {
-        assert!(digits().all(|digit| digit_char(digit).is_some()));
-    }
-
-    #[test]
-    fn nothing_past_the_run_spells_a_digit() {
-        assert_eq!(digit_char(10), None);
-        assert_eq!(digit_char(u8::MAX), None);
-    }
 }

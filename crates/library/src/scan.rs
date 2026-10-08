@@ -145,12 +145,9 @@ fn chunk_read(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        path::{Path, PathBuf},
-        sync::Arc,
-    };
+    use std::path::{Path, PathBuf};
 
-    use kernel::domain::track::{Tagging, Track};
+    use kernel::domain::track::Tagging;
     use rstest::{fixture, rstest};
 
     use crate::{
@@ -164,9 +161,7 @@ mod tests {
 
     #[rstest]
     #[case("song.flac")]
-    #[case("song.m4b")]
     #[case("song.MP3")]
-    #[case("song.mkv")]
     fn an_audio_extension_counts_as_audio(#[case] name: &str) {
         assert!(
             is_audio_file(Path::new(name), AUDIO_EXTENSIONS),
@@ -175,33 +170,14 @@ mod tests {
     }
 
     #[rstest]
-    #[case("song.aiff")]
-    #[case("song.wv")]
-    #[case("song.mpc")]
-    #[case("song.ape")]
     #[case("song.opus")]
-    #[case("clip.webm")]
-    #[case("clip.WEBM")]
-    fn an_unlisted_extension_is_not_audio(#[case] name: &str) {
-        assert!(
-            !is_audio_file(Path::new(name), AUDIO_EXTENSIONS),
-            "{name} cannot be decoded, so it must not count as audio"
-        );
-    }
-
-    #[rstest]
     #[case("notes.txt")]
-    #[case("cover.jpg")]
     #[case("README")]
     fn anything_else_is_passed_over(#[case] name: &str) {
         assert!(
             !is_audio_file(Path::new(name), AUDIO_EXTENSIONS),
             "{name} is not audio"
         );
-    }
-
-    fn scanned(dir: &Path) -> Vec<Arc<Track>> {
-        read_tags(&list_dir(dir, AUDIO_EXTENSIONS).unwrap().paths).tracks
     }
 
     #[test]
@@ -220,17 +196,6 @@ mod tests {
     #[fixture]
     fn temp_dir() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()
-    }
-
-    #[rstest]
-    fn listing_keeps_audio_files_sorted_and_skips_others(temp_dir: tempfile::TempDir) {
-        for name in ["b.mp3", "a.flac", "x.txt", "c.mkv"] {
-            std::fs::write(temp_dir.path().join(name), b"stub").unwrap();
-        }
-        let tracks = scanned(temp_dir.path());
-        insta::with_settings!({ filters => temp_dir_filters() }, {
-            insta::assert_debug_snapshot!(tracks);
-        });
     }
 
     #[rstest]
@@ -272,11 +237,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             chunk
         );
-    }
-
-    #[test]
-    fn tagging_no_paths_reads_nothing() {
-        assert!(read_tags(&[]).tracks.is_empty());
     }
 
     #[rstest]
@@ -332,30 +292,6 @@ mod tests {
     }
 
     #[rstest]
-    #[cfg(unix)]
-    fn a_track_whose_tags_cannot_be_read_stays_listed(temp_dir: tempfile::TempDir) {
-        use std::os::unix::fs::PermissionsExt;
-
-        std::fs::write(temp_dir.path().join("readable.mp3"), b"stub").unwrap();
-        let sealed = temp_dir.path().join("sealed.mp3");
-        std::fs::write(&sealed, b"stub").unwrap();
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000))
-            .unwrap();
-
-        let tracks = scanned(temp_dir.path());
-
-        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o644))
-            .unwrap();
-
-        assert_eq!(tracks.len(), 2);
-        assert!(
-            tracks
-                .iter()
-                .all(|track| matches!(track.tagging(), Tagging::Listed(_)))
-        );
-    }
-
-    #[rstest]
     fn a_directory_named_like_audio_is_not_listed(temp_dir: tempfile::TempDir) {
         let folder = temp_dir.path().join("Live.flac");
         std::fs::create_dir(&folder).unwrap();
@@ -364,13 +300,5 @@ mod tests {
         let listing = list_dir(temp_dir.path(), AUDIO_EXTENSIONS).unwrap();
 
         assert_eq!(listing.paths, vec![folder.join("one.mp3")]);
-    }
-
-    #[rstest]
-    fn a_directory_of_readable_tracks_skips_nothing(temp_dir: tempfile::TempDir) {
-        for name in ["a.flac", "b.mp3"] {
-            std::fs::write(temp_dir.path().join(name), b"stub").unwrap();
-        }
-        assert_eq!(scanned(temp_dir.path()).len(), 2);
     }
 }

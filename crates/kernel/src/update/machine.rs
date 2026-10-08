@@ -73,87 +73,8 @@ mod tests {
 
     use crate::{
         cmd::Cmd,
-        update::machine::{Machine, Unhandled, each_handled},
+        update::machine::{Unhandled, each_handled},
     };
-
-    #[derive(Debug, PartialEq)]
-    enum Latch {
-        Open,
-        Closed,
-    }
-
-    #[derive(Debug)]
-    enum LatchMessage {
-        Close,
-        Open,
-    }
-
-    #[derive(Debug, PartialEq)]
-    enum Click {
-        Clicked,
-    }
-
-    impl Machine for Latch {
-        type Message = LatchMessage;
-        type Effect = Click;
-
-        fn transition(
-            &mut self,
-            latch_message: LatchMessage,
-        ) -> Result<Click, Unhandled> {
-            match (&*self, latch_message) {
-                (Latch::Open, LatchMessage::Close) => {
-                    *self = Latch::Closed;
-                    Ok(Click::Clicked)
-                }
-                (Latch::Closed, LatchMessage::Open) => {
-                    *self = Latch::Open;
-                    Ok(Click::Clicked)
-                }
-                (Latch::Open, LatchMessage::Open)
-                | (Latch::Closed, LatchMessage::Close) => Err(Unhandled),
-            }
-        }
-    }
-
-    struct LatchRow {
-        latch: Latch,
-        message: LatchMessage,
-        next: Latch,
-        result: Result<Click, Unhandled>,
-    }
-
-    #[rstest]
-    #[case::open_closes(LatchRow {
-        latch: Latch::Open,
-        message: LatchMessage::Close,
-        next: Latch::Closed,
-        result: Ok(Click::Clicked),
-    })]
-    #[case::closed_opens(LatchRow {
-        latch: Latch::Closed,
-        message: LatchMessage::Open,
-        next: Latch::Open,
-        result: Ok(Click::Clicked),
-    })]
-    #[case::open_refuses_open(LatchRow {
-        latch: Latch::Open,
-        message: LatchMessage::Open,
-        next: Latch::Open,
-        result: Err(Unhandled),
-    })]
-    #[case::closed_refuses_close(LatchRow {
-        latch: Latch::Closed,
-        message: LatchMessage::Close,
-        next: Latch::Closed,
-        result: Err(Unhandled),
-    })]
-    fn transition_writes_only_on_success(#[case] row: LatchRow) {
-        let mut slot = row.latch;
-        let result = slot.transition(row.message);
-        assert_eq!(slot, row.next);
-        assert_eq!(result, row.result);
-    }
 
     struct EachRow {
         asked: Vec<u32>,

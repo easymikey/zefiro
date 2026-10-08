@@ -96,11 +96,7 @@ impl Machine for Player {
             PlayerMessage::Loaded { duration, anchor } => self.loaded(duration, anchor),
             PlayerMessage::Error(error) => self.failed(&error),
             PlayerMessage::SpeedChanged(anchor) => match self {
-                Player::Playing {
-                    playhead,
-                    track: _track,
-                    preloaded: _preloaded,
-                } => {
+                Player::Playing { playhead, .. } => {
                     *playhead = Playhead::anchored(
                         playhead.position_at(anchor.started_at),
                         anchor.started_at,
@@ -168,7 +164,7 @@ pub(crate) fn update_player(
         {
             Ok(media_fetch) => (player_message, media_fetch.flatten(), Cmd::none()),
             Err(refusal) => {
-                let PlayerMessage::Ended { next: _next, stamp } = player_message else {
+                let PlayerMessage::Ended { stamp, .. } = player_message else {
                     return Ok(refusal);
                 };
                 (PlayerMessage::Ended { next: None, stamp }, None, refusal)
@@ -203,16 +199,10 @@ fn upcoming<'a>(
     player_message: &'a PlayerMessage,
 ) -> Option<&'a Arc<Track>> {
     match player_message {
-        PlayerMessage::Toggle {
-            current,
-            stamp: _stamp,
-        } => current
+        PlayerMessage::Toggle { current, .. } => current
             .as_ref()
             .filter(|_track| matches!(player, Player::Stopped)),
-        PlayerMessage::Ended {
-            next,
-            stamp: _stamp,
-        } => next
+        PlayerMessage::Ended { next, .. } => next
             .as_ref()
             .filter(|_track| matches!(player, Player::Playing { .. })),
         PlayerMessage::LookaheadReached {
@@ -341,10 +331,7 @@ pub(crate) fn lookahead(playback_parts: &PlaybackParts<'_>, now: Moment) -> Look
             .flatten()
             .filter(|track| match track.source() {
                 TrackSource::Local(_path) => true,
-                TrackSource::Server {
-                    server_name,
-                    server_track_id: _server_track_id,
-                } => {
+                TrackSource::Server { server_name, .. } => {
                     session(playback_parts.servers, server_name).is_some()
                         && playback_parts
                             .player
@@ -363,12 +350,7 @@ pub(crate) fn lookahead(playback_parts: &PlaybackParts<'_>, now: Moment) -> Look
 }
 
 pub(crate) fn arm(playback_parts: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
-    let Player::Playing {
-        playhead,
-        track: _track,
-        preloaded: _preloaded,
-    } = &*playback_parts.player
-    else {
+    let Player::Playing { playhead, .. } = &*playback_parts.player else {
         return Cmd::none();
     };
     Cmd::from(Effect::Macos(MacosCmd::SetPosition(
@@ -378,12 +360,7 @@ pub(crate) fn arm(playback_parts: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
 }
 
 fn timer(playback_parts: &mut PlaybackParts<'_>, now: Moment) -> Cmd {
-    let Player::Playing {
-        playhead,
-        track: _track,
-        preloaded: _preloaded,
-    } = &*playback_parts.player
-    else {
+    let Player::Playing { playhead, .. } = &*playback_parts.player else {
         return Cmd::none();
     };
     next_decision(*playhead, &lookahead(playback_parts, now)).map_or(

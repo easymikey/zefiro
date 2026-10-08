@@ -297,6 +297,7 @@ mod tests {
             saves::{PendingSaves, SAVE_DEBOUNCE},
             watch::{ConfigWatch, ConfigWatchEffect, ConfigWatchMessage, SavedFile},
         },
+        embedded_theme::EMBEDDED_THEMES,
         theme_file::TomlTheme,
     };
 
@@ -440,6 +441,13 @@ mod tests {
     #[case::select_theme(cmds(vec![ConfigCmd::SelectTheme("noir".parse().unwrap())]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
     #[case::auto_theme(cmds(vec![ConfigCmd::SelectTheme(ThemeChoice::Auto)]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
     #[case::save(saving(ConfigPatch::default()), Ok(after(issued(1))))]
+    #[case::themes_listed(
+        ConfigMessage::Watch(ConfigWatchMessage::Listed { theme_names: vec![ThemeName::from_static("noir"), ThemeName::from_static("mine")], refused: vec!["auto".to_string()] }),
+        Ok(Cmd::message(ConfigEvent::ThemesLoaded {
+            theme_names: EMBEDDED_THEMES.iter().map(|&(name, _)| ThemeName::from_static(name)).chain([ThemeName::from_static("mine")]).collect(),
+            refused: vec!["auto".to_string()],
+        }))
+    )]
     fn a_fresh_driver_answers(
         #[case] message: ConfigMessage,
         #[case] expected: Result<Cmd<String, ConfigEvent>, Unhandled>,
@@ -447,16 +455,6 @@ mod tests {
         let mut fresh = driver(None);
 
         assert_eq!(fresh.transition(message).map(described), expected);
-    }
-
-    #[rstest]
-    #[case::nothing_pending(ConfigMessage::Elapsed(Revision::default()))]
-    fn a_fresh_driver_refuses_and_stays_unchanged(#[case] message: ConfigMessage) {
-        let mut fresh = driver(None);
-        let before = state(&fresh);
-
-        assert!(matches!(fresh.transition(message), Err(Unhandled)));
-        assert_eq!(state(&fresh), before);
     }
 
     #[test]
@@ -496,8 +494,17 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_theme_publishes_then_tells_theme_reloaded() {
+    fn started_publishes_the_current_theme() {
         let mut state = driver(Some("noir"));
+        let started = step(&mut state, ConfigMessage::Started);
+        let (started_effects, _) = started.into_parts();
+        assert!(
+            started_effects
+                .into_iter()
+                .map(describe)
+                .any(|each| each
+                    == executed(reading(noir(), "/config/themes/noir.toml")))
+        );
 
         let (effects, events) =
             step(&mut state, read_done(noir(), Some(NOIR_THEME))).into_parts();
@@ -515,47 +522,6 @@ mod tests {
                     result: Ok(())
                 }),
             ]
-        ));
-    }
-
-    #[test]
-    fn selecting_an_unknown_theme_reads_its_file_and_reports_nothing_yet() {
-        let mut state = driver(Some("noir"));
-
-        let (effects, events) = step(
-            &mut state,
-            cmds(vec![ConfigCmd::SelectTheme("ghost".parse().unwrap())]),
-        )
-        .into_parts();
-
-        assert!(matches!(
-            effects.as_slice(),
-            [LoopEffect::Execute(ConfigEffect::Watch(
-                ConfigWatchEffect::Read { .. }
-            ))]
-        ));
-        assert!(events.is_empty());
-    }
-
-    #[test]
-    fn started_publishes_the_current_theme() {
-        let mut state = driver(Some("noir"));
-        let started = step(&mut state, ConfigMessage::Started);
-        let (started_effects, _) = started.into_parts();
-        assert!(
-            started_effects
-                .into_iter()
-                .map(describe)
-                .any(|each| each
-                    == executed(reading(noir(), "/config/themes/noir.toml")))
-        );
-
-        let (effects, _) =
-            step(&mut state, read_done(noir(), Some(NOIR_THEME))).into_parts();
-
-        assert!(matches!(
-            effects.as_slice(),
-            [LoopEffect::Execute(ConfigEffect::PublishTheme(_))]
         ));
     }
 

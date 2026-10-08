@@ -2,7 +2,7 @@ use ratatui::symbols::block;
 
 pub(crate) const TITLE_SEPARATOR: &str = " ── ";
 pub(crate) const DOT_SEPARATOR: &str = " · ";
-pub(crate) const ELLIPSIS: char = '\u{2026}';
+pub(crate) const ELLIPSIS: &str = "\u{2026}";
 pub(crate) const CONNECTING_GLYPH: &str = "⟳";
 pub(crate) const OFFLINE_GLYPH: &str = "○";
 pub(crate) const CREDENTIALS_GLYPH: &str = "!";

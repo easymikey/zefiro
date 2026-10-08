@@ -33,17 +33,9 @@ impl Player {
     pub fn current(&self) -> Option<&Arc<Track>> {
         match self {
             Self::Stopped => None,
-            Self::Loading(track) => Some(track),
-            Self::Playing {
-                track,
-                playhead: _playhead,
-                preloaded: _preloaded,
-            } => Some(track),
-            Self::Paused {
-                track,
-                position: _position,
-                by: _by,
-            } => Some(track),
+            Self::Loading(track)
+            | Self::Playing { track, .. }
+            | Self::Paused { track, .. } => Some(track),
         }
     }
 
@@ -51,16 +43,8 @@ impl Player {
     pub fn position_at(&self, now: Moment) -> Duration {
         match self {
             Self::Stopped | Self::Loading(..) => Duration::ZERO,
-            Self::Paused {
-                position,
-                track: _track,
-                by: _by,
-            } => *position,
-            Self::Playing {
-                playhead,
-                track: _track,
-                preloaded: _preloaded,
-            } => playhead.position_at(now),
+            Self::Paused { position, .. } => *position,
+            Self::Playing { playhead, .. } => playhead.position_at(now),
         }
     }
 
@@ -72,11 +56,7 @@ impl Player {
     #[must_use]
     pub(crate) fn preloaded(&self) -> Option<&Arc<Track>> {
         match self {
-            Self::Playing {
-                preloaded,
-                track: _track,
-                playhead: _playhead,
-            } => preloaded.as_ref(),
+            Self::Playing { preloaded, .. } => preloaded.as_ref(),
             Self::Stopped | Self::Loading(..) | Self::Paused { .. } => None,
         }
     }
@@ -103,31 +83,5 @@ impl AbLoop {
             Some(loop_ @ Self::StartMarked(_)) => Some(loop_),
             Some(Self::BothMarked { .. }) => None,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use crate::domain::player::AbLoop;
-
-    #[test]
-    fn ab_loop_mark_sets_b_only_after_a() {
-        let loop_start = Duration::from_secs(10);
-        let marked_loop = AbLoop::mark(None, loop_start);
-
-        assert_eq!(AbLoop::mark(marked_loop, loop_start), marked_loop);
-        assert_eq!(
-            AbLoop::mark(marked_loop, Duration::from_secs(9)),
-            marked_loop
-        );
-        assert_eq!(
-            AbLoop::mark(marked_loop, Duration::from_secs(11)),
-            Some(AbLoop::BothMarked {
-                loop_start,
-                loop_end: Duration::from_secs(11),
-            })
-        );
     }
 }

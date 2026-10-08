@@ -79,14 +79,15 @@ impl<'a> ServersTable<'a> {
                 ]
             },
         );
-        let starts: [usize; 5] = std::array::from_fn(|column| {
-            widths
-                .iter()
-                .take(column.saturating_sub(1))
-                .map(|width| width + 2)
-                .sum::<usize>()
-                + usize::from(column != 0) * MARKER.width()
-        });
+        let [name_width, host_width, user_width] = widths;
+        let lead = MARKER.width();
+        let starts = [
+            0,
+            lead,
+            lead + name_width + 2,
+            lead + name_width + host_width + 4,
+            lead + name_width + host_width + user_width + 6,
+        ];
         let rows = servers
             .iter()
             .enumerate()
@@ -241,6 +242,7 @@ mod tests {
             UserName,
         },
     };
+    use ratatui::{buffer::Buffer, layout::Rect};
 
     use crate::{
         overlay::servers::{ServersTable, ServersWidget},
@@ -281,13 +283,72 @@ mod tests {
         insta::assert_snapshot!(frame(&[]));
     }
 
+    fn painted(servers: &[Server], screen: Rect) -> (Buffer, Rect) {
+        let theme = noir();
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let selected = ViewIndex::new(1);
+        let servers_table = ServersTable::new(servers, selected, &active_theme);
+        let widget = ServersWidget::new(&servers_table, selected, active_theme);
+        let areas = widget.areas(screen);
+        let mut buffer = Buffer::empty(screen);
+        widget.paint(
+            areas,
+            Canvas {
+                area: screen,
+                buffer: &mut buffer,
+            },
+        );
+        (buffer, areas.body)
+    }
+
     #[test]
     fn servers_overlay_shows_each_state_and_marks_the_selected_row() {
+        insta::assert_snapshot!(frame(&servers()));
+    }
+
+    #[test]
+    fn only_the_selected_row_is_highlighted_up_to_the_end_of_its_status() {
+        let (buffer, body) = painted(&servers(), Rect::new(0, 0, 100, 20));
+        let theme = noir();
+        let selection = ActiveTheme::new(&theme, ColorDepth::TrueColor)
+            .colors()
+            .selection_background;
+        let y = body.y + 1;
+        let text_end = (body.left()..body.right())
+            .rfind(|&x| buffer[(x, y)].symbol() != " ")
+            .unwrap()
+            + 1;
+        assert!(text_end < body.right());
+        let highlighted = body
+            .positions()
+            .filter(|&position| buffer[position].bg == selection)
+            .map(|position| (position.x, position.y))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            highlighted,
+            (body.left()..text_end).map(|x| (x, y)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_row_wider_than_a_narrow_body_stops_at_its_right_edge() {
+        let screen = Rect::new(0, 0, 40, 12);
+        let (buffer, body) = painted(&servers(), screen);
+        let spilled = (body.top()..body.bottom())
+            .flat_map(|y| (body.right()..screen.right()).map(move |x| (x, y)))
+            .filter(|&position| {
+                buffer[position].symbol().chars().any(char::is_alphanumeric)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(spilled, []);
+    }
+
+    fn servers() -> [Server; 4] {
         let session = Session::new(
             Endpoint::parse("https://music.example.com").unwrap(),
             "u=alice&t=token&s=salt",
         );
-        let servers = [
+        [
             Server {
                 account: account("home", "https://music.example.com", "alice"),
                 server_status: ServerStatus::Online(session),
@@ -310,7 +371,6 @@ mod tests {
                     api_code: ApiCode(40),
                 }),
             },
-        ];
-        insta::assert_snapshot!(frame(&servers));
+        ]
     }
 }

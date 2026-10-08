@@ -23,12 +23,8 @@ impl Successor {
         match self {
             Successor::Preloaded(track)
             | Successor::Repeating(track)
-            | Successor::Following(track) => Some(track),
-            Successor::Queued {
-                track,
-                queue_index: _queue_index,
-                index: _index,
-            } => Some(track),
+            | Successor::Following(track)
+            | Successor::Queued { track, .. } => Some(track),
             Successor::Nothing => None,
         }
     }
@@ -37,12 +33,8 @@ impl Successor {
         match self {
             Successor::Preloaded(track)
             | Successor::Repeating(track)
-            | Successor::Following(track) => Some(track),
-            Successor::Queued {
-                track,
-                queue_index: _queue_index,
-                index: _index,
-            } => Some(track),
+            | Successor::Following(track)
+            | Successor::Queued { track, .. } => Some(track),
             Successor::Nothing => None,
         }
     }

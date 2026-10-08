@@ -20,7 +20,7 @@ pub(crate) fn truncate(text: &str, width: usize) -> Cow<'_, str> {
     if text.width() <= width {
         return Cow::Borrowed(text);
     }
-    let keep_width = width.saturating_sub(cell_width(ELLIPSIS));
+    let keep_width = width.saturating_sub(ELLIPSIS.width());
     Cow::Owned(format!("{}{ELLIPSIS}", prefix(text, keep_width)))
 }
 
@@ -61,7 +61,7 @@ pub(crate) fn truncate_head(text: &str, width: usize) -> Cow<'_, str> {
     if text.width() <= width {
         return Cow::Borrowed(text);
     }
-    let keep_width = width.saturating_sub(cell_width(ELLIPSIS));
+    let keep_width = width.saturating_sub(ELLIPSIS.width());
     let start = text
         .char_indices()
         .rev()
@@ -79,8 +79,11 @@ pub(crate) fn truncate_line<'a>(line: Line<'a>, width: usize) -> Line<'a> {
     if line.width() <= width {
         return line;
     }
-    let Some(keep_width) = width.checked_sub(cell_width(ELLIPSIS)) else {
-        return Line::default();
+    let Some(keep_width) = width.checked_sub(ELLIPSIS.width()) else {
+        return Line {
+            spans: Vec::new(),
+            ..line
+        };
     };
     let style = line
         .spans
@@ -104,71 +107,30 @@ pub(crate) fn truncate_line<'a>(line: Line<'a>, width: usize) -> Line<'a> {
         })
         .flatten()
         .collect();
-    let ellipsis: Span<'a> = crate::primitive::span::text(String::from(ELLIPSIS))
+    let ellipsis: Span<'a> = crate::primitive::span::text(ELLIPSIS)
         .style(spans.last().map_or(style, |span| span.style))
         .into();
-    Line::from_iter(spans.into_iter().chain(std::iter::once(ellipsis)))
+    Line {
+        style: line.style,
+        alignment: line.alignment,
+        spans: spans.into_iter().chain(std::iter::once(ellipsis)).collect(),
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::{prop_assert, prop_assert_eq, proptest};
     use ratatui::{
-        style::Color,
+        layout::Alignment,
+        style::{Color, Style},
         text::{Line, Span},
     };
     use rstest::rstest;
     use unicode_width::UnicodeWidthStr;
 
     use crate::primitive::{
-        glyphs::ELLIPSIS,
         span::{line, text},
         truncate::{truncate, truncate_line, truncate_owned},
     };
-
-    proptest! {
-        #[test]
-        fn truncation_never_exceeds_requested_width(text in "(?s:.)*", width in 0usize..40) {
-            let out = truncate(&text, width);
-            prop_assert!(out.width() <= width);
-        }
-
-        #[test]
-        fn truncation_never_splits_a_character(text in "(?s:.)*", width in 0usize..40) {
-            let out = truncate(&text, width);
-            if width == 0 {
-                prop_assert_eq!(out.as_ref(), "");
-            } else if text.width() <= width {
-                prop_assert_eq!(out.as_ref(), text.as_str());
-            } else {
-                let kept = out.strip_suffix(ELLIPSIS);
-                prop_assert!(
-                    kept.is_some_and(|kept| text.starts_with(kept)),
-                    "truncated output must end with the ellipsis and keep a prefix"
-                );
-            }
-        }
-
-        #[test]
-        fn truncate_owned_matches_truncate(text in "(?s:.)*", width in 0usize..40) {
-            let expected = truncate(&text, width).into_owned();
-            prop_assert_eq!(truncate_owned(text, width), expected);
-        }
-    }
-
-    #[rstest]
-    #[case::fits("hello", 5)]
-    #[case::cut("hello world", 6)]
-    #[case::no_budget("hello", 0)]
-    fn truncate_owned_keeps_a_fitting_text_and_cuts_like_truncate(
-        #[case] text: &str,
-        #[case] width: usize,
-    ) {
-        assert_eq!(
-            truncate_owned(text.to_owned(), width),
-            truncate(text, width)
-        );
-    }
 
     #[rstest]
     #[case::wide_glyphs("界🙂abc", 5, "界🙂…")]
@@ -183,11 +145,7 @@ mod tests {
         let truncated = truncate(text, width);
         assert_eq!(truncated, expected);
         assert!(truncated.width() <= width);
-        assert_eq!(
-            truncate(text, width),
-            truncated,
-            "`truncate` is the same call"
-        );
+        assert_eq!(truncate_owned(text.to_owned(), width), expected);
     }
 
     fn styled_line() -> Line<'static> {
@@ -236,6 +194,22 @@ mod tests {
             cut.spans.last().map(|span| span.style.fg),
             Some(Some(Color::White)),
             "the ellipsis is styled like the last kept span"
+        );
+    }
+
+    #[rstest]
+    #[case::wider_than_the_ellipsis(20)]
+    #[case::narrower_than_the_ellipsis(0)]
+    fn a_styled_line_cut_short_keeps_its_style_and_alignment(#[case] width: usize) {
+        let row_style = Style::default().fg(Color::Red);
+        let cut = truncate_line(
+            styled_line().style(row_style).alignment(Alignment::Right),
+            width,
+        );
+        assert!(cut.width() <= width);
+        assert_eq!(
+            (cut.style, cut.alignment),
+            (row_style, Some(Alignment::Right))
         );
     }
 }

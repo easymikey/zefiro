@@ -5,13 +5,18 @@ use kernel::{
             AppearancePatch,
             AppearancePreset,
             AppearanceSettings,
-            CoverMode,
             KeyHints,
             LayoutMode,
             preset_appearance,
             preset_of,
         },
-        appearance_rows::{KEY_HINTS, SPEED_CHIPS},
+        appearance_rows::{
+            COVER_MODES,
+            KEY_HINTS,
+            LAYOUT_MODES,
+            PROGRESS_TIMES,
+            SPEED_CHIPS,
+        },
         cue::Cue,
         direction::Direction,
         model::Model,
@@ -29,72 +34,89 @@ fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
     update(model, Message::Step { row, direction }, Moment::default()).unwrap()
 }
 
-#[rstest]
-#[case::up_then_up_wraps(vec![Direction::Next, Direction::Next], vec![1, 0])]
-#[case::down_wraps_backward(vec![Direction::Previous], vec![1])]
-fn a_toggle_row_wraps_mod_two(
-    #[case] directions: Vec<Direction>,
-    #[case] expected_options: Vec<usize>,
-) {
-    let mut model = Model::default();
-    let field = AppearanceField::KeyHints;
+struct OptionRow {
+    field: AppearanceField,
+    directions: Vec<Direction>,
+    position: fn(&AppearanceSettings) -> Option<usize>,
+    expected_options: Vec<usize>,
+}
 
-    let seen: Vec<usize> = directions
+#[rstest]
+#[case::toggle_up_then_up_wraps(OptionRow {
+    field: AppearanceField::KeyHints,
+    directions: vec![Direction::Next, Direction::Next],
+    position: |settings| {
+        KEY_HINTS.iter().position(|&key_hints| key_hints == settings.key_hints)
+    },
+    expected_options: vec![1, 0],
+})]
+#[case::toggle_down_wraps_backward(OptionRow {
+    field: AppearanceField::KeyHints,
+    directions: vec![Direction::Previous],
+    position: |settings| {
+        KEY_HINTS.iter().position(|&key_hints| key_hints == settings.key_hints)
+    },
+    expected_options: vec![1],
+})]
+#[case::toggle_progress_time(OptionRow {
+    field: AppearanceField::ProgressTime,
+    directions: vec![Direction::Next, Direction::Next],
+    position: |settings| {
+        PROGRESS_TIMES
+            .iter()
+            .position(|&progress_time| progress_time == settings.progress_time)
+    },
+    expected_options: vec![1, 0],
+})]
+#[case::cycle_wraps_at_its_own_ring_size(OptionRow {
+    field: AppearanceField::SpeedChip,
+    directions: vec![Direction::Next; 4],
+    position: |settings| {
+        SPEED_CHIPS
+            .iter()
+            .position(|&speed_chip| speed_chip == settings.speed_chip)
+    },
+    expected_options: vec![1, 2, 0, 1],
+})]
+#[case::layout_steps_from_auto_to_compact_and_back(OptionRow {
+    field: AppearanceField::LayoutMode,
+    directions: vec![Direction::Next, Direction::Next],
+    position: |settings| {
+        LAYOUT_MODES
+            .iter()
+            .position(|&layout_mode| layout_mode == settings.layout_mode)
+    },
+    expected_options: vec![1, 0],
+})]
+#[case::four_options(OptionRow {
+    field: AppearanceField::CoverMode,
+    directions: vec![Direction::Next; 4],
+    position: |settings| {
+        COVER_MODES
+            .iter()
+            .position(|&cover_mode| cover_mode == settings.cover_mode)
+    },
+    expected_options: vec![1, 2, 3, 0],
+})]
+fn stepping_a_row_walks_its_options_and_wraps(#[case] row: OptionRow) {
+    let OptionRow {
+        field,
+        directions,
+        position,
+        expected_options,
+    } = row;
+    let mut model = Model::default();
+
+    let seen: Vec<Option<usize>> = directions
         .into_iter()
         .map(|direction| {
             drop(step(&mut model, SettingRow::Appearance(field), direction));
-            KEY_HINTS
-                .iter()
-                .position(|&key_hints| {
-                    key_hints == model.settings.appearance_settings.key_hints
-                })
-                .unwrap_or(usize::MAX)
+            position(&model.settings.appearance_settings)
         })
         .collect();
 
-    assert_eq!(seen, expected_options);
-}
-
-#[test]
-fn a_cycle_row_wraps_at_its_own_ring_size() {
-    let mut model = Model::default();
-    let field = AppearanceField::SpeedChip;
-
-    let walked: Vec<usize> = (0..4)
-        .map(|_| {
-            drop(step(
-                &mut model,
-                SettingRow::Appearance(field),
-                Direction::Next,
-            ));
-            SPEED_CHIPS
-                .iter()
-                .position(|&speed_chip| {
-                    speed_chip == model.settings.appearance_settings.speed_chip
-                })
-                .unwrap_or(usize::MAX)
-        })
-        .collect();
-
-    assert_eq!(walked, vec![1, 2, 0, 1]);
-}
-
-#[test]
-fn the_layout_row_steps_from_auto_to_compact_and_back() {
-    let mut model = Model::default();
-
-    let layout_modes: Vec<LayoutMode> = (0..2)
-        .map(|_| {
-            drop(step(
-                &mut model,
-                SettingRow::Appearance(AppearanceField::LayoutMode),
-                Direction::Next,
-            ));
-            model.settings.appearance_settings.layout_mode
-        })
-        .collect();
-
-    assert_eq!(layout_modes, vec![LayoutMode::Compact, LayoutMode::Auto]);
+    let expected: Vec<Option<usize>> = expected_options.into_iter().map(Some).collect();
+    assert_eq!(seen, expected);
 }
 
 #[test]
@@ -120,87 +142,53 @@ fn the_preset_and_theme_rows_lead_setting_row_all() {
     );
 }
 
+struct EffectsRow {
+    field: AppearanceField,
+    effects: Vec<Effect>,
+    appearance_settings: AppearanceSettings,
+}
+
 #[rstest]
-#[case::toggle(AppearanceField::ProgressTime, 2)]
-#[case::cycle(AppearanceField::SpeedChip, 3)]
-#[case::layout(AppearanceField::LayoutMode, 2)]
-#[case::four_options(AppearanceField::CoverMode, 4)]
-fn stepping_every_option_of_a_row_is_handled(
-    #[case] field: AppearanceField,
-    #[case] option_count: usize,
-) {
-    let mut model = Model::default();
-
-    for _ in 0..option_count {
-        drop(step(
-            &mut model,
-            SettingRow::Appearance(field),
-            Direction::Next,
-        ));
-    }
-}
-
-#[test]
-fn stepping_a_row_with_a_cue_emits_the_setting_then_the_cue() {
-    let mut model = Model::default();
-
-    let cmd = step(
-        &mut model,
-        SettingRow::Appearance(AppearanceField::LayoutMode),
-        Direction::Next,
-    );
-
-    let effects: Vec<&Effect> = cmd.effects().collect();
-    assert_eq!(
-        effects,
-        vec![
-            &Effect::Config(ConfigCmd::SetAppearance(AppearancePatch {
-                layout_mode: Some(LayoutMode::Compact),
-                ..AppearancePatch::default()
-            })),
-            &Effect::Animate(Cue::LayoutChanged),
-        ]
-    );
-}
-
-#[test]
-fn stepping_a_row_without_a_cue_emits_only_the_setting() {
-    let mut model = Model::default();
-
-    let cmd = step(
-        &mut model,
-        SettingRow::Appearance(AppearanceField::KeyHints),
-        Direction::Next,
-    );
-
-    let effects: Vec<&Effect> = cmd.effects().collect();
-    assert_eq!(
-        effects,
-        vec![&Effect::Config(ConfigCmd::SetAppearance(AppearancePatch {
-            key_hints: Some(KeyHints::Hidden),
+#[case::with_a_cue_the_setting_then_the_cue(EffectsRow {
+    field: AppearanceField::LayoutMode,
+    effects: vec![
+        Effect::Config(ConfigCmd::SetAppearance(AppearancePatch {
+            layout_mode: Some(LayoutMode::Compact),
             ..AppearancePatch::default()
-        }))]
-    );
-}
-
-#[test]
-fn stepping_a_row_changes_the_appearance_at_once() {
+        })),
+        Effect::Animate(Cue::LayoutChanged),
+    ],
+    appearance_settings: AppearanceSettings {
+        layout_mode: LayoutMode::Compact,
+        ..AppearanceSettings::default()
+    },
+})]
+#[case::without_a_cue_only_the_setting(EffectsRow {
+    field: AppearanceField::KeyHints,
+    effects: vec![Effect::Config(ConfigCmd::SetAppearance(AppearancePatch {
+        key_hints: Some(KeyHints::Hidden),
+        ..AppearancePatch::default()
+    }))],
+    appearance_settings: AppearanceSettings {
+        key_hints: KeyHints::Hidden,
+        ..AppearanceSettings::default()
+    },
+})]
+fn stepping_a_row_changes_the_appearance_at_once_and_emits_its_effects(
+    #[case] row: EffectsRow,
+) {
+    let EffectsRow {
+        field,
+        effects: expected,
+        appearance_settings,
+    } = row;
     let mut model = Model::default();
 
-    drop(step(
-        &mut model,
-        SettingRow::Appearance(AppearanceField::KeyHints),
-        Direction::Next,
-    ));
+    let cmd = step(&mut model, SettingRow::Appearance(field), Direction::Next);
 
-    assert_eq!(
-        model.settings.appearance_settings.key_hints,
-        KeyHints::Hidden
-    );
-    assert_eq!(
-        model.settings.appearance_settings.cover_mode,
-        CoverMode::Vinyl
-    );
+    let effects: Vec<&Effect> = cmd.effects().collect();
+    assert_eq!(effects, expected.iter().collect::<Vec<&Effect>>());
+    assert_eq!(model.settings.appearance_settings, appearance_settings);
 }
 
 #[test]
@@ -227,78 +215,69 @@ fn edited_appearance() -> AppearanceSettings {
     }
 }
 
-struct PresetCase {
+struct PresetRow {
+    appearance_settings: AppearanceSettings,
+    direction: Direction,
     preset: AppearancePreset,
     theme: Option<&'static str>,
 }
 
 #[rstest]
-#[case::custom_steps_to_default(
-    edited_appearance(),
-    Direction::Next,
-    PresetCase { preset: AppearancePreset::Stock, theme: None }
-)]
-#[case::default_steps_to_noir(
-    AppearanceSettings::default(),
-    Direction::Next,
-    PresetCase { preset: AppearancePreset::Noir, theme: Some("noir") }
-)]
-#[case::noir_steps_to_default(
-    preset_appearance(AppearancePreset::Noir),
-    Direction::Previous,
-    PresetCase { preset: AppearancePreset::Stock, theme: None }
-)]
-fn stepping_the_preset_row_selects_its_options_theme(
-    #[case] appearance_settings: AppearanceSettings,
-    #[case] direction: Direction,
-    #[case] expected: PresetCase,
-) {
+#[case::custom_steps_to_default(PresetRow {
+    appearance_settings: edited_appearance(),
+    direction: Direction::Next,
+    preset: AppearancePreset::Stock,
+    theme: None,
+})]
+#[case::default_steps_to_noir(PresetRow {
+    appearance_settings: AppearanceSettings::default(),
+    direction: Direction::Next,
+    preset: AppearancePreset::Noir,
+    theme: Some("noir"),
+})]
+#[case::noir_steps_to_default(PresetRow {
+    appearance_settings: preset_appearance(AppearancePreset::Noir),
+    direction: Direction::Previous,
+    preset: AppearancePreset::Stock,
+    theme: None,
+})]
+fn stepping_the_preset_row_selects_and_saves_its_options_theme(#[case] row: PresetRow) {
+    let PresetRow {
+        appearance_settings,
+        direction,
+        preset,
+        theme,
+    } = row;
     let field = AppearanceField::Preset;
     let mut model = Model::default();
     model.settings.appearance_settings = appearance_settings;
+    let theme_name = theme.map(ThemeName::from_static);
 
     let cmd = step(&mut model, SettingRow::Appearance(field), direction);
 
-    assert_eq!(
-        preset_of(model.settings.appearance_settings),
-        Some(expected.preset)
-    );
-    let theme = cmd.effects().find_map(|effect| {
+    assert_eq!(preset_of(model.settings.appearance_settings), Some(preset));
+    let selected = cmd.effects().find_map(|effect| {
         let Effect::Config(ConfigCmd::SelectTheme(choice)) = effect else {
             return None;
         };
-        Some(choice.to_string())
+        Some(choice.clone())
     });
-    assert_eq!(theme, expected.theme.map(str::to_string));
-}
-
-#[test]
-fn stepping_the_preset_to_noir_selects_and_saves_the_noir_theme() {
-    let theme_name = ThemeName::from_static("noir");
-    let mut model = Model::default();
-
-    let cmd = step(
-        &mut model,
-        SettingRow::Appearance(AppearanceField::Preset),
-        Direction::Next,
+    let saved = cmd.effects().find_map(|effect| {
+        let Effect::Config(ConfigCmd::Save(patch)) = effect else {
+            return None;
+        };
+        Some(patch.clone())
+    });
+    assert_eq!(selected, theme_name.clone().map(ThemeChoice::Named));
+    assert_eq!(
+        saved,
+        theme_name.clone().map(|name| ConfigPatch {
+            theme_name: Some(name),
+            ..ConfigPatch::default()
+        })
     );
-
     assert_eq!(
         model.themes.theme_choice,
-        ThemeChoice::Named(theme_name.clone())
-    );
-    let effects: Vec<&Effect> = cmd.effects().collect();
-    assert!(
-        effects.contains(&&Effect::Config(ConfigCmd::Save(ConfigPatch {
-            theme_name: Some(theme_name.clone()),
-            ..ConfigPatch::default()
-        }))),
-        "{effects:?}"
-    );
-    assert!(
-        effects.contains(&&Effect::Config(ConfigCmd::SelectTheme(
-            ThemeChoice::Named(theme_name)
-        ))),
-        "{effects:?}"
+        theme_name.map_or(ThemeChoice::Auto, ThemeChoice::Named)
     );
 }

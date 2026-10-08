@@ -49,22 +49,13 @@ fn ordered() -> Result<Cmd, Unhandled> {
 }
 
 #[test]
-fn restored_reports_wait_in_the_model_while_their_server_is_not_online() {
-    let mut model = local_model(ServerStatus::Connecting);
-
-    let answer = restored(&mut model, Ok(vec![play_report()]));
-
-    assert_eq!(answer, Ok(Cmd::none()));
-    assert_eq!(model.play_reports, vec![play_report()]);
-}
-
-#[test]
 fn restored_reports_are_ordered_again_with_the_session_once_their_server_is_online() {
     let mut model = local_model(ServerStatus::Connecting);
     assert_eq!(
         restored(&mut model, Ok(vec![play_report()])),
         Ok(Cmd::none())
     );
+    assert_eq!(model.play_reports, vec![play_report()]);
 
     let answer = update(
         &mut model,

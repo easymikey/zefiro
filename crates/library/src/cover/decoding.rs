@@ -38,20 +38,14 @@ impl Machine for CoverDecoding {
                 },
             ) => Ok(self.start(cover_job, revision)),
             (
-                CoverDecoding::Busy {
-                    job: busy,
-                    revision: _revision,
-                },
+                CoverDecoding::Busy { job: busy, .. },
                 CoverDecodingMessage::Decode {
                     job: cover_job,
                     revision,
                 },
             ) if *busy != cover_job => Ok(self.start(cover_job, revision)),
             (
-                CoverDecoding::Busy {
-                    revision,
-                    job: _job,
-                },
+                CoverDecoding::Busy { revision, .. },
                 CoverDecodingMessage::Decoded(answered),
             ) if *revision == answered => {
                 *self = CoverDecoding::Idle;
@@ -70,17 +64,14 @@ impl CoverDecoding {
     pub(crate) fn busy(&self) -> Option<&CoverJob> {
         match self {
             CoverDecoding::Idle => None,
-            CoverDecoding::Busy {
-                job: cover_job,
-                revision: _revision,
-            } => Some(cover_job),
+            CoverDecoding::Busy { job: cover_job, .. } => Some(cover_job),
         }
     }
 
     pub(crate) fn is_current(&self, revision: Revision) -> bool {
         matches!(
             self,
-            CoverDecoding::Busy { job: _job, revision: busy_revision } if *busy_revision == revision
+            CoverDecoding::Busy { revision: busy_revision, .. } if *busy_revision == revision
         )
     }
 

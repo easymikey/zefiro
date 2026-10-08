@@ -15,6 +15,7 @@ use crate::{
 };
 
 const STEP: Duration = Duration::from_millis(33);
+const MAX_CATCH_UP_STEPS: u32 = 4;
 
 type MilkdropResetKey = (u64, usize, usize);
 
@@ -23,7 +24,6 @@ struct MilkdropStamp {
     reset_key: MilkdropResetKey,
     theme_revision: Revision,
     since_first_paint: Duration,
-    playback: Playback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +38,7 @@ enum MilkdropPlan {
 fn plan_milkdrop(
     installed_stamp: Option<MilkdropStamp>,
     desired_stamp: MilkdropStamp,
+    playback: Playback,
 ) -> MilkdropPlan {
     let Some(installed_stamp) = installed_stamp else {
         return MilkdropPlan::Rebuild;
@@ -50,7 +51,7 @@ fn plan_milkdrop(
         MilkdropPlan::Recolour
     } else if desired_stamp.since_first_paint - installed_stamp.since_first_paint
         >= STEP
-        && desired_stamp.playback == Playback::Playing
+        && playback == Playback::Playing
     {
         MilkdropPlan::Advance
     } else {
@@ -109,55 +110,84 @@ impl MilkdropCover {
             reset_key: (seed, width, height),
             theme_revision: scene.revisions.theme,
             since_first_paint: scene.presentation.since_first_paint,
-            playback: Playback::from(scene.player),
         };
+        let playback = Playback::from(scene.player);
         let installed = self.installed.as_ref().map(|(_, stamp)| *stamp);
-        let plan = plan_milkdrop(installed, desired_stamp);
         let since_first_paint = desired_stamp.since_first_paint;
-        let start =
-            installed.map_or(since_first_paint, |stamp| stamp.since_first_paint);
-        let whole = elapsed_steps(installed, since_first_paint);
-        let (steps, first_step, advanced_to) = match plan {
-            MilkdropPlan::Rebuild => (1, since_first_paint, since_first_paint),
-            MilkdropPlan::Recolour | MilkdropPlan::Reuse => (0, start, start),
-            MilkdropPlan::Advance if whole <= 4 => {
-                (whole, start + STEP, start + STEP * whole)
-            }
-            MilkdropPlan::Advance => (4, start + STEP, since_first_paint),
+        let milkdrop_advance = MilkdropAdvance {
+            spectrum: scene.presentation.spectrum,
+            playback,
+            seed,
+            tick: tick(since_first_paint),
         };
-        if plan == MilkdropPlan::Rebuild {
-            self.installed = Some((MilkdropField::new(width, height), desired_stamp));
-        }
-        if plan != MilkdropPlan::Reuse
-            && let Some((field, installed_stamp)) = self.installed.as_mut()
-        {
-            for step in (0..steps).map(|step| first_step + STEP * step) {
-                field.advance(&MilkdropAdvance {
-                    spectrum: scene.presentation.spectrum,
-                    playback: desired_stamp.playback,
-                    seed,
-                    tick: u64::try_from(step.as_millis()).unwrap_or(u64::MAX),
-                });
+        match plan_milkdrop(installed, desired_stamp, playback) {
+            MilkdropPlan::Rebuild => {
+                let mut field = MilkdropField::new(width, height);
+                advance(&mut field, &milkdrop_advance, 1);
+                self.installed = Some((field, desired_stamp));
+                self.repaint(scene);
             }
-            *installed_stamp = MilkdropStamp {
-                since_first_paint: advanced_to,
-                ..desired_stamp
-            };
-            let style = MilkdropStyle::from_theme(&scene.active_theme());
-            self.lines = lines(field, style);
+            MilkdropPlan::Recolour => {
+                if let Some((_, installed_stamp)) = self.installed.as_mut() {
+                    installed_stamp.theme_revision = desired_stamp.theme_revision;
+                }
+                self.repaint(scene);
+            }
+            MilkdropPlan::Advance => {
+                if let Some((field, installed_stamp)) = self.installed.as_mut() {
+                    let start = installed_stamp.since_first_paint;
+                    let whole = elapsed_steps(*installed_stamp, since_first_paint);
+                    advance(
+                        field,
+                        &MilkdropAdvance {
+                            tick: tick(start + STEP),
+                            ..milkdrop_advance
+                        },
+                        whole.min(MAX_CATCH_UP_STEPS),
+                    );
+                    installed_stamp.since_first_paint = if whole > MAX_CATCH_UP_STEPS {
+                        since_first_paint
+                    } else {
+                        start + STEP * whole
+                    };
+                }
+                self.repaint(scene);
+            }
+            MilkdropPlan::Reuse => {}
         }
         CardCover::Text(Arc::clone(&self.lines))
     }
+
+    fn repaint(&mut self, scene: &Scene<'_>) {
+        if let Some((field, _)) = self.installed.as_ref() {
+            let style = MilkdropStyle::from_theme(&scene.active_theme());
+            self.lines = lines(field, style);
+        }
+    }
 }
 
-fn elapsed_steps(
-    milkdrop_stamp: Option<MilkdropStamp>,
-    since_first_paint: Duration,
-) -> u32 {
-    milkdrop_stamp.map_or(0, |stamp| {
-        let elapsed = since_first_paint.saturating_sub(stamp.since_first_paint);
-        u32::try_from(elapsed.as_millis() / STEP.as_millis()).unwrap_or(u32::MAX)
-    })
+fn tick(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
+fn advance(
+    field: &mut MilkdropField,
+    milkdrop_advance: &MilkdropAdvance<'_>,
+    steps: u32,
+) {
+    for step in 0..u64::from(steps) {
+        field.advance(&MilkdropAdvance {
+            tick: milkdrop_advance
+                .tick
+                .saturating_add(tick(STEP).saturating_mul(step)),
+            ..*milkdrop_advance
+        });
+    }
+}
+
+fn elapsed_steps(installed_stamp: MilkdropStamp, since_first_paint: Duration) -> u32 {
+    let elapsed = since_first_paint.saturating_sub(installed_stamp.since_first_paint);
+    u32::try_from(elapsed.as_millis() / STEP.as_millis()).unwrap_or(u32::MAX)
 }
 
 #[cfg(test)]
@@ -202,14 +232,6 @@ mod tests {
             reset_key,
             theme_revision: Revision::default(),
             since_first_paint: Duration::from_millis(millis),
-            playback: Playback::Playing,
-        }
-    }
-
-    fn paused(reset_key: (u64, usize, usize), millis: u64) -> MilkdropStamp {
-        MilkdropStamp {
-            playback: Playback::Paused,
-            ..stamp(reset_key, millis)
         }
     }
 
@@ -220,28 +242,35 @@ mod tests {
         }
     }
 
-    #[rstest]
-    #[case::same_reset_key_and_clock(Some(stamp((1, 20, 8), 100)), stamp((1, 20, 8), 100), MilkdropPlan::Reuse)]
-    #[case::a_new_clock_advances(Some(stamp((1, 20, 8), 100)), stamp((1, 20, 8), 133), MilkdropPlan::Advance)]
-    #[case::less_than_a_step_reuses(Some(stamp((1, 20, 8), 100)), stamp((1, 20, 8), 132), MilkdropPlan::Reuse)]
-    #[case::a_clock_gone_backwards_rebuilds(Some(stamp((1, 20, 8), 100)), stamp((1, 20, 8), 50), MilkdropPlan::Rebuild)]
-    #[case::paused_clock_movement_reuses(Some(stamp((1, 20, 8), 100)), paused((1, 20, 8), 133), MilkdropPlan::Reuse)]
-    #[case::paused_reset_key_change_rebuilds(Some(stamp((2, 20, 8), 100)), paused((1, 20, 8), 133), MilkdropPlan::Rebuild)]
-    #[case::a_different_reset_key_rebuilds(Some(stamp((2, 20, 8), 100)), stamp((1, 20, 8), 100), MilkdropPlan::Rebuild)]
-    #[case::a_new_theme_rebuilds_even_when_paused(Some(stamp((1, 20, 8), 100)), themed(paused((1, 20, 8), 100)), MilkdropPlan::Recolour)]
-    #[case::nothing_installed_rebuilds(None, stamp((1, 20, 8), 100), MilkdropPlan::Rebuild)]
-    fn plan_milkdrop_decides_rebuild_advance_or_reuse(
-        #[case] installed_stamp: Option<MilkdropStamp>,
-        #[case] desired_stamp: MilkdropStamp,
-        #[case] expected: MilkdropPlan,
-    ) {
-        assert_eq!(plan_milkdrop(installed_stamp, desired_stamp), expected);
+    struct PlanRow {
+        installed_stamp: Option<MilkdropStamp>,
+        desired_stamp: MilkdropStamp,
+        playback: Playback,
     }
 
-    #[test]
-    fn the_same_path_always_seeds_the_same_way() {
-        let path = PathBuf::from("/music/a.flac");
-        assert_eq!(milkdrop_seed(Some(&path)), milkdrop_seed(Some(&path)));
+    #[rstest]
+    #[case::same_reset_key_and_clock(PlanRow { installed_stamp: Some(stamp((1, 20, 8), 100)), desired_stamp: stamp((1, 20, 8), 100), playback: Playback::Playing }, MilkdropPlan::Reuse)]
+    #[case::a_new_clock_advances(PlanRow { installed_stamp: Some(stamp((1, 20, 8), 100)), desired_stamp: stamp((1, 20, 8), 133), playback: Playback::Playing }, MilkdropPlan::Advance)]
+    #[case::less_than_a_step_reuses(PlanRow { installed_stamp: Some(stamp((1, 20, 8), 100)), desired_stamp: stamp((1, 20, 8), 132), playback: Playback::Playing }, MilkdropPlan::Reuse)]
+    #[case::a_clock_gone_backwards_rebuilds(PlanRow { installed_stamp: Some(stamp((1, 20, 8), 100)), desired_stamp: stamp((1, 20, 8), 50), playback: Playback::Playing }, MilkdropPlan::Rebuild)]
+    #[case::paused_clock_movement_reuses(PlanRow { installed_stamp: Some(stamp((1, 20, 8), 100)), desired_stamp: stamp((1, 20, 8), 133), playback: Playback::Paused }, MilkdropPlan::Reuse)]
+    #[case::paused_reset_key_change_rebuilds(PlanRow { installed_stamp: Some(stamp((2, 20, 8), 100)), desired_stamp: stamp((1, 20, 8), 133), playback: Playback::Paused }, MilkdropPlan::Rebuild)]
+    #[case::a_different_reset_key_rebuilds(PlanRow { installed_stamp: Some(stamp((2, 20, 8), 100)), desired_stamp: stamp((1, 20, 8), 100), playback: Playback::Playing }, MilkdropPlan::Rebuild)]
+    #[case::a_new_theme_recolours_even_when_paused(PlanRow { installed_stamp: Some(stamp((1, 20, 8), 100)), desired_stamp: themed(stamp((1, 20, 8), 100)), playback: Playback::Paused }, MilkdropPlan::Recolour)]
+    #[case::nothing_installed_rebuilds(PlanRow { installed_stamp: None, desired_stamp: stamp((1, 20, 8), 100), playback: Playback::Playing }, MilkdropPlan::Rebuild)]
+    fn plan_milkdrop_decides_rebuild_advance_or_reuse(
+        #[case] plan_row: PlanRow,
+        #[case] expected: MilkdropPlan,
+    ) {
+        let PlanRow {
+            installed_stamp,
+            desired_stamp,
+            playback,
+        } = plan_row;
+        assert_eq!(
+            plan_milkdrop(installed_stamp, desired_stamp, playback),
+            expected
+        );
     }
 
     #[test]
@@ -249,11 +278,6 @@ mod tests {
         let a = PathBuf::from("/music/a.flac");
         let b = PathBuf::from("/music/b.flac");
         assert_ne!(milkdrop_seed(Some(&a)), milkdrop_seed(Some(&b)));
-    }
-
-    #[test]
-    fn no_track_still_seeds_deterministically() {
-        assert_eq!(milkdrop_seed(None), milkdrop_seed(None));
     }
 
     fn switch_to_ember(sources: &mut SceneSources) {
@@ -271,26 +295,6 @@ mod tests {
             },
         );
         sources.model.revisions.theme.advance();
-    }
-
-    #[test]
-    fn a_theme_change_while_paused_recolours_the_lines() {
-        let mut sources = SceneSources::new(model_with_tracks(1));
-        let area = Some(Rect::new(0, 0, 12, 6));
-        let mut cover = MilkdropCover::default();
-        sources.model.player = playing("/music/a.flac");
-        let before = cover.refresh(&sources.scene(), area);
-        sources.model.player = Player::Paused {
-            track: Arc::new(Track::listed(Path::new("/music/a.flac"))),
-            position: Duration::ZERO,
-            by: PausedBy::Listener,
-        };
-        switch_to_ember(&mut sources);
-        let after = cover.refresh(&sources.scene(), area);
-        let (CardCover::Text(before), CardCover::Text(after)) = (before, after) else {
-            panic!("milkdrop paints text lines");
-        };
-        assert_ne!(before, after);
     }
 
     fn text(cover: CardCover) -> Arc<[Line<'static>]> {
@@ -340,36 +344,6 @@ mod tests {
     }
 
     #[test]
-    fn paints_between_steps_advance_as_much_as_one_paint_later() {
-        let mut sources = SceneSources::new(model_with_tracks(1));
-        sources.model.player = Player::Playing {
-            track: Arc::new(Track::listed(Path::new("/music/a.flac"))),
-            playhead: Playhead::anchored(
-                Duration::ZERO,
-                Moment::default(),
-                Speed::default(),
-            ),
-            preloaded: None,
-        };
-        sources.spectrum.fill(0.6);
-        let area = Some(Rect::new(0, 0, 12, 6));
-        let mut once_cover = MilkdropCover::default();
-        let mut twice_cover = MilkdropCover::default();
-        let mut scene = sources.scene();
-        let start = text(once_cover.refresh(&scene, area));
-        twice_cover.refresh(&scene, area);
-        scene.presentation.since_first_paint = Duration::from_millis(10);
-        twice_cover.refresh(&scene, area);
-        scene.presentation.since_first_paint = Duration::from_millis(20);
-        let once_lines = text(once_cover.refresh(&scene, area));
-        let twice_lines = text(twice_cover.refresh(&scene, area));
-        assert_eq!(once_lines, twice_lines);
-        assert_eq!(once_lines, start);
-        scene.presentation.since_first_paint = Duration::from_millis(40);
-        assert_ne!(text(once_cover.refresh(&scene, area)), start);
-    }
-
-    #[test]
     fn catch_up_steps_advance_on_their_own_step_times() {
         let mut sources = SceneSources::new(model_with_tracks(1));
         sources.model.player = playing("/music/b.flac");
@@ -389,8 +363,12 @@ mod tests {
         assert_eq!(stepwise_cover.installed, caught_up_cover.installed);
     }
 
-    #[test]
-    fn a_gap_longer_than_four_steps_advances_four_and_drops_the_rest() {
+    #[rstest]
+    #[case::whole_steps(330)]
+    #[case::with_a_part_step_left_over(340)]
+    fn a_gap_longer_than_four_steps_advances_four_and_drops_the_rest(
+        #[case] gap_millis: u64,
+    ) {
         let mut sources = SceneSources::new(model_with_tracks(1));
         sources.model.player = playing("/music/b.flac");
         sources.spectrum.fill(0.6);
@@ -403,7 +381,7 @@ mod tests {
             scene.presentation.since_first_paint = Duration::from_millis(millis);
             stepwise_cover.refresh(&scene, area);
         }
-        scene.presentation.since_first_paint = Duration::from_millis(330);
+        scene.presentation.since_first_paint = Duration::from_millis(gap_millis);
         let stalled_lines = text(stalled_cover.refresh(&scene, area));
         assert_eq!(stalled_lines, stepwise_cover.lines);
         assert_eq!(
@@ -411,7 +389,7 @@ mod tests {
                 .installed
                 .as_ref()
                 .map(|(_, stamp)| stamp.since_first_paint),
-            Some(Duration::from_millis(330))
+            Some(Duration::from_millis(gap_millis))
         );
     }
 

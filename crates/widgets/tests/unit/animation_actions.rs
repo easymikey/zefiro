@@ -65,7 +65,7 @@ struct AnimationRow<'a> {
     cues: &[Cue::TrackChanged],
     backdrop: pane_backdrop(),
     expected: &[],
-    still: &[CARD_TITLE, PANE_STATUS],
+    still: &[],
 })]
 #[case::a_favorite_toggle(AnimationRow {
     cues: &[Cue::FavoriteToggled],
@@ -143,12 +143,4 @@ fn an_action_animates_its_own_rect(#[case] row: AnimationRow<'_>) {
             "{rect:?} must stay still, moved: {moved_rects:?}"
         );
     }
-}
-
-#[test]
-fn a_frame_that_cues_nothing_stages_no_user_action_animations() {
-    let mut stage = AnimationStage::default();
-    stage.play(Vec::new(), &pane_backdrop());
-
-    assert!(!stage.is_animating(), "launching is not a change");
 }

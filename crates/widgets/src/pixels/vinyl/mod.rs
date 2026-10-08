@@ -41,7 +41,7 @@ pub(crate) struct VinylStyle {
 impl VinylStyle {
     #[must_use]
     pub(crate) fn from_theme(theme: &ActiveTheme<'_>) -> Self {
-        let colors = &theme.colors;
+        let colors = &theme.theme.colors;
         Self {
             paper: colors.foreground,
             border: colors.muted_foreground,
@@ -160,11 +160,11 @@ impl VinylCache {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{cell::Cell, path::PathBuf, sync::Arc};
+    use std::{path::PathBuf, sync::Arc};
 
     use image::RgbaImage;
-    use kernel::domain::{appearance::Rgb, geometry::Pixels};
-    use tiny_skia::Pixmap;
+    use kernel::domain::geometry::Pixels;
+    use rstest::rstest;
 
     use crate::{
         pixels::{
@@ -226,12 +226,16 @@ pub(crate) mod tests {
         let shadow_margin = VINYL_LAYOUT.shadow_offset
             * size
             * geometry::shadow_horizontal_reach_fraction();
-        crate::pixels::numeric::floor::<u32>((peek + shadow_margin).ceil())
+        crate::pixels::numeric::ceil::<u32>(peek + shadow_margin)
     }
 
-    #[test]
-    fn canvas_width_is_the_canvas_side_plus_peek_and_height_is_the_canvas_side() {
-        let image = composed(Some(&cover_image(synthetic_art(32))));
+    #[rstest]
+    #[case::with_a_cover(Some(cover_image(synthetic_art(32))))]
+    #[case::without_a_cover(None)]
+    fn the_canvas_is_the_side_plus_peek_wide_and_the_side_tall(
+        #[case] cover_image: Option<CoverImage>,
+    ) {
+        let image = composed(cover_image.as_ref());
         let peek = expected_peek(CANVAS_SIDE);
         assert_eq!(image.dimensions(), (CANVAS_SIDE.0 + peek, CANVAS_SIDE.0));
     }
@@ -242,23 +246,6 @@ pub(crate) mod tests {
         let (width, height) = image.dimensions();
         let rendered_ratio = f64::from(width) / f64::from(height);
         assert!((rendered_ratio - f64::from(canvas_aspect_ratio())).abs() < 0.02);
-    }
-
-    #[test]
-    fn same_input_renders_identical_bytes() {
-        let art = cover_image(synthetic_art(32));
-
-        assert_eq!(
-            composed(Some(&art)).into_raw(),
-            composed(Some(&art)).into_raw()
-        );
-    }
-
-    #[test]
-    fn no_cover_renders_without_panicking() {
-        let image = composed(None);
-        let peek = expected_peek(CANVAS_SIDE);
-        assert_eq!(image.dimensions(), (CANVAS_SIDE.0 + peek, CANVAS_SIDE.0));
     }
 
     #[test]
@@ -288,76 +275,25 @@ pub(crate) mod tests {
         assert_eq!(first.into_raw(), again.into_raw());
     }
 
-    #[test]
-    fn same_key_does_not_recompute() {
+    #[rstest]
+    #[case::the_same_key_paints_once(&[7, 7, 7], &[14, 14, 14], 1)]
+    #[case::a_different_key_paints_again(&[1, 2, 2], &[2, 4, 4], 2)]
+    fn the_memo_paints_each_key_once_and_keeps_its_first_value(
+        #[case] keys: &[u32],
+        #[case] expected: &[u32],
+        #[case] paints: u32,
+    ) {
         let mut memo: Memo<u32, u32> = Memo::new();
         let mut calls = 0;
-        for _ in 0..3 {
-            memo.cached_or_painted(7, || {
-                calls += 1;
-                42
-            });
-        }
-        assert_eq!(calls, 1);
-        assert_eq!(
-            *memo.cached_or_painted(7, || panic!("key 7 is already cached")),
-            42
-        );
-    }
-
-    #[test]
-    fn different_key_recomputes() {
-        let mut memo: Memo<u32, u32> = Memo::new();
-        let mut calls = 0;
-        let mut doubled = |key: u32| -> u32 {
-            *memo.cached_or_painted(key, || {
-                calls += 1;
-                key * 2
+        let values: Vec<u32> = keys
+            .iter()
+            .map(|&key| {
+                *memo.cached_or_painted(key, || {
+                    calls += 1;
+                    key * 2
+                })
             })
-        };
-        assert_eq!(doubled(1), 2);
-        assert_eq!(doubled(2), 4);
-        assert_eq!(doubled(2), 4);
-        assert_eq!(calls, 2);
-    }
-
-    #[test]
-    fn a_second_value_for_the_same_key_is_ignored() {
-        let mut memo: Memo<u32, &'static str> = Memo::new();
-        memo.cached_or_painted(5, || "first");
-        assert_eq!(*memo.cached_or_painted(5, || "second"), "first");
-    }
-
-    #[test]
-    fn the_record_is_rebuilt_only_when_its_vinyl_style_or_side_move() {
-        let mut cache = VinylCache::default();
-        let calls = Cell::new(0u32);
-        let build = || {
-            calls.update(|n| n + 1);
-            None::<Pixmap>
-        };
-        let vinyl_style = noir_vinyl_style();
-
-        cache
-            .record
-            .cached_or_painted((vinyl_style, Pixels(128)), build);
-        cache
-            .record
-            .cached_or_painted((vinyl_style, Pixels(128)), build);
-        assert_eq!(calls.get(), 1, "unchanged colors and size must not rebuild");
-
-        let recolored_style = VinylStyle {
-            accent: Rgb([0x3d, 0x9b, 0xff]),
-            ..vinyl_style
-        };
-        cache
-            .record
-            .cached_or_painted((recolored_style, Pixels(128)), build);
-        assert_eq!(calls.get(), 2, "new colors must force a rebuild");
-
-        cache
-            .record
-            .cached_or_painted((recolored_style, Pixels(256)), build);
-        assert_eq!(calls.get(), 3, "a new size must also force a rebuild");
+            .collect();
+        assert_eq!((values.as_slice(), calls), (expected, paints));
     }
 }

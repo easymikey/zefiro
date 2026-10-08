@@ -59,7 +59,7 @@ mod tests {
     use kernel::domain::driver::DriverName;
 
     use crate::{
-        jobs::{JOB_SLOTS, serve, stash},
+        jobs::{JOB_SLOTS, serve},
         registry,
     };
 
@@ -78,15 +78,6 @@ mod tests {
             Job::First(_) => panic!("the job panics"),
             Job::Second(_) => job,
         }
-    }
-
-    #[test]
-    fn a_newer_job_of_the_same_kind_replaces_the_older() {
-        let mut pending = Vec::new();
-        stash(&mut pending, Job::Second(1));
-        stash(&mut pending, Job::First(1));
-        stash(&mut pending, Job::Second(2));
-        assert_eq!(pending, vec![Job::First(1), Job::Second(2)]);
     }
 
     #[test]

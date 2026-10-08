@@ -48,66 +48,28 @@ mod tests {
 
     use crate::geometry::{CoverSizing, canvas_aspect_ratio, cover_sizing};
 
-    #[test]
-    fn a_plain_cover_is_square() {
-        let cover_cells = CoverCells {
-            width: Cells(20),
-            height: Cells(8),
-        };
-        assert_eq!(
-            cover_sizing(CoverMode::Plain, cover_cells),
-            CoverSizing::Auto(1.0)
-        );
-    }
-
-    #[test]
-    fn a_vinyl_cover_uses_the_vinyl_canvas_aspect_ratio() {
-        let cover_cells = CoverCells {
-            width: Cells(20),
-            height: Cells(8),
-        };
-        assert_eq!(
-            cover_sizing(CoverMode::Vinyl, cover_cells),
-            CoverSizing::Auto(canvas_aspect_ratio())
-        );
-    }
-
-    #[test]
-    fn off_stays_off() {
-        let cover_cells = CoverCells {
-            width: Cells(20),
-            height: Cells(8),
-        };
-        assert_eq!(cover_sizing(CoverMode::Off, cover_cells), CoverSizing::Off);
-    }
-
-    #[test]
-    fn milkdrop_takes_a_fixed_text_grid() {
+    #[rstest]
+    #[case::a_plain_cover_is_square(CoverMode::Plain, CoverSizing::Auto(1.0))]
+    #[case::a_vinyl_cover_uses_the_vinyl_canvas_aspect_ratio(
+        CoverMode::Vinyl,
+        CoverSizing::Auto(canvas_aspect_ratio())
+    )]
+    #[case::off_stays_off(CoverMode::Off, CoverSizing::Off)]
+    #[case::milkdrop_takes_a_fixed_text_grid(
+        CoverMode::Milkdrop,
+        CoverSizing::Fixed {
+            width: Cells(24),
+            height: Cells(9)
+        }
+    )]
+    fn cover_sizing_follows_the_cover_mode(
+        #[case] cover_mode: CoverMode,
+        #[case] sizing: CoverSizing,
+    ) {
         let cover_cells = CoverCells {
             width: Cells(24),
             height: Cells(9),
         };
-        let sizing = cover_sizing(CoverMode::Milkdrop, cover_cells);
-        assert_eq!(
-            sizing,
-            CoverSizing::Fixed {
-                width: Cells(24),
-                height: Cells(9)
-            }
-        );
-    }
-
-    #[rstest]
-    #[case::plain(CoverMode::Plain)]
-    #[case::vinyl(CoverMode::Vinyl)]
-    fn plain_and_vinyl_size_themselves_from_their_own_aspect_ratio(
-        #[case] cover_mode: CoverMode,
-    ) {
-        let cover_cells = CoverCells {
-            width: Cells(20),
-            height: Cells(8),
-        };
-        let sizing = cover_sizing(cover_mode, cover_cells);
-        assert!(matches!(sizing, CoverSizing::Auto(_)));
+        assert_eq!(cover_sizing(cover_mode, cover_cells), sizing);
     }
 }

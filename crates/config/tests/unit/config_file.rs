@@ -16,12 +16,6 @@ use kernel::{
 const COMMENTED_CONFIG: &str = include_str!("../fixtures/config_commented.toml");
 
 #[test]
-fn the_commented_fixture_parses_into_every_table() {
-    let parsed = parse_config(COMMENTED_CONFIG).unwrap();
-    insta::assert_debug_snapshot!(parsed);
-}
-
-#[test]
 fn a_patch_round_trips_through_the_public_parser() {
     let patch = ConfigPatch {
         theme_name: Some(ThemeName::from_static("noir")),

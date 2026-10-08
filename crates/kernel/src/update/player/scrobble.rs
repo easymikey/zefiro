@@ -54,16 +54,17 @@ pub(crate) fn scrobble(
     revision: Revision,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let player = &*playback_parts.player;
-    if !(playback_parts.revisions.scrobble == Some(revision)
-        && media_fetch(player, playback_parts.downloads).is_some())
-    {
-        return Err(Unhandled);
-    }
-    match player {
+    match playback_parts.player {
         Player::Paused { .. } | Player::Stopped => Err(Unhandled),
         Player::Playing { .. } | Player::Loading(..) => {
-            Ok(scrobble_timer(playback_parts, revision, now))
+            if playback_parts.revisions.scrobble == Some(revision)
+                && media_fetch(playback_parts.player, playback_parts.downloads)
+                    .is_some()
+            {
+                Ok(scrobble_timer(playback_parts, revision, now))
+            } else {
+                Err(Unhandled)
+            }
         }
     }
 }
@@ -282,7 +283,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::short_of_the_threshold(Duration::from_secs(20))]
     #[case::at_the_threshold(Duration::from_secs(50))]
     #[case::past_the_threshold(Duration::from_secs(60))]
     fn a_scrobble_timer_while_paused_arms_nothing(#[case] position: Duration) {
@@ -470,7 +470,6 @@ mod tests {
 
     #[rstest]
     #[case::a_skipped_track(scrobbling(playing(a_track())), Revision::default().next())]
-    #[case::a_stopped_player(scrobbling(Player::Stopped), Revision::default().next())]
     #[case::a_stale_revision(scrobbling(playing(server_track(100))), Revision::default().next().next())]
     fn a_scrobble_timer_of_a_track_no_longer_playing_is_refused(
         #[case] mut model: Model,

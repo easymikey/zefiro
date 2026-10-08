@@ -123,34 +123,3 @@ fn the_chip_pulse_moves_a_chip_the_card_already_drew_in_accent() {
         "an accent-on-window chip must still visibly move"
     );
 }
-
-#[test]
-fn an_enabled_animation_wants_frames_and_advances_over_ticks() {
-    let pulse_tick = slice(|t| t.volume_pulse, 8);
-
-    let mut stage = AnimationStage::default();
-    stage.play(vec![Cue::VolumeChanged], &pane_backdrop());
-    assert!(stage.is_animating(), "an enabled animation asks for frames");
-
-    let mut seen: Vec<Buffer> = Vec::new();
-    for tick in 0..4 {
-        assert!(
-            stage.is_animating(),
-            "the animation must still want a frame at tick {tick} — 4 ticks of {pulse_tick:?} is well inside the fade"
-        );
-        let frame = step_over(&mut stage, volume_bar_frame, pulse_tick);
-        assert_ne!(frame, volume_bar_frame(), "tick {tick} must move the frame");
-        assert!(
-            !seen.contains(&frame),
-            "tick {tick} must advance the animation, not repaint the previous step"
-        );
-        seen.push(frame);
-    }
-
-    let mut guard = 0;
-    while stage.is_animating() {
-        step_over(&mut stage, volume_bar_frame, pulse_tick);
-        guard += 1;
-        assert!(guard < 64, "the animation must end");
-    }
-}

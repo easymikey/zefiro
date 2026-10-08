@@ -1,15 +1,10 @@
-use std::sync::Arc;
-
 use kernel::domain::{
     appearance::CoverMode,
     cursor_over::CursorOver,
     geometry::Cells,
-    overlay::{MusicDirError, SearchQuery, ServerPrompt, ServerQuery, TextEntry},
+    overlay::{SearchQuery, ServerQuery, TextEntry},
     playlist::PlaylistFileNameError,
-    server::ServerName,
     setting_row::SettingRow,
-    time::TimecodeError,
-    track::Track,
 };
 use ratatui::layout::Rect;
 
@@ -18,7 +13,7 @@ use crate::{
     overlay::{
         help::HelpColumns,
         history::HistoryMeasures,
-        modal::placement::OverlayAreas,
+        modal::{placement::OverlayAreas, prompt::PromptWidget},
         servers::ServersTable,
         settings::SettingsTable,
         track_details::TrackDetailsRow,
@@ -28,7 +23,7 @@ use crate::{
     toast::Placement,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub enum OverlayContent<'a> {
     Help(HelpColumns),
     Search(&'a CursorOver<SearchQuery>, String),
@@ -36,16 +31,12 @@ pub enum OverlayContent<'a> {
     SavePlaylist(&'a TextEntry<PlaylistFileNameError>),
     History(&'a CursorOver<()>, HistoryMeasures),
     Settings(SettingRow, SettingsTable),
-    ConfirmTrash(&'a Arc<Track>),
-    JumpToTime(&'a TextEntry<TimecodeError>),
     TrackDetails(Vec<TrackDetailsRow<'a>>),
-    MusicDir(&'a TextEntry<MusicDirError>),
-    AddServer(&'a ServerPrompt),
     Servers(&'a CursorOver<()>, ServersTable<'a>),
-    ConfirmRemove(&'a ServerName),
+    Prompt(PromptWidget<'a>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct FrameLayout<'a> {
     pub screen: Rect,
     pub breakpoint: Breakpoint,

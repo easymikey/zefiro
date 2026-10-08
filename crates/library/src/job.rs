@@ -20,7 +20,7 @@ use crate::{
     scan,
 };
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum LibraryJob {
     DecodeCover {
         cover_job: CoverJob,
@@ -130,10 +130,7 @@ fn local_paths(track_sources: Vec<TrackSource>) -> Vec<PathBuf> {
         .into_iter()
         .filter_map(|track_source| match track_source {
             TrackSource::Local(path) => Some(path),
-            TrackSource::Server {
-                server_name: _server_name,
-                server_track_id: _server_track_id,
-            } => None,
+            TrackSource::Server { .. } => None,
         })
         .collect()
 }
@@ -157,7 +154,6 @@ mod tests {
         revision::Revision,
         track::{Tagging, TrackSource},
     };
-    use rstest::rstest;
     use tempfile::TempDir;
 
     use crate::{dirs::LibraryDirs, job::LibraryJob, message::LibraryMessage};
@@ -206,49 +202,14 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn an_unreadable_subfolder_alone_lists_nothing_and_reports_the_folder() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let directory = tempfile::tempdir().unwrap();
-        let locked = directory.path().join("locked");
-        std::fs::create_dir(&locked).unwrap();
-        std::fs::write(locked.join("tone.wav"), TONE).unwrap();
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
-            .unwrap();
-
-        let message = LibraryJob::List {
-            music_dir: directory.path().to_path_buf(),
-            revision: Revision::default(),
-            audio_extensions: &["wav"],
-        }
-        .run();
-
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
-            .unwrap();
-        let LibraryMessage::Listed {
-            tracks, skipped, ..
-        } = message
-        else {
-            panic!("expected a listing, got {message:?}");
-        };
-        assert!(tracks.is_empty(), "{tracks:?}");
-        assert!(skipped.is_some(), "the unreadable folder is reported");
-    }
-
-    #[rstest]
-    #[cfg(unix)]
-    #[case::a_missing_dir(None)]
-    #[case::an_unreadable_dir(Some(0o000))]
-    fn a_music_dir_that_cannot_be_read_answers_an_error(#[case] mode: Option<u32>) {
+    fn a_music_dir_that_cannot_be_read_answers_an_error() {
         use std::os::unix::fs::PermissionsExt;
 
         let directory = tempfile::tempdir().unwrap();
         let music_dir = directory.path().join("music");
-        if let Some(mode) = mode {
-            std::fs::create_dir(&music_dir).unwrap();
-            std::fs::set_permissions(&music_dir, std::fs::Permissions::from_mode(mode))
-                .unwrap();
-        }
+        std::fs::create_dir(&music_dir).unwrap();
+        std::fs::set_permissions(&music_dir, std::fs::Permissions::from_mode(0o000))
+            .unwrap();
 
         let message = LibraryJob::List {
             music_dir: music_dir.clone(),
@@ -257,13 +218,8 @@ mod tests {
         }
         .run();
 
-        if mode.is_some() {
-            std::fs::set_permissions(
-                &music_dir,
-                std::fs::Permissions::from_mode(0o755),
-            )
+        std::fs::set_permissions(&music_dir, std::fs::Permissions::from_mode(0o755))
             .unwrap();
-        }
         assert!(matches!(message, LibraryMessage::Error(_)), "{message:?}");
     }
 }

@@ -86,7 +86,7 @@ mod tests {
             EventLoop,
             tests::{ScriptedShell, fixture},
         },
-        repaint::Repaint,
+        repaint::{FRAME_INTERVAL, Repaint},
         shell::FrameDue,
     };
 
@@ -124,10 +124,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_fact_batch_waits_for_the_frame(Repaint::NextFrame, 0)]
-    #[case::a_key_batch_paints_at_once(Repaint::Now, 1)]
+    #[case::a_fact_batch_waits_for_the_frame(
+        Repaint::NextFrame,
+        Duration::from_millis(5),
+        0
+    )]
+    #[case::a_key_batch_paints_at_once(Repaint::Now, Duration::from_millis(5), 1)]
+    #[case::a_fact_batch_paints_once_the_frame_passed(
+        Repaint::NextFrame,
+        FRAME_INTERVAL,
+        1
+    )]
     fn paint_if_due_respects_the_frame_cap(
         #[case] repaint: Repaint,
+        #[case] duration: Duration,
         #[case] painted: usize,
     ) {
         let mut fixture = fixture();
@@ -135,7 +145,7 @@ mod tests {
         let mut shell = ScriptedShell::new(keys, usize::MAX);
         let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
         let now = Instant::now();
-        event_loop.last_paint_at = Some(now - Duration::from_millis(5));
+        event_loop.last_paint_at = Some(now - duration);
         event_loop.repaint = repaint;
 
         event_loop.paint_if_due(now).unwrap();

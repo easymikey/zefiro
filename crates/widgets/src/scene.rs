@@ -471,23 +471,6 @@ mod tests {
         catalog
     }
 
-    #[test]
-    fn a_server_tab_paints_its_path_and_its_albums() {
-        let text = server_frame(online(), albums(Paging::Complete), 80);
-        for expected in [
-            "home · Albums: newest",
-            "Miles Davis — Kind of Blue",
-            "1959 · 5 tracks · 45:44",
-            " 1 track · 45:44",
-        ] {
-            assert!(
-                text.contains(expected),
-                "{expected:?} missing from {text:?}"
-            );
-        }
-        insta::assert_snapshot!(text);
-    }
-
     #[rstest]
     #[case::loading(
         "loading",

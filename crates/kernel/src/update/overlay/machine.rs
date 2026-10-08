@@ -261,21 +261,9 @@ impl Machine for ServerPrompt {
 
     fn transition(&mut self, message: TextRequest) -> Result<Cmd, Unhandled> {
         match self {
-            ServerPrompt::Link {
-                origin_server_name: _origin_server_name,
-                text_entry,
-            } => text_entry.transition(message),
-            ServerPrompt::User {
-                origin_server_name: _origin_server_name,
-                endpoint: _endpoint,
-                text_entry,
-            } => text_entry.transition(message),
-            ServerPrompt::Password {
-                origin_server_name: _origin_server_name,
-                endpoint: _endpoint,
-                user_name: _user_name,
-                text_entry,
-            } => text_entry.transition(message),
+            ServerPrompt::Link { text_entry, .. } => text_entry.transition(message),
+            ServerPrompt::User { text_entry, .. } => text_entry.transition(message),
+            ServerPrompt::Password { text_entry, .. } => text_entry.transition(message),
         }
     }
 }

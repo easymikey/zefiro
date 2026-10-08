@@ -27,12 +27,12 @@ pub(crate) fn fetched(
         servers,
         downloads,
         player,
-        catalog_name: _catalog_name,
-        catalogs: _catalogs,
-        revisions: _revisions,
-        favorites: _favorites,
-        overlay: _overlay,
-        play_reports: _play_reports,
+        catalog_name: _,
+        catalogs: _,
+        revisions: _,
+        favorites: _,
+        overlay: _,
+        play_reports: _,
     } = server_parts;
     let download = downloads
         .iter_mut()
@@ -106,21 +106,29 @@ pub(crate) fn forget(
             track.source(),
             TrackSource::Server {
                 server_name: playing,
-                server_track_id: _server_track_id,
+                ..
             } if playing == server_name
         )
     };
     let stops = player.current().is_some_and(served);
-    let cancelled = player.preloaded().filter(|track| !stops && served(track));
+    let cancelled = player
+        .preloaded()
+        .filter(|track| !stops && served(track))
+        .and_then(|track| {
+            downloads
+                .iter()
+                .find(|download| track.holds(&download.media_fetch))
+        })
+        .map(|download| download.media_fetch.revision);
     downloads.retain(|download| {
         download.media_fetch.server_name != *server_name
-            || cancelled.is_some_and(|track| track.holds(&download.media_fetch))
+            || cancelled == Some(download.media_fetch.revision)
     });
     if stops {
         return Cmd::message(Message::Playback(PlaybackRequest::Stop));
     }
-    cancelled.map_or_else(Cmd::none, |_track| {
-        Cmd::effect(Effect::Audio(AudioCmd::CancelPreload))
+    cancelled.map_or_else(Cmd::none, |revision| {
+        Cmd::effect(Effect::Audio(AudioCmd::CancelPreload(revision)))
     })
 }
 

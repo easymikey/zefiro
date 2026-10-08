@@ -146,26 +146,18 @@ fn a_binding_that_names_a_context_compiles_into_that_focus() {
 
 #[rstest]
 #[case::it_fires_inside_the_overlay_it_names(
-    Overlay::Search(CursorOver::default()),
+    Some(Overlay::Search(CursorOver::default())),
     plays_next()
 )]
-#[case::it_types_nothing_it_took_the_chord_from(Overlay::Help, None)]
+#[case::it_types_nothing_it_took_the_chord_from(Some(Overlay::Help), None)]
+#[case::a_binding_that_names_a_context_leaves_the_playlist_without_it(None, None)]
 fn a_binding_that_names_a_context_routes_only_there(
-    #[case] overlay: Overlay,
+    #[case] overlay: Option<Overlay>,
     #[case] expected: Option<Message>,
 ) {
-    let mut workspace = Workspace::default();
-    workspace.overlay = Some(overlay);
-    workspace.keymap = Keymap::new(next_in_search());
+    let mut workspace = compiled(next_in_search());
+    workspace.overlay = overlay;
     let key = character('n');
     let press = KeyPress { key, typed: key };
     assert_eq!(route(&workspace, press), expected);
-}
-
-#[test]
-fn a_binding_that_names_a_context_leaves_the_playlist_without_it() {
-    let workspace = compiled(next_in_search());
-    let key = character('n');
-    let press = KeyPress { key, typed: key };
-    assert_eq!(route(&workspace, press), None);
 }

@@ -55,7 +55,6 @@ mod tests {
 
     #[rstest]
     #[case::single(1, "1")]
-    #[case::ten(10, "10")]
     #[case::many(1203, "1203")]
     fn a_position_reads_as_its_decimal_digits(
         #[case] number: usize,

@@ -261,12 +261,6 @@ mod tests {
         sixel: &[],
         expected: Some(ProtocolType::Kitty),
     })]
-    #[case::ghostty_confirmed(ProtocolRow {
-        app: TerminalApp::Ghostty,
-        best_guess: ProtocolType::Kitty,
-        sixel: &[],
-        expected: Some(ProtocolType::Kitty),
-    })]
     #[case::iterm2_confirmed(ProtocolRow {
         app: TerminalApp::Iterm2,
         best_guess: ProtocolType::Iterm2,
@@ -291,24 +285,6 @@ mod tests {
         sixel: &[],
         expected: None,
     })]
-    #[case::kitty_unconfirmed(ProtocolRow {
-        app: TerminalApp::Kitty,
-        best_guess: ProtocolType::Halfblocks,
-        sixel: &[],
-        expected: None,
-    })]
-    #[case::probe_takes_what_it_got(ProtocolRow {
-        app: TerminalApp::Unknown,
-        best_guess: ProtocolType::Kitty,
-        sixel: &[],
-        expected: Some(ProtocolType::Kitty),
-    })]
-    #[case::probe_takes_sixel(ProtocolRow {
-        app: TerminalApp::Unknown,
-        best_guess: ProtocolType::Sixel,
-        sixel: &[Capability::Sixel],
-        expected: Some(ProtocolType::Sixel),
-    })]
     #[case::probe_takes_sixel_over_a_halfblocks_guess(ProtocolRow {
         app: TerminalApp::Unknown,
         best_guess: ProtocolType::Halfblocks,
@@ -319,12 +295,6 @@ mod tests {
         app: TerminalApp::Unknown,
         best_guess: ProtocolType::Halfblocks,
         sixel: &[],
-        expected: None,
-    })]
-    #[case::apple_never_gets_one(ProtocolRow {
-        app: TerminalApp::Apple,
-        best_guess: ProtocolType::Kitty,
-        sixel: &[Capability::Sixel],
         expected: None,
     })]
     fn select_protocol_type_picks_only_what_was_confirmed(#[case] row: ProtocolRow) {

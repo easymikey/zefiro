@@ -235,9 +235,11 @@ mod tests {
     use std::{path::Path, sync::Arc};
 
     use kernel::domain::{index::ViewIndex, playlist::Playlist, track::TrackSource};
+    use ratatui::layout::Rect;
+    use rstest::rstest;
 
     use crate::{
-        playlist::row::{WindowFit, queue_numbers, row_window},
+        playlist::row::{RowWindow, WindowFit, cursor_band, queue_numbers, row_window},
         primitive::marker::QueueNumber,
     };
 
@@ -294,27 +296,48 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_window_starts_at_zero_while_the_selection_fits_on_screen() {
-        let window = row_window(&WindowFit {
-            height: 5,
-            ..fit(2, None, 10)
-        });
-        assert_eq!((window.start, window.end), (0, 5));
+    #[rstest]
+    #[case::starts_at_zero_while_the_selection_fits_on_screen(
+        WindowFit { height: 5, ..fit(2, None, 10) },
+        (0, 5)
+    )]
+    #[case::follows_the_selection_past_the_first_screen(fit(35, None, 40), (26, 36))]
+    #[case::shifts_to_keep_the_playing_row_visible_when_the_cursor_still_fits(
+        fit(30, Some(32), 40),
+        (23, 33)
+    )]
+    #[case::stays_when_the_playing_row_above_would_drop_the_cursor(
+        fit(30, Some(5), 40),
+        (21, 31)
+    )]
+    fn the_window_keeps_the_selection_and_the_playing_row_on_screen(
+        #[case] window_fit: WindowFit,
+        #[case] expected: (usize, usize),
+    ) {
+        let window = row_window(&window_fit);
+        assert_eq!((window.start, window.end), expected);
     }
 
-    #[test]
-    fn the_window_follows_the_selection_past_the_first_screen() {
-        let window = row_window(&fit(35, None, 40));
-        assert!(window.start > 0, "the window must scroll to reach 35");
-        assert!(window.end - window.start <= 10);
-        assert!((window.start..window.end).contains(&35));
-    }
-
-    #[test]
-    fn the_window_shifts_to_keep_the_playing_row_visible_when_the_cursor_still_fits() {
-        let window = row_window(&fit(30, Some(32), 40));
-        assert!((window.start..window.end).contains(&32));
-        assert!((window.start..window.end).contains(&30));
+    #[rstest]
+    #[case::at_the_window_start(
+        RowWindow { start: 2, end: 7, offset: 2, playlist_len: 10 },
+        2,
+        Some(Rect::new(0, 3, 20, 1))
+    )]
+    #[case::in_an_empty_window(RowWindow::default(), 0, None)]
+    #[case::below_the_band(
+        RowWindow { start: 0, end: 5, offset: 0, playlist_len: 5 },
+        3,
+        None
+    )]
+    fn the_cursor_band_covers_the_cursor_row_only_inside_the_window_and_the_band(
+        #[case] window: RowWindow,
+        #[case] cursor_index: usize,
+        #[case] expected: Option<Rect>,
+    ) {
+        assert_eq!(
+            cursor_band(Rect::new(0, 3, 20, 3), window, cursor_index),
+            expected
+        );
     }
 }

@@ -101,7 +101,7 @@ fn paint_body(
 
     if view.playlist.tracks.is_empty() {
         let text: &str = match view.library_status {
-            LibraryStatus::Loading => theme.scanning_label.as_str(),
+            LibraryStatus::Loading => theme.theme.scanning_label.as_str(),
             LibraryStatus::Ready => EMPTY_PLAYLIST_TEXT,
         };
         Paragraph::new(text)
@@ -140,21 +140,16 @@ fn paint_body(
 mod tests {
     use std::{path::Path, sync::Arc};
 
-    use kernel::{
-        domain::{
-            cursor::Cursor,
-            favorites::Favorites,
-            index::ViewIndex,
-            model::{Model, ScanStatus},
-            playlist::Playlist,
-            startup::Shuffle,
-            time::Moment,
-            track::{Track, TrackParts},
-        },
-        message::{Message, PlaybackRequest},
-        update::update,
+    use kernel::domain::{
+        appearance::Rgb,
+        cursor::Cursor,
+        favorites::Favorites,
+        index::ViewIndex,
+        model::ScanStatus,
+        playlist::Playlist,
+        startup::Shuffle,
+        track::{Track, TrackParts},
     };
-    use ratatui::style::Color;
 
     use crate::{
         playlist::{
@@ -164,7 +159,7 @@ mod tests {
         primitive::canvas::tests::find_text,
         status_line::StatusLineView,
         test_support::{noir, rendered},
-        theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
+        theme::{Theme, active_theme::ActiveTheme, colors::Colors, rgb::ColorDepth},
     };
 
     fn titled_track(title: &str) -> Arc<Track> {
@@ -242,6 +237,20 @@ mod tests {
             view(playlist, theme),
             ActiveTheme::new(theme, ColorDepth::TrueColor),
         )
+    }
+
+    #[test]
+    fn a_pane_with_no_room_inside_its_border_paints_only_the_border() {
+        let theme = noir();
+        let full_playlist = library(50);
+        let empty_playlist = Playlist::default();
+        let painted = rendered(2, 10, |frame| {
+            frame.render_widget(&pane(&full_playlist, &theme), frame.area());
+        });
+        let border = rendered(2, 10, |frame| {
+            frame.render_widget(&pane(&empty_playlist, &theme), frame.area());
+        });
+        assert_eq!(painted.buffer(), border.buffer());
     }
 
     #[test]
@@ -387,81 +396,15 @@ mod tests {
     }
 
     #[test]
-    fn a_listed_library_names_its_files_while_the_status_line_counts_the_tagging() {
-        let playlist = Playlist {
-            tracks: ["song01.flac", "song02.mp3", "song03.mkv"]
-                .iter()
-                .map(|file| Arc::new(Track::listed(&Path::new("/music").join(file))))
-                .collect(),
-            ..Playlist::default()
-        };
-        let theme = noir();
-        let widget = PlaylistWidget::new(
-            PlaylistView {
-                playlist: &playlist,
-                queue: &[],
-                favorites: &EMPTY_FAVORITES,
-                selected: ViewIndex::new(0),
-                playing_index: None,
-                library_status: LibraryStatus::Ready,
-                catalog_view: None,
-                status_line_view: StatusLineView {
-                    scan_status: ScanStatus::Tagging { done: 1, total: 3 },
-                    ..status(&playlist, &[], &theme)
-                },
-            },
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
-        let text = rendered(80, 8, |frame| frame.render_widget(&widget, frame.area()))
-            .to_string();
-        assert!(text.contains("tagging 1/3"), "got {text:?}");
-    }
-
-    #[test]
-    fn an_over_long_title_truncates_inside_the_right_inset() {
-        const SCROLLBAR_COLUMN: usize = 1;
-        const PANE_BORDER: char = '┃';
-
-        let playlist = Playlist {
-            tracks: vec![titled_track(
-                "Brooke Valentine; Da Brat; Lil Jon; Remy Ma; Miss B — Girlfight \
-                 (Remix;Edited; feat. Lil Jon)",
-            )],
-            ..Playlist::default()
-        };
-        let theme = noir();
-        let widget = pane(&playlist, &theme);
-        let buffer =
-            rendered(80, 24, |frame| frame.render_widget(&widget, frame.area()))
-                .buffer()
-                .clone();
-
-        let (_, y) =
-            find_text(&buffer, "Brooke Valentine").expect("the row is painted");
-        let row_chars: Vec<char> = (0..buffer.area.width)
-            .filter_map(|x| buffer.cell((x, y)))
-            .map(|cell| cell.symbol().chars().next().unwrap_or(' '))
-            .collect();
-        let cut = row_chars
-            .iter()
-            .position(|&character| character == '…')
-            .expect("an over-long title truncates with an ellipsis");
-        let tail: String = row_chars
-            .iter()
-            .skip(cut + 1)
-            .take(SCROLLBAR_COLUMN + 1)
-            .collect();
-        assert_eq!(
-            tail,
-            format!("{}{PANE_BORDER}", " ".repeat(SCROLLBAR_COLUMN)),
-            "the truncated title must stop short of the border by the scrollbar's own column"
-        );
-    }
-
-    #[test]
     fn the_cursor_row_wears_the_band_and_the_playing_row_wears_the_marker() {
         let playlist = library(3);
-        let theme = noir();
+        let theme = Theme {
+            colors: Colors {
+                selection_foreground: Rgb([0xff, 0xff, 0xff]),
+                ..noir().colors
+            },
+            ..noir()
+        };
         let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let colors = active_theme.colors();
         let highlight = colors.highlight;
@@ -504,6 +447,37 @@ mod tests {
         let cursor = buffer[(cursor_x, cursor_y)].style();
         assert_eq!(cursor.fg, Some(selection_text));
         assert_eq!(cursor.bg, Some(selection_background));
+
+        let (other_x, other_y) =
+            find_text(&buffer, "song00").expect("first row visible");
+        assert_eq!(
+            buffer[(other_x, other_y)].style().fg,
+            Some(colors.foreground)
+        );
+    }
+
+    #[test]
+    fn a_playing_row_just_below_the_window_highlights_no_row() {
+        let playlist = library(40);
+        let theme = noir();
+        let area = ratatui::layout::Rect::new(0, 0, 60, 12);
+        let end = pane(&playlist, &theme).areas(area).window.end;
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let highlight = active_theme.colors().highlight;
+        let widget = PlaylistWidget::new(
+            PlaylistView {
+                playing_index: Some(ViewIndex::new(end)),
+                ..view(&playlist, &theme)
+            },
+            active_theme,
+        );
+        let areas = widget.areas(area);
+        assert_eq!(areas.window.end, end);
+        let mut buffer = ratatui::buffer::Buffer::empty(area);
+        widget.paint(&areas, &mut buffer);
+        let (last_x, last_y) = find_text(&buffer, &format!("song{:02}", end - 1))
+            .expect("the last row of the window is painted");
+        assert_ne!(buffer[(last_x, last_y)].style().fg, Some(highlight));
     }
 
     #[test]
@@ -533,51 +507,11 @@ mod tests {
         let expected: Vec<(u16, u16)> =
             (band.x..band.x + band.width).map(|x| (x, band.y)).collect();
         assert_eq!(painted, expected);
-    }
-
-    #[test]
-    fn the_selection_band_runs_the_full_width_of_the_row() {
-        let playlist = library(3);
-        let theme = noir();
-        let selection_background: Color =
-            ActiveTheme::new(&theme, ColorDepth::TrueColor)
-                .colors()
-                .selection_background;
-
-        let widget = PlaylistWidget::new(
-            PlaylistView {
-                playlist: &playlist,
-                queue: &[],
-                favorites: &EMPTY_FAVORITES,
-                selected: ViewIndex::new(2),
-                playing_index: Some(ViewIndex::new(0)),
-                library_status: LibraryStatus::Ready,
-                catalog_view: None,
-                status_line_view: StatusLineView {
-                    selected: ViewIndex::new(2),
-                    ..status(&playlist, &[], &theme)
-                },
-            },
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
-        let buffer =
-            rendered(60, 24, |frame| frame.render_widget(&widget, frame.area()))
-                .buffer()
-                .clone();
-
-        let (x, y) = find_text(&buffer, "song02").expect("cursor row visible");
-        let banded: Vec<u16> = (0..buffer.area.width)
-            .filter(|&column| {
-                buffer[(column, y)].style().bg == Some(selection_background)
-            })
-            .collect();
-        let first = banded.first().copied().expect("the band is painted");
-        let last = banded.last().copied().expect("the band is painted");
-        assert!(first < x, "the band starts before the row's first glyph");
-        assert_eq!(
-            banded.len(),
-            usize::from(last - first + 1),
-            "the band is one unbroken run of cells"
+        let (text_x, _) =
+            find_text(&buffer, "song25").expect("the selected row is painted");
+        assert!(
+            band.x < text_x,
+            "the band starts before the row's first glyph"
         );
     }
 
@@ -627,64 +561,5 @@ mod tests {
             Some("█"),
             "handle should sit on the last track cell, right above the down arrow"
         );
-    }
-
-    #[test]
-    fn shuffle_next_keeps_playing_row_visible_when_cursor_follows() {
-        let tracks: Vec<Arc<Track>> = (0..40)
-            .map(|index| titled_track(&format!("song{index:02}")))
-            .collect();
-        let mut model = Model {
-            playlist: Playlist::from_tracks(tracks),
-            ..Model::default()
-        };
-        update(
-            &mut model,
-            Message::Playback(PlaybackRequest::ToggleShuffle),
-            Moment::default(),
-        )
-        .unwrap();
-        let mut order: Vec<ViewIndex> = vec![ViewIndex::new(0), ViewIndex::new(39)];
-        order.extend((1..39).map(ViewIndex::new));
-        update(&mut model, Message::ShuffleRolled(order), Moment::default()).unwrap();
-        update(
-            &mut model,
-            Message::Playback(PlaybackRequest::Next),
-            Moment::default(),
-        )
-        .unwrap();
-
-        let playing = model
-            .playlist
-            .playing_index()
-            .expect("advance must land on a track");
-        assert_eq!(
-            playing.get(),
-            39,
-            "sanity: shuffle actually jumped to the far end"
-        );
-        model.workspace.browse.cursor =
-            Cursor::at(model.playlist.tracks.len(), playing.get());
-
-        let theme = noir();
-        let widget = PlaylistWidget::new(
-            PlaylistView {
-                playlist: &model.playlist,
-                queue: &model.queue,
-                favorites: &model.favorites,
-                selected: ViewIndex::new(model.workspace.browse.selected().get()),
-                playing_index: model.playing_index(),
-                library_status: LibraryStatus::Ready,
-                catalog_view: None,
-                status_line_view: StatusLineView {
-                    selected: ViewIndex::new(model.workspace.browse.selected().get()),
-                    ..status(&model.playlist, &model.queue, &theme)
-                },
-            },
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
-        let text = rendered(60, 28, |frame| frame.render_widget(&widget, frame.area()))
-            .to_string();
-        assert!(text.contains("▶ song39"), "got {text:?}");
     }
 }

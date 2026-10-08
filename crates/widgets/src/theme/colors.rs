@@ -114,6 +114,7 @@ impl Colors {
 #[cfg(test)]
 mod tests {
     use kernel::domain::appearance::Rgb;
+    use rstest::rstest;
 
     use crate::theme::{
         colors::{Colors, ThemeBase},
@@ -141,13 +142,6 @@ mod tests {
     #[test]
     fn the_derivation_table_maps_every_role() {
         insta::assert_debug_snapshot!(Colors::from_theme_base(&test_base()));
-    }
-
-    #[test]
-    fn every_field_reads_back_the_hex_the_derivation_table_wrote() {
-        let colors = Colors::from_theme_base(&test_base());
-        assert_eq!(colors.background, Rgb([0x10, 0x20, 0x30]));
-        assert_eq!(colors.favorite, Rgb([0xff, 0xff, 0]));
     }
 
     #[test]
@@ -180,38 +174,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_favorite_too_dim_for_the_window_is_raised_to_marker_contrast() {
-        let theme_base = ThemeBase {
-            background: Rgb([0x10, 0x10, 0x10]),
-            muted_foreground: Rgb([0x40, 0x40, 0x40]),
-            yellow: Rgb([0x60, 0x50, 0]),
-            ..test_base()
-        };
-        let colors = Colors::from_theme_base(&theme_base);
-        assert!(
-            contrast_ratio(colors.favorite, colors.window_background)
-                >= MIN_MARKER_CONTRAST
-        );
-        assert!(
-            contrast_ratio(colors.favorite, colors.selection_background)
-                >= MIN_MARKER_CONTRAST
-        );
-    }
-
     fn luma(rgb: Rgb) -> u32 {
         rgb.0.iter().map(|&channel| u32::from(channel)).sum()
-    }
-
-    #[test]
-    fn window_background_lightens_toward_muted_foreground_on_a_dark_theme() {
-        let theme_base = ThemeBase {
-            background: Rgb([0x10, 0x10, 0x10]),
-            muted_foreground: Rgb([0xe0, 0xe0, 0xe0]),
-            ..test_base()
-        };
-        let colors = Colors::from_theme_base(&theme_base);
-        assert!(luma(colors.window_background) > luma(colors.background));
     }
 
     #[test]
@@ -225,22 +189,37 @@ mod tests {
         assert!(luma(colors.window_background) < luma(colors.background));
     }
 
-    #[test]
-    fn an_accent_darker_than_the_selection_band_is_raised_to_marker_contrast_on_both() {
-        let theme_base = ThemeBase {
+    #[rstest]
+    #[case::a_favorite_too_dim_for_the_window(
+        ThemeBase {
+            background: Rgb([0x10, 0x10, 0x10]),
+            muted_foreground: Rgb([0x40, 0x40, 0x40]),
+            yellow: Rgb([0x60, 0x50, 0]),
+            ..test_base()
+        },
+        |colors: &Colors| colors.favorite
+    )]
+    #[case::an_accent_darker_than_the_selection_band(
+        ThemeBase {
             background: Rgb([0x10, 0x10, 0x10]),
             muted_foreground: Rgb([0x80, 0x80, 0x80]),
             foreground: Rgb([0xe0, 0xe0, 0xe0]),
             accent: Rgb([0x1a, 0x23, 0x7e]),
             ..test_base()
-        };
+        },
+        |colors: &Colors| colors.highlight
+    )]
+    fn a_dim_favorite_or_a_dark_accent_is_raised_to_marker_contrast_on_both(
+        #[case] theme_base: ThemeBase,
+        #[case] marker: fn(&Colors) -> Rgb,
+    ) {
         let colors = Colors::from_theme_base(&theme_base);
         assert!(
-            contrast_ratio(colors.highlight, colors.window_background)
+            contrast_ratio(marker(&colors), colors.window_background)
                 >= MIN_MARKER_CONTRAST
         );
         assert!(
-            contrast_ratio(colors.highlight, colors.selection_background)
+            contrast_ratio(marker(&colors), colors.selection_background)
                 >= MIN_MARKER_CONTRAST
         );
     }

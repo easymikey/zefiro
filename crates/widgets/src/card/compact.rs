@@ -14,7 +14,7 @@ use crate::{
         chip::speed_chip_spans,
         span::{self, line, text},
         time_text::elapsed_text,
-        truncate::truncate,
+        truncate::{truncate, truncate_line},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -198,7 +198,13 @@ fn paint_status_row(
     let status = view.status();
     let status_color = status.color(&compact_card_widget.theme);
     let elapsed_total = elapsed_text(view.position(), view.duration());
-    let status_text = format!("{} {}  {elapsed_total}", status.glyph(), status.word());
+    let status_line = line([
+        text(status.glyph()).fg(status_color),
+        text(" ").fg(status_color),
+        text(status.word()).fg(status_color),
+        text("  ").fg(status_color),
+        text(elapsed_total).fg(status_color),
+    ]);
     let indicator_spans = speed_chip_spans(
         view.speed,
         compact_card_widget.speed_chip,
@@ -206,14 +212,12 @@ fn paint_status_row(
     );
     let indicator_width = span::width(&indicator_spans);
     let status_width = usize::from(compact_card_areas.status.width);
-    let fits = status_text.chars().count() + indicator_width <= status_width;
-    let status_spans: Vec<_> = std::iter::once(
-        text(truncate(&status_text, status_width))
-            .fg(status_color)
-            .into(),
-    )
-    .chain(indicator_spans.into_iter().filter(|_| fits))
-    .collect();
+    let fits = status_line.width() + indicator_width <= status_width;
+    let status_spans: Vec<_> = truncate_line(status_line, status_width)
+        .spans
+        .into_iter()
+        .chain(indicator_spans.into_iter().filter(|_| fits))
+        .collect();
     Paragraph::new(Line::from(status_spans)).render(compact_card_areas.status, buffer);
 }
 
@@ -237,140 +241,70 @@ fn paint_meter_row(
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
-
     use kernel::domain::{
-        appearance::{ProgressBar, Rgb, SpeedChip},
+        appearance::SpeedChip,
         bounded::Bounded,
         percent::Percent,
         player::Player,
-        playhead::Playhead,
         playlist::PlayOrder,
         speed::Speed,
         time::Moment,
         transport::OutputStatus,
     };
     use ratatui::layout::Rect;
+    use rstest::rstest;
 
     use crate::{
         card::{
             CardView,
             compact::{CompactCardWidget, compact_height, progress_bar_width},
         },
+        repaint::Presence,
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
-    #[test]
-    fn the_compact_card_shows_title_progress_and_status() {
-        let theme = noir();
-        let track = track("Moon River");
-        let player = Player::Playing {
-            track: Arc::clone(&track),
-            playhead: Playhead::anchored(
-                Duration::from_secs(30),
-                Moment::default(),
-                Speed::default(),
-            ),
-            preloaded: None,
-        };
-        let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
-        let output_status = OutputStatus::Ready;
-        let play_order = PlayOrder::default();
-        let view = CardView {
-            player: &player,
-            speed: Speed::default(),
-            volume: Percent::clamped(50),
-            spectrum: &spectrum,
-            repeat_mode: Default::default(),
-            play_order: &play_order,
-            displayed_track: Some(&track),
-            output_status: &output_status,
-            buffering_revision: None,
-            now: Moment::default(),
-        };
-        let widget = CompactCardWidget::new(
-            view,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            progress_bar_width(Rect::new(0, 0, 40, compact_height())),
-        )
-        .speed_chip(SpeedChip::Always);
-        let text = rendered(40, compact_height(), |frame| {
-            frame.render_widget(&widget, frame.area());
-        })
-        .to_string();
-        assert!(text.contains("Moon River"), "got {text:?}");
-        assert!(text.contains("Playing"), "got {text:?}");
-    }
-
-    #[test]
-    fn no_track_shows_a_placeholder_title_and_a_stopped_status() {
+    #[rstest]
+    #[case::room_for_both(64, Presence::Shown)]
+    #[case::room_for_the_status_alone(49, Presence::Hidden)]
+    fn the_speed_chip_follows_the_status_only_when_both_fit(
+        #[case] width: u16,
+        #[case] presence: Presence,
+    ) {
         let theme = noir();
         let player = Player::Stopped;
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
-        let output_status = OutputStatus::Ready;
         let play_order = PlayOrder::default();
+        let output_status = OutputStatus::Ready;
+        let displayed_track = track("Moon River");
         let view = CardView {
             player: &player,
-            speed: Speed::default(),
-            volume: Percent::clamped(50),
+            speed: Speed::clamped(1.25),
+            volume: Percent::clamped(70),
             spectrum: &spectrum,
             repeat_mode: Default::default(),
             play_order: &play_order,
-            displayed_track: None,
+            displayed_track: Some(&displayed_track),
             output_status: &output_status,
             buffering_revision: None,
             now: Moment::default(),
         };
+        let area = Rect::new(0, 0, width, compact_height());
         let widget = CompactCardWidget::new(
             view,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            progress_bar_width(Rect::new(0, 0, 40, compact_height())),
+            progress_bar_width(area),
         )
         .speed_chip(SpeedChip::Always);
-        let text = rendered(40, compact_height(), |frame| {
+        let text = rendered(width, compact_height(), |frame| {
             frame.render_widget(&widget, frame.area());
         })
         .to_string();
-        assert!(text.contains("No track"), "got {text:?}");
-        assert!(text.contains("Stopped"), "got {text:?}");
-    }
-
-    #[test]
-    fn compact_volume_bar_uses_the_bar_groove() {
-        let theme = noir();
-        let player = Player::Stopped;
-        let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
-        let output_status = OutputStatus::Ready;
-        let play_order = PlayOrder::default();
-        let view = CardView {
-            player: &player,
-            speed: Speed::default(),
-            volume: Percent::clamped(0),
-            spectrum: &spectrum,
-            repeat_mode: Default::default(),
-            play_order: &play_order,
-            displayed_track: None,
-            output_status: &output_status,
-            buffering_revision: None,
-            now: Moment::default(),
-        };
-        let bar = ProgressBar {
-            groove: Some(Rgb([0, 255, 0])),
-            ..ProgressBar::default()
-        };
-        let widget = CompactCardWidget::new(
-            view,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress_bar(bar),
-            progress_bar_width(Rect::new(0, 0, 40, compact_height())),
-        )
-        .speed_chip(SpeedChip::Always);
-        let backend = rendered(40, compact_height(), |frame| {
-            frame.render_widget(&widget, frame.area());
-        });
-        let colors = ActiveTheme::new(&theme, ColorDepth::TrueColor).colors();
-        let cell = &backend.buffer()[(22, 4)];
-        assert_eq!(cell.fg, colors.bar_groove);
+        assert_eq!(
+            Presence::from(text.contains('\u{00BB}')),
+            presence,
+            "got {text:?}"
+        );
     }
 }

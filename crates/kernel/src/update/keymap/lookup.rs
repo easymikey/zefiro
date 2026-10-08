@@ -56,10 +56,7 @@ fn in_key_context(
         && let Some(message) = exact_match(
             bindings,
             binding_scope.key_context,
-            KeyPattern::Chord(Chord::Sequence {
-                prefix: chord_prefix,
-                key,
-            }),
+            KeyPattern::Chord(Chord::Sequence { chord_prefix, key }),
         )
     {
         return Some(message);
@@ -103,8 +100,8 @@ fn armable_prefix(
 fn starts_with(pattern: KeyPattern, chord_prefix: ChordPrefix) -> bool {
     match pattern {
         KeyPattern::Chord(Chord::Sequence {
-            prefix: armed,
-            key: _key,
+            chord_prefix: armed,
+            ..
         }) => armed == chord_prefix,
         KeyPattern::Chord(Chord::Key(_)) | KeyPattern::AnyKey => false,
     }

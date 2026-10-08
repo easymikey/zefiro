@@ -110,7 +110,7 @@ impl Mixer {
         }
     }
 
-    fn voices(&mut self) -> impl Iterator<Item = &mut Box<Voice>> {
+    fn all_voices(&mut self) -> impl Iterator<Item = &mut Box<Voice>> {
         [
             &mut self.voices.current,
             &mut self.voices.incoming,
@@ -159,7 +159,8 @@ impl Mixer {
                 }
             }
             MixerOrder::Transport(playback) => {
-                self.voices().for_each(|voice| voice.playback = playback);
+                self.all_voices()
+                    .for_each(|voice| voice.playback = playback);
             }
             MixerOrder::RolePlayback { role, playback } => {
                 if let Some(voice) = self.voices.get(role) {
@@ -168,7 +169,7 @@ impl Mixer {
             }
             MixerOrder::Speed(speed) => {
                 self.speed = speed;
-                self.voices()
+                self.all_voices()
                     .for_each(|voice| voice.varispeed.set_speed(speed));
             }
             MixerOrder::Seek(target) => {
@@ -376,6 +377,27 @@ pub(crate) mod tests {
             assert_eq!(out.get(1_000..), second_expected.get(..1_048));
             assert!(out.iter().all(|&sample| sample != 0.0));
             assert_eq!(retired_voices.by_ref().count(), 1);
+        });
+    }
+
+    #[test]
+    fn the_retired_ring_keeps_one_full_order_queue_of_voices_and_four_more() {
+        let file = ramp_file(1, 64);
+        served(|feed_sender| {
+            let MixerChannel {
+                mut mixer,
+                mut control,
+                retired_voices,
+            } = channel(MONO_8K);
+            for _ in 0..2 {
+                for _ in 0..32 {
+                    let (attached, _attached_control) =
+                        voice(&file, MONO_8K, feed_sender);
+                    attach(&mut control, SinkRole::Current, attached);
+                }
+                mixed(&mut mixer, 64);
+            }
+            assert_eq!(retired_voices.count(), 36);
         });
     }
 

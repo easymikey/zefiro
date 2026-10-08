@@ -54,6 +54,7 @@ mod tests {
         },
         message::{ConfigEvent, Message},
     };
+    use rstest::rstest;
 
     use crate::{
         driver_thread::DriverThread,
@@ -111,60 +112,61 @@ mod tests {
         None
     }
 
-    #[test]
-    fn a_hand_edit_after_spawn_reaches_the_shell() {
-        let directory = tempfile::tempdir().unwrap();
-        let run = ConfigRun::start(directory.path());
-        run.doorbell.try_iter().for_each(drop);
-        drain(&run.inbox_receiver);
-
-        std::fs::write(
-            directory.path().join("sifr-ui.toml"),
-            "[window]\nkey_hints = false\n",
-        )
-        .unwrap();
-
-        let reloaded =
-            std::iter::from_fn(|| run.inbox_receiver.recv_timeout(DISK_TIMEOUT).ok())
-                .any(|message| {
-                    matches!(
-                        message,
-                        Message::Config(ConfigEvent::AppearanceReloaded(_))
-                    )
-                });
-        assert!(reloaded, "a hand edit after spawn must reach the shell");
-        run.stop();
+    struct EditRow {
+        theme_name: Option<ThemeName>,
+        path: &'static str,
+        text: &'static str,
     }
 
-    #[test]
-    fn a_hand_edit_of_the_startup_theme_reaches_the_shell() {
+    #[rstest]
+    #[case::an_appearance_edit_after_spawn(
+        EditRow {
+            theme_name: None,
+            path: "sifr-ui.toml",
+            text: "[window]\nkey_hints = false\n",
+        },
+        |message: Message| matches!(
+            message,
+            Message::Config(ConfigEvent::AppearanceReloaded(_))
+        )
+    )]
+    #[case::an_edit_of_the_startup_theme(
+        EditRow {
+            theme_name: Some(ThemeName::from_static("noir")),
+            path: "themes/noir.toml",
+            text: "name = \"noir\"\n[colors]\nbackground = \"#010101\"\nmuted_foreground = \"#020202\"\nforeground = \"#030303\"\naccent = \"#040404\"\ngreen = \"#050505\"\nyellow = \"#060606\"\nred = \"#070707\"\n",
+        },
+        |message: Message| matches!(message, Message::Config(ConfigEvent::ThemeReloaded(_)))
+    )]
+    fn a_hand_edit_reaches_the_shell(
+        #[case] row: EditRow,
+        #[case] reloaded: fn(Message) -> bool,
+    ) {
+        let EditRow {
+            theme_name,
+            path,
+            text,
+        } = row;
         let directory = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(directory.path().join("themes")).unwrap();
         let stub = stub_paths(directory.path());
         let paths = StartupPaths {
             config_paths: ConfigPaths {
-                theme_name: Some(ThemeName::from_static("noir")),
+                theme_name,
                 ..stub.config_paths
             },
             ..stub
         };
         let run = ConfigRun::start_with(&paths);
+        run.doorbell.try_iter().for_each(drop);
         drain(&run.inbox_receiver);
 
-        std::fs::write(
-            directory.path().join("themes/noir.toml"),
-            "name = \"noir\"\n[colors]\nbackground = \"#010101\"\nmuted_foreground = \"#020202\"\nforeground = \"#030303\"\naccent = \"#040404\"\ngreen = \"#050505\"\nyellow = \"#060606\"\nred = \"#070707\"\n",
-        )
-        .unwrap();
+        std::fs::write(directory.path().join(path), text).unwrap();
 
-        let reloaded =
-            std::iter::from_fn(|| run.inbox_receiver.recv_timeout(DISK_TIMEOUT).ok())
-                .any(|message| {
-                    matches!(message, Message::Config(ConfigEvent::ThemeReloaded(_)))
-                });
         assert!(
-            reloaded,
-            "a hand edit of the watched theme must reach the shell"
+            std::iter::from_fn(|| run.inbox_receiver.recv_timeout(DISK_TIMEOUT).ok())
+                .any(reloaded),
+            "a hand edit after spawn must reach the shell"
         );
         run.stop();
     }
@@ -256,7 +258,6 @@ mod tests {
     fn flush_then_a_closed_inbox_leaves_the_pending_save_on_disk() {
         let directory = tempfile::tempdir().unwrap();
         let run = ConfigRun::start(directory.path());
-        drain(&run.inbox_receiver);
 
         run.send(ConfigCmd::SetAppearance(AppearancePatch {
             key_hints: Some(KeyHints::Hidden),

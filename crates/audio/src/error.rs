@@ -184,99 +184,82 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unrecognized_format(
-        symphonia::core::errors::Error::Unsupported("no suitable format reader"),
-        DecodeError::Unsupported
-    )]
-    #[case::io_error(
-        symphonia::core::errors::Error::IoError(std::io::Error::from(
-            std::io::ErrorKind::BrokenPipe
-        )),
-        DecodeError::Unreadable(IoError::Other)
-    )]
-    #[case::decode_error(
-        symphonia::core::errors::Error::DecodeError("bad frame"),
-        DecodeError::Corrupt
-    )]
-    #[case::limit_error(
-        symphonia::core::errors::Error::LimitError("too large"),
-        DecodeError::Corrupt
-    )]
-    #[case::reset_required(
-        symphonia::core::errors::Error::ResetRequired,
-        DecodeError::Corrupt
-    )]
-    #[case::seek_error(
-        symphonia::core::errors::Error::SeekError(
-            symphonia::core::errors::SeekErrorKind::OutOfRange
-        ),
-        DecodeError::Corrupt
-    )]
-    fn a_decode_error_maps_to_its_audio_error(
-        #[case] source: symphonia::core::errors::Error,
-        #[case] expected: DecodeError,
-    ) {
-        let error = Error::Decode {
-            path: PathBuf::from("/music/track.flac"),
-            source,
-        };
-        let (path, error) = decode_error_of(error);
-        assert_eq!(
-            AudioError::Decode { path, error },
-            AudioError::Decode {
-                path: PathBuf::from("/music/track.flac"),
-                error: expected,
-            }
-        );
-    }
-
-    #[rstest]
     #[case::open_not_found(
         Error::Open {
             path: PathBuf::from("/a"),
             source: std::io::Error::from(std::io::ErrorKind::NotFound),
         },
-        AudioError::Decode {
+        DecodeError::Unreadable(IoError::Missing)
+    )]
+    #[case::open_denied(
+        Error::Open {
             path: PathBuf::from("/a"),
-            error: DecodeError::Unreadable(IoError::Missing),
-        }
+            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        },
+        DecodeError::Unreadable(IoError::Denied)
     )]
     #[case::worker_panicked(
         Error::WorkerPanicked(PathBuf::from("/a")),
-        AudioError::Decode { path: PathBuf::from("/a"), error: DecodeError::Panicked }
+        DecodeError::Panicked
+    )]
+    #[case::unrecognized_format(
+        Error::Decode {
+            path: PathBuf::from("/a"),
+            source: symphonia::core::errors::Error::Unsupported("no suitable format reader"),
+        },
+        DecodeError::Unsupported
+    )]
+    #[case::io_error(
+        Error::Decode {
+            path: PathBuf::from("/a"),
+            source: symphonia::core::errors::Error::IoError(std::io::Error::from(
+                std::io::ErrorKind::BrokenPipe
+            )),
+        },
+        DecodeError::Unreadable(IoError::Other)
+    )]
+    #[case::decode_error(
+        Error::Decode {
+            path: PathBuf::from("/a"),
+            source: symphonia::core::errors::Error::DecodeError("bad frame"),
+        },
+        DecodeError::Corrupt
+    )]
+    #[case::limit_error(
+        Error::Decode {
+            path: PathBuf::from("/a"),
+            source: symphonia::core::errors::Error::LimitError("too large"),
+        },
+        DecodeError::Corrupt
+    )]
+    #[case::reset_required(
+        Error::Decode {
+            path: PathBuf::from("/a"),
+            source: symphonia::core::errors::Error::ResetRequired,
+        },
+        DecodeError::Corrupt
+    )]
+    #[case::seek_error(
+        Error::Decode {
+            path: PathBuf::from("/a"),
+            source: symphonia::core::errors::Error::SeekError(
+                symphonia::core::errors::SeekErrorKind::OutOfRange
+            ),
+        },
+        DecodeError::Corrupt
     )]
     fn an_error_becomes_an_audio_error_with_its_path(
         #[case] error: Error,
-        #[case] expected: AudioError,
+        #[case] expected: DecodeError,
     ) {
         let (path, error) = decode_error_of(error);
-        assert_eq!(AudioError::Decode { path, error }, expected);
-    }
-
-    #[test]
-    fn a_device_error_names_the_requested_device() {
-        let error = DeviceError::NotFound(device_name("usb"));
         assert_eq!(
-            device_error(&error),
-            AudioError::OpenDevice {
-                requested_device: OutputDevice::Named(device_name("usb")),
-                diagnostic: Diagnostic::from_error(&DeviceError::NotFound(
-                    device_name("usb")
-                )),
+            AudioError::Decode { path, error },
+            AudioError::Decode {
+                path: PathBuf::from("/a"),
+                error: expected,
             }
         );
-    }
-
-    #[test]
-    fn an_open_failure_keeps_its_cause() {
-        let source =
-            OpenError::Config(cpal::DefaultStreamConfigError::DeviceNotAvailable);
-        let cause = source.to_string();
-        let error = device_error(&DeviceError::NoDevice {
-            requested_device: OutputDevice::SystemDefault,
-            source,
-        });
-        assert!(error.to_string().contains(&cause));
     }
 
     fn backend_error() -> cpal::BackendSpecificError {
@@ -285,91 +268,72 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_lookup_failure_while_opening_maps_to_an_open_failure() {
-        let source = cpal::DevicesError::BackendSpecific {
-            err: backend_error(),
-        };
-        let diagnostic = Diagnostic::from_error(&source);
-        let error = DeviceError::Lookup {
+    #[rstest]
+    #[case::not_found(
+        || DeviceError::NotFound(device_name("usb")),
+        OutputDevice::Named(device_name("usb")),
+        Diagnostic::from_error(&DeviceError::NotFound(device_name("usb")))
+    )]
+    #[case::a_lookup_failure(
+        || DeviceError::Lookup {
             requested_device: OutputDevice::Named(device_name("usb")),
-            source,
-        };
+            source: cpal::DevicesError::BackendSpecific { err: backend_error() },
+        },
+        OutputDevice::Named(device_name("usb")),
+        Diagnostic::from_error(&cpal::DevicesError::BackendSpecific { err: backend_error() })
+    )]
+    #[case::no_config_on_a_named_device(
+        || DeviceError::NoDevice {
+            requested_device: OutputDevice::Named(device_name("usb")),
+            source: OpenError::Config(cpal::DefaultStreamConfigError::DeviceNotAvailable),
+        },
+        OutputDevice::Named(device_name("usb")),
+        Diagnostic::from_error(&OpenError::Config(cpal::DefaultStreamConfigError::DeviceNotAvailable))
+    )]
+    #[case::no_config_list_on_the_default_device(
+        || DeviceError::NoDevice {
+            requested_device: OutputDevice::SystemDefault,
+            source: OpenError::Configs(cpal::SupportedStreamConfigsError::DeviceNotAvailable),
+        },
+        OutputDevice::SystemDefault,
+        Diagnostic::from_error(&OpenError::Configs(cpal::SupportedStreamConfigsError::DeviceNotAvailable))
+    )]
+    #[case::a_stream_that_cannot_be_built(
+        || DeviceError::NoDevice {
+            requested_device: OutputDevice::SystemDefault,
+            source: OpenError::Build(cpal::BuildStreamError::StreamConfigNotSupported),
+        },
+        OutputDevice::SystemDefault,
+        Diagnostic::from_error(&OpenError::Build(cpal::BuildStreamError::StreamConfigNotSupported))
+    )]
+    #[case::a_stream_that_cannot_start(
+        || DeviceError::NoDevice {
+            requested_device: OutputDevice::Named(device_name("usb")),
+            source: OpenError::Play(cpal::PlayStreamError::DeviceNotAvailable),
+        },
+        OutputDevice::Named(device_name("usb")),
+        Diagnostic::from_error(&OpenError::Play(cpal::PlayStreamError::DeviceNotAvailable))
+    )]
+    #[case::an_unsupported_sample_format(
+        || DeviceError::NoDevice {
+            requested_device: OutputDevice::SystemDefault,
+            source: OpenError::UnsupportedFormat(cpal::SampleFormat::U8),
+        },
+        OutputDevice::SystemDefault,
+        Diagnostic::from_error(&OpenError::UnsupportedFormat(cpal::SampleFormat::U8))
+    )]
+    fn a_device_error_names_the_requested_device(
+        #[case] error: fn() -> DeviceError,
+        #[case] requested_device: OutputDevice,
+        #[case] diagnostic: Diagnostic,
+    ) {
         assert_eq!(
-            device_error(&error),
+            device_error(&error()),
             AudioError::OpenDevice {
-                requested_device: OutputDevice::Named(device_name("usb")),
+                requested_device,
                 diagnostic,
             }
         );
-    }
-
-    #[rstest]
-    #[case::no_config_on_a_named_device(
-        OutputDevice::Named(device_name("usb")),
-        || OpenError::Config(cpal::DefaultStreamConfigError::DeviceNotAvailable)
-    )]
-    #[case::no_config_list_on_the_default_device(
-        OutputDevice::SystemDefault,
-        || OpenError::Configs(cpal::SupportedStreamConfigsError::DeviceNotAvailable)
-    )]
-    #[case::a_stream_that_cannot_be_built(
-        OutputDevice::SystemDefault,
-        || OpenError::Build(cpal::BuildStreamError::StreamConfigNotSupported)
-    )]
-    #[case::a_stream_that_cannot_start(
-        OutputDevice::Named(device_name("usb")),
-        || OpenError::Play(cpal::PlayStreamError::DeviceNotAvailable)
-    )]
-    #[case::an_unsupported_sample_format(
-        OutputDevice::SystemDefault,
-        || OpenError::UnsupportedFormat(cpal::SampleFormat::U8)
-    )]
-    fn every_open_error_maps_to_an_open_device_error_with_its_diagnostic(
-        #[case] requested_device: OutputDevice,
-        #[case] open_error: fn() -> OpenError,
-    ) {
-        let error = DeviceError::NoDevice {
-            requested_device: requested_device.clone(),
-            source: open_error(),
-        };
-        assert_eq!(
-            device_error(&error),
-            AudioError::OpenDevice {
-                requested_device,
-                diagnostic: Diagnostic::from_error(&open_error()),
-            }
-        );
-    }
-
-    #[rstest]
-    #[case::open_denied(
-        Error::Open {
-            path: PathBuf::from("/a"),
-            source: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
-        },
-        AudioError::Preload {
-            path: PathBuf::from("/a"),
-            error: DecodeError::Unreadable(IoError::Denied),
-        }
-    )]
-    #[case::decode_unsupported(
-        Error::Decode {
-            path: PathBuf::from("/a"),
-            source: symphonia::core::errors::Error::Unsupported("no suitable format reader"),
-        },
-        AudioError::Preload { path: PathBuf::from("/a"), error: DecodeError::Unsupported }
-    )]
-    #[case::worker_panicked(
-        Error::WorkerPanicked(PathBuf::from("/a")),
-        AudioError::Preload { path: PathBuf::from("/a"), error: DecodeError::Panicked }
-    )]
-    fn a_preload_error_maps_to_its_audio_error(
-        #[case] error: Error,
-        #[case] expected: AudioError,
-    ) {
-        let (path, error) = decode_error_of(error);
-        assert_eq!(AudioError::Preload { path, error }, expected);
     }
 
     #[rstest]

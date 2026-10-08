@@ -427,6 +427,11 @@ fn router_trace(
     media(PlaybackRequest::Previous),
     Unhandled
 )]
+#[case::previous_at_the_first_track_without_repeat_is_refused(
+    model_with_tracks(3),
+    media(PlaybackRequest::Previous),
+    Unhandled
+)]
 #[case::stepping_the_speed_past_the_top_while_playing_is_refused(
     {
         let mut model = model_playing_at(3, 0, Duration::ZERO);
@@ -443,6 +448,11 @@ fn router_trace(
         model
     },
     step_speed(Direction::Next),
+    Unhandled
+)]
+#[case::a_jump_past_the_playlist_end_is_refused(
+    model_with_tracks(3),
+    Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(9))),
     Unhandled
 )]
 #[case::a_sleep_timer_with_no_sleep_set_is_refused(

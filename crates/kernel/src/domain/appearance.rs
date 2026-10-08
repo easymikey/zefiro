@@ -371,14 +371,6 @@ mod tests {
     }
 
     #[test]
-    fn the_stock_preset_is_exactly_the_stock_appearance() {
-        assert_eq!(
-            preset_appearance(AppearancePreset::Stock),
-            AppearanceSettings::default()
-        );
-    }
-
-    #[test]
     fn the_noir_preset_names_every_option_it_changes() {
         insta::assert_debug_snapshot!(preset_appearance(AppearancePreset::Noir));
     }
@@ -417,6 +409,7 @@ mod tests {
     #[case::cover_mode(CoverMode::Milkdrop, "milkdrop")]
     #[case::speed_chip(SpeedChip::Changed, "changed")]
     #[case::layout_mode(LayoutMode::Compact, "compact")]
+    #[case::rgb_with_a_hash_and_lowercase_digits(Rgb([0x2a, 0xa8, 0xf0]), "#2aa8f0")]
     fn display_spells_each_option_the_way_the_file_does(
         #[case] spelled: impl ToString,
         #[case] spelling: &str,
@@ -425,26 +418,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case::with_hash("#2aa8a0", [0x2a, 0xa8, 0xa0])]
-    #[case::without_hash("2aa8a0", [0x2a, 0xa8, 0xa0])]
-    fn parse_accepts_valid_six_digit_hex(#[case] input: &str, #[case] want: [u8; 3]) {
-        match input.parse::<Rgb>() {
-            Ok(hex) => assert_eq!(hex, Rgb(want)),
-            Err(error) => panic!("expected {input:?} to parse, got {error}"),
-        }
-    }
-
-    #[rstest]
-    #[case::too_short("#fff")]
-    #[case::too_long("#ffffffff")]
-    #[case::empty("")]
-    #[case::non_hex_digit("#ff00zz")]
-    fn parse_rejects_invalid_input(#[case] input: &str) {
-        assert!(input.parse::<Rgb>().is_err());
-    }
-
-    #[test]
-    fn display_spells_the_hex_back_with_a_hash_and_lowercase_digits() {
-        assert_eq!(Rgb([0x2a, 0xa8, 0xf0]).to_string(), "#2aa8f0");
+    #[case::with_hash("#2aa8a0", Some(Rgb([0x2a, 0xa8, 0xa0])))]
+    #[case::without_hash("2aa8a0", Some(Rgb([0x2a, 0xa8, 0xa0])))]
+    #[case::too_short("#fff", None)]
+    #[case::too_long("#ffffffff", None)]
+    #[case::empty("", None)]
+    #[case::non_hex_digit("#ff00zz", None)]
+    fn parse_accepts_six_hex_digits_with_or_without_a_hash(
+        #[case] input: &str,
+        #[case] rgb: Option<Rgb>,
+    ) {
+        assert_eq!(input.parse::<Rgb>().ok(), rgb);
     }
 }

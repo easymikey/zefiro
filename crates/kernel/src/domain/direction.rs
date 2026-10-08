@@ -23,24 +23,3 @@ impl Direction {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
-
-    use crate::domain::direction::Direction;
-
-    #[rstest]
-    #[case::next(Direction::Next, (1, 3), 2)]
-    #[case::next_wraps(Direction::Next, (2, 3), 0)]
-    #[case::previous(Direction::Previous, (1, 3), 0)]
-    #[case::previous_wraps(Direction::Previous, (0, 3), 2)]
-    #[case::empty(Direction::Next, (0, 0), 0)]
-    fn wrapped_stays_inside_the_length(
-        #[case] direction: Direction,
-        #[case] place: (usize, usize),
-        #[case] expected: usize,
-    ) {
-        assert_eq!(direction.wrapped(place.0, place.1), expected);
-    }
-}

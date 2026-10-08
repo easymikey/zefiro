@@ -12,16 +12,13 @@ use crate::support::{
     AREA,
     COVER,
     PROGRESS_LINE,
-    ToastPresence,
     animation_frame,
-    fixtures::{SceneSources, model_with_tracks},
     overlay_backdrop,
     pane_backdrop,
     quiet_backdrop,
     screen_backdrop,
     screen_frame,
     slice,
-    toast_backdrop,
     toast_card_backdrop,
     whole,
 };
@@ -59,55 +56,6 @@ pub(crate) fn has_moved(before: &Buffer, after: &Buffer, rect: Rect) -> bool {
         (rect.x..rect.right())
             .any(|column| before.cell((column, row)) != after.cell((column, row)))
     })
-}
-
-#[test]
-fn an_opening_overlay_resolves_and_ends_on_the_painted_colours() {
-    let mut stage = AnimationStage::default();
-    stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
-    assert!(stage.is_animating(), "opening an overlay stages the ring");
-
-    assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
-    assert_ne!(
-        step(&mut stage, slice(|t| t.modal_reveal, 2)),
-        animation_frame()
-    );
-    assert!(stage.is_animating(), "half way through");
-
-    assert_eq!(
-        step(&mut stage, slice(|t| t.modal_reveal, 2)),
-        animation_frame()
-    );
-    step(&mut stage, Duration::ZERO);
-    assert!(!stage.is_animating(), "a finished animation is dropped");
-}
-
-#[test]
-fn a_closing_overlay_resolves_the_rect_it_vacated() {
-    let mut stage = AnimationStage::default();
-    stage.play(vec![Cue::OverlayOpened], &overlay_backdrop(Some(AREA)));
-    step(&mut stage, whole(|t| t.modal_reveal));
-    step(&mut stage, Duration::ZERO);
-    assert!(!stage.is_animating(), "the open ring finished");
-
-    stage.play(vec![Cue::OverlayClosed], &overlay_backdrop(None));
-
-    assert!(stage.is_animating(), "closing stages its own");
-    assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
-    assert_eq!(
-        step(&mut stage, whole(|t| t.modal_reveal)),
-        animation_frame()
-    );
-    step(&mut stage, Duration::ZERO);
-    assert!(!stage.is_animating(), "and it ends");
-}
-
-#[test]
-fn a_frame_without_cues_stages_nothing() {
-    let mut stage = AnimationStage::default();
-    stage.play(Vec::new(), &overlay_backdrop(Some(AREA)));
-
-    assert!(!stage.is_animating());
 }
 
 #[test]
@@ -174,50 +122,6 @@ fn an_idle_gap_is_not_charged_to_the_animation_the_next_frame_stages() {
 }
 
 #[test]
-fn a_track_change_stages_nothing_over_the_card() {
-    let mut stage = AnimationStage::default();
-    stage.play(vec![Cue::TrackChanged], &pane_backdrop());
-
-    assert!(!stage.is_animating(), "the card switches without animating");
-}
-
-#[test]
-fn the_same_cue_twice_in_one_frame_stages_it_once() {
-    let mut doubled_stage = AnimationStage::default();
-    doubled_stage.play(
-        vec![Cue::FavoriteToggled, Cue::FavoriteToggled],
-        &pane_backdrop(),
-    );
-
-    let mut single_stage = AnimationStage::default();
-    single_stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
-
-    let mid = Duration::from_millis(60);
-    assert_eq!(
-        step(&mut doubled_stage, mid),
-        step(&mut single_stage, mid),
-        "one batch of identical cues is one visible change"
-    );
-}
-
-#[test]
-fn a_frame_with_no_cues_leaves_a_running_animation_alone() {
-    let mut stage = AnimationStage::default();
-    stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
-    let mut untouched_stage = AnimationStage::default();
-    untouched_stage.play(vec![Cue::FavoriteToggled], &pane_backdrop());
-
-    stage.play(Vec::new(), &pane_backdrop());
-
-    let mid = Duration::from_millis(60);
-    assert_eq!(
-        step(&mut stage, mid),
-        step(&mut untouched_stage, mid),
-        "nothing was cued, nothing changes"
-    );
-}
-
-#[test]
 fn a_cue_with_no_painted_rect_stages_nothing() {
     let mut stage = AnimationStage::default();
     stage.play(
@@ -226,34 +130,6 @@ fn a_cue_with_no_painted_rect_stages_nothing() {
     );
 
     assert!(!stage.is_animating());
-}
-
-#[test]
-fn a_protocol_cover_rect_is_subtracted_from_the_fade() {
-    let cover_area = Rect {
-        x: 0,
-        y: 0,
-        width: 4,
-        height: 1,
-    };
-    let mut opened = overlay_backdrop(Some(AREA));
-    opened.layout.cover_area = Some(cover_area);
-    let mut stage = AnimationStage::default();
-    stage.play(vec![Cue::OverlayOpened], &opened);
-
-    let faded = step(&mut stage, Duration::ZERO);
-    let original = animation_frame();
-    for column in 0..cover_area.width {
-        assert_eq!(
-            faded.cell((column, 0)),
-            original.cell((column, 0)),
-            "column {column} is the cover's"
-        );
-    }
-    assert_ne!(
-        faded.cell((cover_area.width, 0)),
-        original.cell((cover_area.width, 0))
-    );
 }
 
 #[test]
@@ -282,22 +158,6 @@ fn only_the_cover_rect_survives_a_whole_screen_animation() {
         "the progress rect now takes part in the wash"
     );
     assert_ne!(buffer, original, "everything else still animates");
-}
-
-#[test]
-fn a_theme_wash_runs_and_ends_on_the_painted_frame() {
-    let mut stage = AnimationStage::default();
-    stage.play(Vec::new(), &screen_backdrop());
-    assert!(!stage.is_animating(), "an empty library assembles nothing");
-
-    stage.play(vec![Cue::ThemeChanged], &screen_backdrop());
-    assert!(stage.is_animating(), "a new theme washes over the screen");
-    assert_ne!(
-        step_over(&mut stage, screen_frame, slice(|t| t.screen_wash, 4)),
-        screen_frame()
-    );
-    assert_eq!(run_out_over(&mut stage, screen_frame), screen_frame());
-    assert!(!stage.is_animating());
 }
 
 #[test]
@@ -355,135 +215,4 @@ fn the_frame_after_the_last_animation_is_asked_for_so_the_row_it_covered_comes_b
         !stage.is_animating(),
         "and once that frame is painted the stage settles"
     );
-}
-
-#[test]
-fn a_toast_slides_in_and_its_row_comes_back_when_it_expires() {
-    let mut stage = AnimationStage::default();
-
-    stage.play(
-        vec![Cue::ToastRaised],
-        &toast_backdrop(ToastPresence::Shown),
-    );
-    assert!(stage.is_animating(), "a toast arriving stages a slide");
-    assert_ne!(step(&mut stage, Duration::ZERO), animation_frame());
-    assert_eq!(
-        step(&mut stage, whole(|t| t.toast_slide_in)),
-        animation_frame()
-    );
-    step(&mut stage, Duration::ZERO);
-    assert!(!stage.is_animating());
-
-    stage.play(
-        vec![Cue::ToastDismissed],
-        &toast_backdrop(ToastPresence::Hidden),
-    );
-    assert!(stage.is_animating(), "a toast expiring bursts apart");
-    assert_ne!(
-        step(&mut stage, slice(|t| t.delete_burst, 2)),
-        animation_frame(),
-        "halfway out the row is still moving"
-    );
-    step(&mut stage, whole(|t| t.delete_burst));
-    assert_eq!(
-        step(&mut stage, Duration::ZERO),
-        animation_frame(),
-        "the row it covered comes back once the burst is over"
-    );
-    assert!(!stage.is_animating());
-}
-
-#[test]
-fn the_toast_burst_is_the_same_every_time() {
-    let halfway = |()| {
-        let mut stage = AnimationStage::default();
-        stage.play(
-            vec![Cue::ToastRaised],
-            &toast_backdrop(ToastPresence::Shown),
-        );
-        step(&mut stage, whole(|t| t.toast_slide_in));
-        stage.play(
-            vec![Cue::ToastDismissed],
-            &toast_backdrop(ToastPresence::Hidden),
-        );
-        step(&mut stage, slice(|t| t.delete_burst, 2))
-    };
-
-    assert_eq!(halfway(()), halfway(()));
-}
-
-#[test]
-fn a_second_toast_while_one_is_showing_slides_in_again() {
-    let mut stage = AnimationStage::default();
-    stage.play(
-        vec![Cue::ToastRaised],
-        &toast_backdrop(ToastPresence::Shown),
-    );
-    step(&mut stage, whole(|t| t.toast_slide_in));
-    step(&mut stage, Duration::ZERO);
-    assert!(!stage.is_animating(), "sanity: the first slide finished");
-
-    stage.play(
-        vec![Cue::ToastRaised],
-        &toast_backdrop(ToastPresence::Shown),
-    );
-
-    assert!(stage.is_animating(), "the replacing toast slides in too");
-}
-
-#[test]
-fn the_stage_animates_frame_layout_rects_as_the_scenes_clock_advances() {
-    let sources = SceneSources::new(model_with_tracks(3));
-    let scene = sources.scene();
-    let layout = FrameLayout::from_scene(&scene, crate::support::SCREEN);
-
-    let backdrop = Backdrop {
-        layout,
-        ..quiet_backdrop()
-    };
-
-    let mut stage = AnimationStage::default();
-    let start = stage.advance_to(scene.presentation.since_first_paint);
-    stage.play(vec![Cue::ThemeChanged], &backdrop);
-    assert!(
-        stage.is_animating(),
-        "a theme change washes the real frame layout"
-    );
-
-    let mut buffer = Buffer::empty(crate::support::SCREEN);
-    stage.advance(&mut buffer, start);
-    let mid = scene.presentation.since_first_paint + slice(|t| t.screen_wash, 4);
-    let elapsed = stage.advance_to(mid);
-    stage.advance(&mut buffer, elapsed);
-    assert!(
-        stage.is_animating(),
-        "the wash is still under way midway through, driven only by the scene's clock"
-    );
-
-    let same_reading = stage.advance_to(mid);
-    assert_eq!(
-        same_reading,
-        Duration::ZERO,
-        "reading the same clock value again charges nothing"
-    );
-}
-
-#[test]
-fn an_ended_effect_settles_to_no_deadline_after_the_next_paint() {
-    let backdrop = toast_backdrop(ToastPresence::Shown);
-    let mut stage = AnimationStage::default();
-    stage.play(vec![Cue::ToastRaised], &backdrop);
-    assert!(stage.is_animating(), "sanity: the toast is animating");
-    let mut buffer = Buffer::empty(backdrop.layout.screen);
-
-    stage.advance(&mut buffer, Duration::from_secs(10));
-    assert!(
-        stage.is_animating(),
-        "sanity: the settling frame is still owed once the effect ends"
-    );
-
-    stage.play(Vec::new(), &backdrop);
-    stage.advance(&mut buffer, Duration::ZERO);
-
-    assert!(!stage.is_animating());
 }

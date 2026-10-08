@@ -7,7 +7,7 @@ use kernel::{
         revision::Revision,
         server::{Account, AlbumOrder, Listing, Page, ServerName},
     },
-    message::RemoteEvent,
+    message::{CatalogPage, RemoteEvent},
     update::machine::{Machine, Unhandled},
 };
 use remote::{driver::RemoteDriver, job::RemoteJob, message::RemoteMessage};
@@ -184,14 +184,14 @@ fn a_forget_drops_the_server_waiting_list_and_search() {
         listed,
         Some((
             vec![],
-            vec![RemoteEvent::Listed {
+            vec![RemoteEvent::Listed(CatalogPage {
                 server_name: ServerName::new("a"),
                 listing: Listing::Albums(AlbumOrder::Newest),
                 page: Page::default(),
                 catalog_rows: vec![],
                 favorites: Favorites::default(),
                 revision: first,
-            }]
+            })]
         ))
     );
     assert_eq!(driver.transition(elapsed(third)).err(), Some(Unhandled));

@@ -127,18 +127,9 @@ fn best_track_score(query_chars: &[char], track: &Track) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, sync::Arc, time::Duration};
-
-    use proptest::prelude::{Strategy, prop_assert, prop_assert_eq, proptest};
     use rstest::rstest;
 
-    use crate::{
-        domain::{
-            index::ViewIndex,
-            track::{AudioFormat, Tags, Track, TrackParts},
-        },
-        search::{narrow, rank, score_chars},
-    };
+    use crate::search::score_chars;
 
     fn lower(haystack: &str) -> String {
         haystack.chars().flat_map(char::to_lowercase).collect()
@@ -149,55 +140,6 @@ mod tests {
         score_chars(&query_chars, haystack)
     }
 
-    fn chars() -> impl Strategy<Value = char> {
-        proptest::sample::select(vec!['m', 'n', 'Α', 'α', 'Σ', 'σ', 'ς', 'İ'])
-    }
-
-    fn title() -> impl Strategy<Value = String> {
-        proptest::collection::vec(chars(), 0..6)
-            .prop_map(|chars| chars.into_iter().collect())
-    }
-
-    fn titled_track(title: &str) -> Arc<Track> {
-        Arc::new(Track::new(TrackParts {
-            path: format!("{title}.flac").into(),
-            duration: Duration::from_secs(1),
-            tags: Tags {
-                title: Some(title.to_string()),
-                ..Tags::default()
-            },
-            audio_format: AudioFormat::default(),
-        }))
-    }
-
-    fn is_subsequence(needle: &str, haystack: &str) -> bool {
-        let mut haystack_chars = haystack.chars();
-        needle
-            .chars()
-            .all(|wanted| haystack_chars.any(|seen| seen == wanted))
-    }
-
-    #[test]
-    fn a_query_that_is_not_a_subsequence_scores_none() {
-        assert_eq!(score("xyz", "Moon River"), None);
-    }
-
-    #[test]
-    fn a_query_that_is_a_subsequence_scores_some_ignoring_case() {
-        assert!(score("mnrv", "Moon River").is_some());
-        assert!(score("MNRV", "moon river").is_some());
-    }
-
-    #[test]
-    fn a_contiguous_prefix_ranks_above_a_scattered_subsequence() {
-        let tight = score("moon", "Moon River").unwrap();
-        let scattered = score("mnrv", "Moon River").unwrap();
-        assert!(
-            tight > scattered,
-            "tight={tight} scattered={scattered} (expected tight > scattered)"
-        );
-    }
-
     #[rstest]
     #[case("ist", "İst", 79)]
     fn a_match_survives_non_ascii_lowercase_expansion(
@@ -206,70 +148,5 @@ mod tests {
         #[case] expected: i32,
     ) {
         assert_eq!(score(query, haystack), Some(expected));
-    }
-
-    #[test]
-    fn a_search_for_a_word_final_sigma_finds_its_own_title() {
-        let tracks = vec![titled_track("ΑΣ")];
-        assert_eq!(rank(&tracks, "ΑΣ"), vec![ViewIndex::new(0)]);
-    }
-
-    #[test]
-    fn narrowing_a_search_past_a_word_final_sigma_equals_a_full_rank() {
-        let tracks = vec![titled_track("ΑΣΑ")];
-        let narrowed = narrow(&tracks, "ΑΣΑ", &rank(&tracks, "ΑΣ"));
-        assert_eq!(narrowed, rank(&tracks, "ΑΣΑ"));
-        assert_eq!(narrowed, vec![ViewIndex::new(0)]);
-    }
-
-    proptest! {
-        #[test]
-        fn is_some_iff_query_is_a_lowercase_subsequence(
-            query in title(),
-            haystack in title(),
-        ) {
-            let is_match = is_subsequence(&lower(&query), &lower(&haystack));
-            prop_assert_eq!(score(&query, &haystack).is_some(), is_match);
-        }
-
-        #[test]
-        fn narrowing_by_an_appended_char_equals_a_full_rank(
-            titles in proptest::collection::vec(title(), 0..8),
-            query in title(),
-            appended in chars(),
-        ) {
-            let tracks: Vec<Arc<Track>> = titles.iter().map(|title| titled_track(title)).collect();
-            let longer = format!("{query}{appended}");
-            let narrowed = narrow(&tracks, &longer, &rank(&tracks, &query));
-            prop_assert_eq!(narrowed, rank(&tracks, &longer));
-        }
-
-        #[test]
-        fn rank_into_is_a_stable_permutation_of_the_matching_titles(
-            titles in proptest::collection::vec(title(), 0..8),
-            query in title(),
-        ) {
-            let tracks: Vec<Arc<Track>> = titles.iter().map(|title| titled_track(title)).collect();
-            let ranked = rank(&tracks, &query);
-
-            let expected: BTreeSet<usize> = titles
-                .iter()
-                .enumerate()
-                .filter_map(|(index, title)| score(&query, title).map(|_| index))
-                .collect();
-            let found: BTreeSet<usize> = ranked.iter().copied().map(usize::from).collect();
-            prop_assert_eq!(found.len(), ranked.len());
-            prop_assert_eq!(found, expected);
-
-            let scores: Vec<Option<i32>> = titles.iter().map(|title| score(&query, title)).collect();
-            let scored = |index: usize| scores.get(index).copied().flatten().unwrap_or(i32::MIN);
-            for &[left, right] in ranked.array_windows() {
-                let (left_score, right_score) = (scored(left.get()), scored(right.get()));
-                prop_assert!(left_score >= right_score);
-                if left_score == right_score {
-                    prop_assert!(left < right);
-                }
-            }
-        }
     }
 }

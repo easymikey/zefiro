@@ -181,7 +181,7 @@ impl<'terminal, B: Backend> Painter<'terminal, B> {
         let CoverDecoded {
             path,
             cover_lookup,
-            side: _side,
+            side: _,
         } = decoded;
         match cover_lookup {
             library::cover::CoverLookup::Found(image) => {
@@ -363,7 +363,7 @@ fn protected_layout<'a>(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{sync::Arc, time::Duration};
 
     use audio::tap::SpectrumTap;
@@ -383,7 +383,12 @@ mod tests {
             time::Moment,
         },
     };
-    use ratatui::{Terminal, backend::TestBackend, layout::Rect};
+    use ratatui::{
+        Terminal,
+        backend::{Backend as _, TestBackend},
+        buffer::Cell,
+        layout::Rect,
+    };
     use rstest::rstest;
     use runtime::{
         repaint::FRAME_INTERVAL,
@@ -420,7 +425,7 @@ mod tests {
         Capabilities::from_environment(&TerminalEnvironment::default())
     }
 
-    fn test_theme() -> TomlTheme {
+    pub(crate) fn test_theme() -> TomlTheme {
         parse_theme(STOCK_THEME_TEXT, STOCK_THEME).unwrap()
     }
 
@@ -495,25 +500,20 @@ mod tests {
         assert_eq!(*backdrop.wash_from, *previous);
     }
 
-    #[test]
-    fn a_pixel_image_cover_stays_protected_from_effects() {
-        let backdrop = test_backdrop(&CardCover::Image);
+    #[rstest]
+    #[case::a_pixel_image_stays_protected(
+        CardCover::Image,
+        Some(Rect::new(0, 0, 4, 4))
+    )]
+    #[case::a_text_cover_takes_part(CardCover::Text(Arc::default()), None)]
+    #[case::a_missing_cover_takes_part(CardCover::Missing, None)]
+    fn only_a_pixel_image_cover_stays_protected_from_effects(
+        #[case] card_cover: CardCover,
+        #[case] expected: Option<Rect>,
+    ) {
+        let backdrop = test_backdrop(&card_cover);
 
-        assert_eq!(backdrop.layout.cover_area, Some(Rect::new(0, 0, 4, 4)));
-    }
-
-    #[test]
-    fn a_text_cover_takes_part_in_effects() {
-        let backdrop = test_backdrop(&CardCover::Text(Arc::default()));
-
-        assert_eq!(backdrop.layout.cover_area, None);
-    }
-
-    #[test]
-    fn a_missing_cover_takes_part_in_effects() {
-        let backdrop = test_backdrop(&CardCover::Missing);
-
-        assert_eq!(backdrop.layout.cover_area, None);
+        assert_eq!(backdrop.layout.cover_area, expected);
     }
 
     #[test]
@@ -539,6 +539,37 @@ mod tests {
         assert_eq!(reaction, Reaction::Repaint);
         assert_eq!(layout.screen, Rect::new(0, 0, 120, 40));
         assert_eq!(painter.motion.screen_clear, ScreenClear::Due);
+    }
+
+    #[test]
+    fn after_a_resize_the_next_frame_wipes_cells_left_from_before() {
+        let mut terminal = test_terminal();
+        let mut painter =
+            Painter::new(&mut terminal, test_theme(), test_capabilities());
+        let model = Model::default();
+        let (_senders, latest_receivers, _doorbell) =
+            runtime::latest::latest_channels();
+        let spectrum = SpectrumTap::silent();
+        let frame = || Frame {
+            model: &model,
+            spectrum_tap: &spectrum,
+            latest_receivers: &latest_receivers,
+            now: paint_time(),
+        };
+        painter.paint(frame()).unwrap();
+        let stale = Cell::new("☃");
+        painter
+            .terminal
+            .backend_mut()
+            .draw([(79, 23, &stale)].into_iter())
+            .unwrap();
+
+        let reaction = painter.input(ShellInput::Terminal(Event::Resize(80, 24)));
+        painter.paint(frame()).unwrap();
+
+        let buffer = painter.terminal.backend().buffer();
+        assert_eq!(reaction, Reaction::Repaint);
+        assert!(buffer.content.iter().all(|cell| cell.symbol() != "☃"));
     }
 
     fn paint_time() -> Moment {

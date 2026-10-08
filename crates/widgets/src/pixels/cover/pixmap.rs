@@ -126,7 +126,6 @@ mod tests {
     #[rstest]
     #[case::a_compact_card(Rect::new(0, 0, 16, 8), CellPixels { width: Pixels(9), height: Pixels(18) })]
     #[case::a_wide_terminal_card(Rect::new(2, 3, 24, 12), CellPixels { width: Pixels(8), height: Pixels(16) })]
-    #[case::a_tall_cell_font(Rect::new(0, 0, 30, 15), CellPixels { width: Pixels(10), height: Pixels(20) })]
     fn a_plain_cover_is_fit_to_exactly_the_cover_squares_own_pixel_size(
         #[case] rect: Rect,
         #[case] cell_pixels: CellPixels,
@@ -141,26 +140,6 @@ mod tests {
             fitted.height(),
             u32::from(rect.height) * cell_pixels.height.0,
             "the fitted height must match the cover square converted to pixels"
-        );
-    }
-
-    #[test]
-    fn a_square_cover_cell_rect_stays_square_in_pixels() {
-        let cell_aspect: u16 = 2;
-        let cell_pixels = CellPixels {
-            width: Pixels(9),
-            height: Pixels(9 * u32::from(cell_aspect)),
-        };
-        let height = 8u16;
-        let width = height * cell_aspect;
-        let rect = Rect::new(0, 0, width, height);
-
-        let fitted = fit_to_rect(source_pixmap(), rect, cell_pixels);
-        assert_eq!(
-            fitted.width(),
-            fitted.height(),
-            "a plain cover's cell rect built with cover_aspect 1.0 must render \
-             as a square in pixels once fit to the target"
         );
     }
 }

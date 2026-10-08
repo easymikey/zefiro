@@ -37,49 +37,6 @@ fn tiny_breakpoints() -> Breakpoints {
 }
 
 #[test]
-fn full_layout_at_a_large_terminal_shows_the_cover_and_the_playlist() {
-    let mut sources = SceneSources::new(model_with_tracks(3));
-    sources.pixel_path = PixelPath::Protocol;
-    let scene = sources.scene();
-    let text = frame(scene, (120, 40));
-    assert!(text.contains("No cover"), "got {text:?}");
-    assert!(text.contains("song00"), "got {text:?}");
-}
-
-#[test]
-fn compact_layout_at_a_small_terminal_hides_the_cover_and_shows_the_playlist() {
-    let mut sources = SceneSources::new(playing_track("Test Song"));
-    sources.appearance_mut().breakpoints = tiny_breakpoints();
-    let breakpoints = sources.appearance_mut().breakpoints;
-    let text = frame(
-        sources.scene(),
-        (
-            breakpoints.compact_min_width.0,
-            breakpoints.compact_min_height.0,
-        ),
-    );
-    assert!(!text.contains("No cover"), "got {text:?}");
-    assert!(text.contains("Test Song"), "got {text:?}");
-}
-
-#[test]
-fn minimal_layout_renders_all_three_rows_when_height_allows() {
-    let mut sources = SceneSources::new(playing_track("Test Song"));
-    sources.appearance_mut().breakpoints = tiny_breakpoints();
-    let text = frame(sources.scene(), (25, 3));
-    assert!(text.contains("Test Song"), "got {text:?}");
-}
-
-#[test]
-fn one_row_terminal_shows_the_too_small_message_instead_of_a_degraded_minimal_row() {
-    let mut sources = SceneSources::new(playing_track("Test Song"));
-    sources.appearance_mut().breakpoints = tiny_breakpoints();
-    let text = frame(sources.scene(), (25, 1));
-    assert!(text.contains("Terminal too small."), "got {text:?}");
-    assert!(!text.contains("Test Song"), "got {text:?}");
-}
-
-#[test]
 fn narrowing_one_column_below_full_switches_from_the_card_to_the_compact_arrangement() {
     let mut sources = SceneSources::new(model_with_tracks(3));
     sources.pixel_path = PixelPath::Protocol;

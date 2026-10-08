@@ -39,10 +39,7 @@ pub struct ClockError(#[source] pub(crate) SystemTimeError);
 impl From<&SpawnError> for DriverError {
     fn from(error: &SpawnError) -> Self {
         match error {
-            SpawnError::Thread {
-                error,
-                driver_name: _driver_name,
-            } => DriverError::Spawn {
+            SpawnError::Thread { error, .. } => DriverError::Spawn {
                 error: error.kind().into(),
             },
             SpawnError::TapLost { .. } => DriverError::Spawn {
@@ -60,62 +57,48 @@ mod tests {
         driver::{DriverError, DriverName},
         io_error::IoError,
     };
+    use rstest::rstest;
 
     use crate::error::{Error, SpawnError};
 
-    #[test]
-    fn spawn_message_includes_the_driver_and_the_error() {
-        let error = SpawnError::Thread {
+    #[rstest]
+    #[case::spawn(
+        Error::Spawn(SpawnError::Thread {
             driver_name: DriverName::Audio,
             error: io::Error::other("resource temporarily unavailable"),
-        };
-
-        assert_eq!(
-            error.to_string(),
-            "spawning the audio thread: resource temporarily unavailable"
-        );
+        }),
+        "spawning the audio thread: resource temporarily unavailable"
+    )]
+    #[case::input_closed(Error::InputClosed, "input closed")]
+    #[case::paint(
+        Error::Paint(io::Error::other("broken pipe")),
+        "painting a frame: broken pipe"
+    )]
+    fn an_error_message_names_its_cause(#[case] error: Error, #[case] expected: &str) {
+        assert_eq!(error.to_string(), expected);
     }
 
-    #[test]
-    fn a_failed_spawn_reaches_the_kernel_as_spawn() {
-        let error = SpawnError::Thread {
+    #[rstest]
+    #[case::failed_spawn(
+        SpawnError::Thread {
             driver_name: DriverName::Audio,
             error: io::Error::from(io::ErrorKind::PermissionDenied),
-        };
-
-        assert_eq!(
-            DriverError::from(&error),
-            DriverError::Spawn {
-                error: IoError::Denied
-            }
-        );
-    }
-
-    #[test]
-    fn a_lost_tap_reaches_the_kernel_as_spawn() {
-        let error = SpawnError::TapLost {
+        },
+        IoError::Denied
+    )]
+    #[case::lost_tap(
+        SpawnError::TapLost {
             driver_name: DriverName::Audio,
-        };
-
+        },
+        IoError::Other
+    )]
+    fn a_spawn_error_reaches_the_kernel_as_spawn(
+        #[case] error: SpawnError,
+        #[case] expected: IoError,
+    ) {
         assert_eq!(
             DriverError::from(&error),
-            DriverError::Spawn {
-                error: IoError::Other
-            }
+            DriverError::Spawn { error: expected }
         );
-    }
-
-    #[test]
-    fn input_closed_message_is_readable() {
-        let error = Error::<io::Error>::InputClosed;
-
-        assert_eq!(error.to_string(), "input closed");
-    }
-
-    #[test]
-    fn paint_message_includes_the_shell_error() {
-        let error = Error::Paint(io::Error::other("broken pipe"));
-
-        assert_eq!(error.to_string(), "painting a frame: broken pipe");
     }
 }

@@ -87,6 +87,58 @@ fn binds(file: &File, open: usize) -> bool {
     })
 }
 
+fn refused(file: &File, at: usize) -> bool {
+    if matches!(file.tx(at.saturating_sub(1)), "if" | "while" | "&") {
+        return false;
+    }
+    let mut next = at;
+    while next < file.tokens.len() {
+        match file.tx(next) {
+            "(" | "[" | "{" => next = file.matching_close(next),
+            ";" => return true,
+            "else" if file.tx(next - 1) != "}" => return false,
+            _ => {}
+        }
+        next += 1;
+    }
+    true
+}
+
+fn whole(file: &File, open: usize) -> bool {
+    let mut depth = 0_i32;
+    for at in (1..open).rev() {
+        let before = file.tx(at - 1);
+        let head = (0..at)
+            .rev()
+            .map(|back| file.tx(back))
+            .take_while(|back| !matches!(*back, "{" | "}" | ";" | "(" | ")" | "="));
+        match file.tx(at) {
+            ")" | "]" | "}" => depth += 1,
+            "(" | "[" | "{" if depth > 0 => depth -= 1,
+            _ if depth > 0 => {}
+            "(" if before == "!" => return false,
+            "(" if head.clone().any(|back| back == "fn") => return true,
+            "{" if !before.starts_with(char::is_uppercase)
+                || head.clone().any(|back| back == "match") =>
+            {
+                return false;
+            }
+            "let" => return refused(file, at),
+            "for" | ";" => return true,
+            ">" if before == "=" => return false,
+            "|" if matches!(
+                before,
+                "(" | "," | "=" | "{" | ";" | ">" | "[" | "|" | "move" | "return"
+            ) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
 fn rest_hits(file: &File, types: &Types) -> Vec<String> {
     let tests = file.test_tokens();
     let rests = (1..file.tokens.len()).filter(|at| {
@@ -98,7 +150,7 @@ fn rest_hits(file: &File, types: &Types) -> Vec<String> {
     });
     let hit = |at: usize| {
         let open = opening(file, at)?;
-        binds(file, open).then_some(())?;
+        (binds(file, open) && whole(file, open)).then_some(())?;
         let name = own_path(file, types, open)?;
         let line = file.tokens[at].line;
         Some(format!(
@@ -121,7 +173,7 @@ fn no_rest_pattern_after_a_bound_field() {
         .flat_map(|file| rest_hits(file, &types))
         .collect();
     support::report(
-        "rest pattern guard: a pattern of a workspace type that binds a field names every field, no `..`.",
+        "rest pattern guard: a `let` without `else`, parameter or `for` pattern of a workspace type that binds a field names every field, no `..`.",
         &violations,
     );
 }
@@ -143,13 +195,27 @@ fn f(pair: Pair, mode: Mode, key: Key) {
     let Pair { a: first, .. } = pair;
     let Wrap(.., last) = wrap;
     if let Mode::B(first, .., last) = mode {}
+    let Mode::C { x, .. } = mode else { return };
+    while let Mode::B(n, ..) = mode {}
+    if ready && let Some(Pair { a, .. }) = pair {}
+    let (n, Pair { a, .. }) = (0, pair);
+    for Wrap(first, ..) in wraps {}
+    let names = pairs.iter().map(|Pair { a, .. }| a);
+    let Pair { a, .. } = if ready { pair } else { other };
+    match mode { Mode::B(n, ..) | Mode::C { x: n, .. } => {} Mode::A => {} }
+    match SAMPLE { Mode::C { x, .. } => { let Pair { a, .. } = pair; } _ => {} }
 }
+fn g(Pair { a, .. }: Pair, Wrap(first, ..): Wrap) {}
 impl Mode {
     fn k(&self) -> u8 {
         match self {
             Self::C { x, .. } => *x,
             _ => 0,
         }
+    }
+    fn g(&self) -> Self {
+        match Self::A { Self::B(n, ..) => {} _ => {} }
+        Self::A
     }
 }
 #[cfg(test)]
@@ -166,14 +232,16 @@ fn rest_pattern_is_seen_only_after_a_binding_outside_tests() {
     let types = types(std::slice::from_ref(&file));
     let expected = [
         "kernel/src/sample.rs:5: `..` after a bound field of `Pair`",
-        "kernel/src/sample.rs:7: `..` after a bound field of `Mode::C`",
-        "kernel/src/sample.rs:8: `..` after a bound field of `Mode::B`",
         "kernel/src/sample.rs:11: `..` after a bound field of `Wrap`",
-        "kernel/src/sample.rs:13: `..` after a bound field of `Mode::C`",
         "kernel/src/sample.rs:15: `..` after a bound field of `Pair`",
         "kernel/src/sample.rs:16: `..` after a bound field of `Wrap`",
-        "kernel/src/sample.rs:17: `..` after a bound field of `Mode::B`",
-        "kernel/src/sample.rs:22: `..` after a bound field of `Self::C`",
+        "kernel/src/sample.rs:21: `..` after a bound field of `Pair`",
+        "kernel/src/sample.rs:22: `..` after a bound field of `Wrap`",
+        "kernel/src/sample.rs:23: `..` after a bound field of `Pair`",
+        "kernel/src/sample.rs:24: `..` after a bound field of `Pair`",
+        "kernel/src/sample.rs:26: `..` after a bound field of `Pair`",
+        "kernel/src/sample.rs:28: `..` after a bound field of `Pair`",
+        "kernel/src/sample.rs:28: `..` after a bound field of `Wrap`",
     ];
     assert_eq!(rest_hits(&file, &types), expected);
 }

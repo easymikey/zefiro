@@ -87,103 +87,6 @@ fn playlist_sources(model: &Model) -> Vec<TrackSource> {
         .collect()
 }
 
-#[test]
-fn enter_on_the_second_track_makes_the_album_the_playlist_with_the_cursor_on_it() {
-    let mut model = album_model(online(), "flac");
-
-    let answer = browse(&mut model, BrowseRequest::PlaySelected);
-
-    assert!(answer.is_ok());
-    assert_eq!(playlist_sources(&model), album_sources());
-    assert_eq!(model.playlist.cursor.index(), 1);
-    assert_eq!(model.playlist_source, PlaylistSource::Server(home()));
-}
-
-#[rstest]
-#[case::toggle(QueueRequest::Toggle)]
-#[case::play_next(QueueRequest::PlayNext)]
-fn queueing_a_server_track_is_refused(#[case] queue_request: QueueRequest) {
-    let mut model = album_model(online(), "flac");
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-
-    let answer = update(&mut model, Message::Queue(queue_request), Moment::default());
-
-    assert_eq!(answer, Err(Unhandled));
-    assert_eq!(model.queue, Vec::new());
-}
-
-#[test]
-fn enter_on_a_server_track_orders_a_fetch_from_byte_zero_with_the_session() {
-    let mut model = album_model(online(), "flac");
-
-    let effects = kernel::update::update(
-        &mut model,
-        Message::Browse(BrowseRequest::PlaySelected),
-        Moment::default(),
-    )
-    .unwrap();
-
-    let fetches: Vec<&MediaFetch> = effects
-        .iter()
-        .filter_map(|effect| {
-            if let Effect::Remote(RemoteCmd::Fetch(media_fetch)) = effect {
-                Some(media_fetch)
-            } else {
-                None
-            }
-        })
-        .collect();
-    let server_track_id = ServerTrackId::new("tr-1");
-    let media_fetch = MediaFetch {
-        server_name: home(),
-        cache_key: CacheKey::new(&home(), &server_track_id, "flac"),
-        server_track_id,
-        session: session(),
-        first_byte: 0,
-        revision: fetches
-            .first()
-            .map_or_else(Revision::default, |fetch| fetch.revision),
-    };
-    assert_eq!(fetches, vec![&media_fetch]);
-    assert_eq!(
-        model.downloads,
-        vec![Download {
-            media_fetch,
-            fetched: None,
-        }]
-    );
-    assert_eq!(
-        model.player.current().map(|track| track.source().clone()),
-        Some(server_track(1, "flac").source().clone())
-    );
-}
-
-#[test]
-fn enter_on_a_track_of_an_offline_server_toasts_and_plays_nothing() {
-    let mut model = album_model(
-        ServerStatus::Offline(RemoteError::Unreachable {
-            server_name: home(),
-            source: IoError::Other,
-        }),
-        "flac",
-    );
-
-    let answer = browse(&mut model, BrowseRequest::PlaySelected);
-
-    assert!(answer.is_ok());
-    assert_eq!(
-        model
-            .workspace
-            .toasts
-            .last()
-            .map(|toast| toast.title.as_str()),
-        Some("home is offline")
-    );
-    assert_eq!(model.player.current(), None);
-    assert_eq!(model.playlist.tracks, Vec::new());
-    assert_eq!(model.downloads, Vec::new());
-}
-
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
 
@@ -254,33 +157,72 @@ fn a_fetched_track_loads_at_the_start_margin_or_when_complete(
     assert_eq!(medias, media(revision).into_iter().collect::<Vec<_>>());
 }
 
-#[rstest]
-#[case::toggle(QueueRequest::Toggle)]
-#[case::play_next(QueueRequest::PlayNext)]
-fn queueing_in_a_server_tab_over_a_local_playlist_is_refused(
-    #[case] queue_request: QueueRequest,
-) {
+fn entered_album_model() -> Model {
+    let mut model = album_model(online(), "flac");
+    drop(browse(&mut model, BrowseRequest::PlaySelected));
+    model
+}
+
+fn playing_album_model() -> Model {
+    let mut model = entered_album_model();
+    drop(update(
+        &mut model,
+        Message::Audio(AudioEvent::Loaded(None)),
+        Moment::default(),
+    ));
+    model
+}
+
+fn stopped_album_model() -> Model {
+    let mut model = playing_album_model();
+    drop(update(
+        &mut model,
+        Message::Playback(PlaybackRequest::Stop),
+        Moment::default(),
+    ));
+    model
+}
+
+fn local_catalog_model() -> Model {
+    let mut model = entered_album_model();
+    model.catalog_name = CatalogName::Local;
+    model.workspace.browse.cursor = Cursor::at(3, 1);
+    model
+}
+
+fn local_playlist_model() -> Model {
     let mut model = server_model(online(), 1);
     model.playlist = Playlist::from_tracks(vec![Arc::new(Track::from(
         TrackSource::Local(PathBuf::from("/music/a.flac")),
     ))]);
     model.workspace.browse.cursor = Cursor::at(1, 0);
+    model
+}
 
+#[rstest]
+#[case::toggle(entered_album_model(), QueueRequest::Toggle)]
+#[case::play_next(entered_album_model(), QueueRequest::PlayNext)]
+#[case::toggle_at_in_the_playlist(
+    entered_album_model(),
+    QueueRequest::ToggleAt(ViewIndex::new(1))
+)]
+#[case::toggle_from_the_local_catalog(local_catalog_model(), QueueRequest::Toggle)]
+#[case::toggle_in_a_server_tab_over_a_local_playlist(
+    local_playlist_model(),
+    QueueRequest::Toggle
+)]
+#[case::play_next_in_a_server_tab_over_a_local_playlist(
+    local_playlist_model(),
+    QueueRequest::PlayNext
+)]
+fn queueing_a_server_track_is_refused(
+    #[case] mut model: Model,
+    #[case] queue_request: QueueRequest,
+) {
     let answer = update(&mut model, Message::Queue(queue_request), Moment::default());
 
     assert_eq!(answer, Err(Unhandled));
     assert_eq!(model.queue, Vec::new());
-}
-
-#[test]
-fn enter_on_a_server_track_keeps_the_browse_cursor_inside_the_album() {
-    let mut model = album_model(online(), "flac");
-    model.workspace.browse.cursor = Cursor::at(60, 50);
-
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-
-    assert_eq!(model.workspace.browse.cursor.len(), 3);
-    assert!(model.workspace.browse.cursor.index() < 3);
 }
 
 fn played_fetches(model: &mut Model, message: Message) -> Vec<MediaFetch> {
@@ -311,72 +253,62 @@ fn fetch_from_zero(track_number: usize, media_fetches: &[MediaFetch]) -> MediaFe
     }
 }
 
-#[test]
-fn next_onto_a_server_track_orders_a_fetch_from_byte_zero_with_a_new_revision() {
-    let mut model = album_model(online(), "flac");
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-    let first_revision = model
+#[rstest]
+#[case::enter(
+    album_model(online(), "flac"),
+    Message::Browse(BrowseRequest::PlaySelected),
+    1
+)]
+#[case::next(entered_album_model(), Message::Playback(PlaybackRequest::Next), 2)]
+#[case::ended(playing_album_model(), Message::Audio(AudioEvent::Ended), 2)]
+#[case::toggle_from_stopped(
+    stopped_album_model(),
+    Message::Playback(PlaybackRequest::Toggle),
+    1
+)]
+fn playing_a_server_track_orders_a_fetch_from_byte_zero_with_a_new_revision(
+    #[case] mut model: Model,
+    #[case] message: Message,
+    #[case] track_number: usize,
+) {
+    let revisions: Vec<Revision> = model
         .downloads
-        .first()
-        .map(|download| download.media_fetch.revision);
+        .iter()
+        .map(|download| download.media_fetch.revision)
+        .collect();
 
-    let media_fetches =
-        played_fetches(&mut model, Message::Playback(PlaybackRequest::Next));
+    let media_fetches = played_fetches(&mut model, message);
 
-    assert_eq!(media_fetches, vec![fetch_from_zero(2, &media_fetches)]);
-    assert_ne!(
-        media_fetches
-            .first()
-            .map(|media_fetch| media_fetch.revision),
-        first_revision
-    );
-    assert_eq!(model.playlist.cursor.index(), 2);
-}
-
-#[test]
-fn next_onto_a_track_of_an_offline_server_toasts_and_changes_nothing() {
-    let mut model = album_model(online(), "flac");
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-    model.servers[0].server_status = ServerStatus::Offline(RemoteError::Unreachable {
-        server_name: home(),
-        source: IoError::Other,
-    });
-
-    let answer = update(
-        &mut model,
-        Message::Playback(PlaybackRequest::Next),
-        Moment::default(),
-    );
-
-    assert!(answer.is_ok());
+    let media_fetch = fetch_from_zero(track_number, &media_fetches);
+    assert_eq!(media_fetches, vec![media_fetch.clone()]);
+    assert!(!revisions.contains(&media_fetch.revision));
     assert_eq!(
-        model
-            .workspace
-            .toasts
-            .last()
-            .map(|toast| toast.title.as_str()),
-        Some("home is offline")
+        model.downloads,
+        vec![Download {
+            media_fetch,
+            fetched: None,
+        }]
     );
+    assert_eq!(model.playlist.cursor.index(), track_number);
     assert_eq!(
         model.player.current().map(|track| track.source().clone()),
-        Some(server_track(1, "flac").source().clone())
+        Some(server_track(track_number, "flac").source().clone())
     );
-    assert_eq!(model.playlist.cursor.index(), 1);
 }
 
 #[test]
-fn the_successor_of_an_ending_server_track_orders_a_fetch() {
+fn enter_on_the_second_track_makes_the_album_the_playlist_and_keeps_the_browse_cursor_inside_it()
+ {
     let mut model = album_model(online(), "flac");
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-    drop(update(
-        &mut model,
-        Message::Audio(AudioEvent::Loaded(None)),
-        Moment::default(),
-    ));
+    model.workspace.browse.cursor = Cursor::at(60, 50);
 
-    let media_fetches = played_fetches(&mut model, Message::Audio(AudioEvent::Ended));
+    let answer = browse(&mut model, BrowseRequest::PlaySelected);
 
-    assert_eq!(media_fetches, vec![fetch_from_zero(2, &media_fetches)]);
+    assert!(answer.is_ok());
+    assert_eq!(playlist_sources(&model), album_sources());
+    assert_eq!(model.playlist_source, PlaylistSource::Server(home()));
+    assert_eq!(model.workspace.browse.cursor.len(), 3);
+    assert!(model.workspace.browse.cursor.index() < 3);
 }
 
 fn go_offline(model: &mut Model) {
@@ -394,15 +326,37 @@ fn last_toast(model: &Model) -> Option<&str> {
         .map(|toast| toast.title.as_str())
 }
 
-fn playing_album_model() -> Model {
-    let mut model = album_model(online(), "flac");
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-    drop(update(
-        &mut model,
-        Message::Audio(AudioEvent::Loaded(None)),
-        Moment::default(),
-    ));
-    model
+#[rstest]
+#[case::enter(
+    album_model(online(), "flac"),
+    Message::Browse(BrowseRequest::PlaySelected)
+)]
+#[case::next(entered_album_model(), Message::Playback(PlaybackRequest::Next))]
+#[case::previous(playing_album_model(), Message::Playback(PlaybackRequest::Previous))]
+#[case::jump(
+    playing_album_model(),
+    Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2)))
+)]
+#[case::toggle_from_stopped(
+    stopped_album_model(),
+    Message::Playback(PlaybackRequest::Toggle)
+)]
+fn playing_onto_a_track_of_an_offline_server_toasts_and_changes_nothing(
+    #[case] mut model: Model,
+    #[case] message: Message,
+) {
+    go_offline(&mut model);
+    let player = model.player.clone();
+    let playlist = model.playlist.clone();
+    let downloads = model.downloads.clone();
+
+    let answer = update(&mut model, message, Moment::default());
+
+    assert!(answer.is_ok());
+    assert_eq!(last_toast(&model), Some("home is offline"));
+    assert_eq!(model.player, player);
+    assert_eq!(model.playlist, playlist);
+    assert_eq!(model.downloads, downloads);
 }
 
 #[test]
@@ -416,97 +370,6 @@ fn an_ending_track_before_a_track_of_an_offline_server_toasts_and_stops() {
     assert_eq!(last_toast(&model), Some("home is offline"));
     assert_eq!(model.player, Player::Stopped);
     assert_eq!(model.playlist.cursor.index(), 1);
-}
-
-#[rstest]
-#[case::previous(PlaybackRequest::Previous)]
-#[case::jump(PlaybackRequest::JumpTo(ViewIndex::new(2)))]
-fn playing_onto_a_track_of_an_offline_server_toasts_and_changes_nothing(
-    #[case] playback_request: PlaybackRequest,
-) {
-    let mut model = playing_album_model();
-    go_offline(&mut model);
-    let player = model.player.clone();
-
-    let answer = update(
-        &mut model,
-        Message::Playback(playback_request),
-        Moment::default(),
-    );
-
-    assert!(answer.is_ok());
-    assert_eq!(last_toast(&model), Some("home is offline"));
-    assert_eq!(model.player, player);
-    assert_eq!(model.playlist.cursor.index(), 1);
-}
-
-fn stopped_album_model() -> Model {
-    let mut model = playing_album_model();
-    drop(update(
-        &mut model,
-        Message::Playback(PlaybackRequest::Stop),
-        Moment::default(),
-    ));
-    model
-}
-
-#[test]
-fn toggle_from_stopped_on_a_server_track_orders_a_fetch() {
-    let mut model = stopped_album_model();
-
-    let media_fetches =
-        played_fetches(&mut model, Message::Playback(PlaybackRequest::Toggle));
-
-    assert_eq!(media_fetches, vec![fetch_from_zero(1, &media_fetches)]);
-}
-
-#[test]
-fn toggle_from_stopped_on_a_track_of_an_offline_server_toasts_and_changes_nothing() {
-    let mut model = stopped_album_model();
-    go_offline(&mut model);
-
-    let answer = update(
-        &mut model,
-        Message::Playback(PlaybackRequest::Toggle),
-        Moment::default(),
-    );
-
-    assert!(answer.is_ok());
-    assert_eq!(last_toast(&model), Some("home is offline"));
-    assert_eq!(model.player, Player::Stopped);
-    assert_eq!(model.playlist.cursor.index(), 1);
-}
-
-#[test]
-fn toggling_a_server_track_of_the_playlist_by_index_is_refused() {
-    let mut model = album_model(online(), "flac");
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-
-    let answer = update(
-        &mut model,
-        Message::Queue(QueueRequest::ToggleAt(ViewIndex::new(1))),
-        Moment::default(),
-    );
-
-    assert_eq!(answer, Err(Unhandled));
-    assert_eq!(model.queue, Vec::new());
-}
-
-#[test]
-fn queueing_a_server_track_from_the_local_catalog_is_refused() {
-    let mut model = album_model(online(), "flac");
-    drop(browse(&mut model, BrowseRequest::PlaySelected));
-    model.catalog_name = CatalogName::Local;
-    model.workspace.browse.cursor = Cursor::at(3, 1);
-
-    let answer = update(
-        &mut model,
-        Message::Queue(QueueRequest::Toggle),
-        Moment::default(),
-    );
-
-    assert_eq!(answer, Err(Unhandled));
-    assert_eq!(model.queue, Vec::new());
 }
 
 fn remove(model: &mut Model, server_name: ServerName) -> Result<Cmd, Unhandled> {
@@ -617,9 +480,14 @@ fn remove_of_the_server_of_the_preloaded_track_keeps_it_and_its_download_until_t
     let downloads = model.downloads.clone();
     assert_eq!(downloads.len(), 1);
 
+    let revision = downloads[0].media_fetch.revision;
+
     let answer = remove(&mut model, home());
 
-    assert!(answer.is_ok());
+    assert!(answer.is_ok_and(|cmd| {
+        cmd.effects()
+            .any(|effect| *effect == Effect::Audio(AudioCmd::CancelPreload(revision)))
+    }));
     assert!(preloads_the_successor(&model));
     assert_eq!(model.downloads, downloads);
 }
@@ -628,11 +496,12 @@ fn remove_of_the_server_of_the_preloaded_track_keeps_it_and_its_download_until_t
 fn remove_of_the_server_of_the_preloaded_track_drops_it_and_its_download_once_the_preload_is_cancelled()
  {
     let mut model = local_before_a_preloaded_server_track();
+    let revision = model.downloads[0].media_fetch.revision;
     drop(remove(&mut model, home()));
 
     let answer = update(
         &mut model,
-        Message::Audio(AudioEvent::PreloadCancelled),
+        Message::Audio(AudioEvent::PreloadCancelled(revision)),
         Moment::default(),
     );
 
@@ -651,16 +520,52 @@ fn remove_of_the_server_of_the_preloaded_track_drops_it_and_its_download_once_th
 }
 
 #[test]
+fn a_stale_preload_cancelled_leaves_the_new_preload_and_its_download() {
+    let mut model = local_before_a_preloaded_server_track();
+    let server = model.servers[0].clone();
+    let revision = model.downloads[0].media_fetch.revision;
+    drop(remove(&mut model, home()));
+    model.servers.push(server);
+    for message in [
+        Message::Playback(PlaybackRequest::Stop),
+        Message::Playback(PlaybackRequest::Play),
+        Message::Audio(AudioEvent::Loaded(None)),
+        Message::Audio(AudioEvent::PositionReported(Duration::from_secs(95))),
+    ] {
+        drop(update(&mut model, message, Moment::default()));
+    }
+    let mark = model.revisions.lookahead;
+    drop(update(
+        &mut model,
+        Message::Elapsed(Timer::Lookahead(mark)),
+        Moment::default(),
+    ));
+    let downloads = model.downloads.clone();
+    assert!(preloads_the_successor(&model));
+
+    let answer = update(
+        &mut model,
+        Message::Audio(AudioEvent::PreloadCancelled(revision)),
+        Moment::default(),
+    );
+
+    assert_eq!(answer, Err(Unhandled));
+    assert!(preloads_the_successor(&model));
+    assert_eq!(model.downloads, downloads);
+}
+
+#[test]
 fn remove_of_the_server_of_the_preloaded_track_plays_it_when_the_engine_keeps_the_preload()
  {
     let mut model = local_before_a_preloaded_server_track();
     let successor = server_track(2, "flac");
     let downloads = model.downloads.clone();
+    let revision = downloads[0].media_fetch.revision;
     drop(remove(&mut model, home()));
 
     let kept = update(
         &mut model,
-        Message::Audio(AudioEvent::PreloadKept),
+        Message::Audio(AudioEvent::PreloadKept(revision)),
         Moment::default(),
     );
     let changed = update(
@@ -676,16 +581,4 @@ fn remove_of_the_server_of_the_preloaded_track_plays_it_when_the_engine_keeps_th
         Player::Playing { track, .. } if track.source() == successor.source()
     ));
     assert_eq!(model.downloads, downloads);
-}
-
-#[test]
-fn remove_of_the_server_of_the_preloaded_track_cancels_its_preload() {
-    let mut model = local_before_a_preloaded_server_track();
-
-    let answer = remove(&mut model, home());
-
-    assert!(answer.is_ok_and(|cmd| {
-        cmd.effects()
-            .any(|effect| matches!(effect, Effect::Audio(AudioCmd::CancelPreload)))
-    }));
 }

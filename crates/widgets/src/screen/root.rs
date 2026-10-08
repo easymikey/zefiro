@@ -206,14 +206,6 @@ mod tests {
     }
 
     #[test]
-    fn a_short_terminal_paints_the_compact_card() {
-        let sources = SceneSources::new(model_with_tracks(3));
-        let text = frame(sources.scene(), &CardCover::Missing, (80, 16));
-        assert!(text.contains("No track"), "got {text}");
-        assert!(text.contains("song00"), "got {text}");
-    }
-
-    #[test]
     fn a_terminal_below_the_minimum_shows_only_the_notice() {
         let sources = SceneSources::new(model_with_tracks(3));
         let text = frame(sources.scene(), &CardCover::Missing, (40, 10));

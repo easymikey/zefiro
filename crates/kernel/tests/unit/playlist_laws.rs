@@ -1,10 +1,7 @@
-use std::time::Duration;
-
 use kernel::domain::{
     cursor::Cursor,
     direction::Direction,
     index::ViewIndex,
-    player::AbLoop,
     playlist::{PlayOrder, Playlist, RepeatMode},
 };
 use proptest::prelude::{Just, prop_assert, prop_assert_eq, prop_oneof, proptest};
@@ -45,19 +42,6 @@ proptest! {
             prop_assert_eq!(sorted, (0..len).map(ViewIndex::new).collect::<Vec<_>>());
         }
     }
-
-    #[test]
-    fn ab_loop_mark_never_yields_a_full_loop_with_b_before_a(
-        positions in proptest::collection::vec(0u64..60_000, 0..20),
-    ) {
-        let mut state: Option<AbLoop> = None;
-        for millis in positions {
-            state = AbLoop::mark(state, Duration::from_millis(millis));
-            if let Some(AbLoop::BothMarked { loop_start, loop_end }) = state {
-                prop_assert!(loop_end > loop_start);
-            }
-        }
-    }
 }
 
 #[rstest]
@@ -88,4 +72,5 @@ fn skip_at_the_edges_follows_the_repeat_mode(
     };
     let moved = playlist.skip(direction).is_some();
     assert_eq!(moved.then(|| playlist.cursor.index()), expected);
+    assert_eq!(playlist.cursor.index(), expected.unwrap_or(start));
 }

@@ -44,9 +44,7 @@ impl<C> Port<C> {
         let Self::Open {
             congestion,
             episode,
-            driver_name: _driver_name,
-            cmd_sender: _cmd_sender,
-            thread: _thread,
+            ..
         } = self
         else {
             return None;
@@ -66,13 +64,7 @@ impl<C> Port<C> {
 
     pub(crate) fn hang_up(&mut self) {
         *self = match mem::replace(self, Self::Closed) {
-            Self::Open {
-                thread,
-                driver_name: _driver_name,
-                congestion: _congestion,
-                episode: _episode,
-                cmd_sender: _cmd_sender,
-            } => Self::HungUp(thread),
+            Self::Open { thread, .. } => Self::HungUp(thread),
             port @ (Self::HungUp(_) | Self::Closed) => port,
         };
     }
@@ -91,8 +83,7 @@ impl<C> Port<C> {
             driver_name,
             congestion,
             cmd_sender,
-            episode: _episode,
-            thread: _thread,
+            ..
         } = self
         else {
             return;
@@ -189,25 +180,63 @@ mod tests {
         Dropped,
     }
 
+    struct SendRow {
+        status: DriverStatus,
+        inbox: Inbox,
+        cmds: Vec<AudioCmd>,
+    }
+
     #[rstest]
     #[case::running_and_connected(
-        DriverStatus::Running,
-        Inbox::Connected,
-        vec![AudioCmd::Stop]
+        SendRow {
+            status: DriverStatus::Running,
+            inbox: Inbox::Connected,
+            cmds: vec![AudioCmd::Stop],
+        },
+        (vec![AudioCmd::Stop], false)
     )]
-    #[case::stopped(DriverStatus::Stopped, Inbox::Connected, Vec::new())]
+    #[case::stopped(
+        SendRow {
+            status: DriverStatus::Stopped,
+            inbox: Inbox::Connected,
+            cmds: vec![AudioCmd::Stop],
+        },
+        (Vec::new(), false)
+    )]
     #[case::dead(
-        DriverStatus::Dead(kernel::domain::driver::DriverError::Panicked),
-        Inbox::Connected,
-        Vec::new()
+        SendRow {
+            status: DriverStatus::Dead(kernel::domain::driver::DriverError::Panicked),
+            inbox: Inbox::Connected,
+            cmds: vec![AudioCmd::Stop],
+        },
+        (Vec::new(), false)
     )]
-    #[case::running_and_disconnected(DriverStatus::Running, Inbox::Dropped, Vec::new())]
+    #[case::running_and_disconnected(
+        SendRow {
+            status: DriverStatus::Running,
+            inbox: Inbox::Dropped,
+            cmds: vec![AudioCmd::Stop],
+        },
+        (Vec::new(), false)
+    )]
+    #[case::a_full_inbox_drops_the_cmd_and_raises_the_flag(
+        SendRow {
+            status: DriverStatus::Running,
+            inbox: Inbox::Connected,
+            cmds: vec![AudioCmd::Stop, AudioCmd::ListDevices],
+        },
+        (vec![AudioCmd::Stop], true)
+    )]
     fn a_port_sends_only_to_a_running_driver(
-        #[case] status: DriverStatus,
-        #[case] inbox: Inbox,
-        #[case] expected: Vec<AudioCmd>,
+        #[case] row: SendRow,
+        #[case] expected: (Vec<AudioCmd>, bool),
     ) {
-        let (cmd_sender, cmd_receiver) = unbounded();
+        let SendRow {
+            status,
+            inbox,
+            cmds,
+        } = row;
+        let (cmd_sender, cmd_receiver) = bounded(1);
         let cmd_receiver = match inbox {
             Inbox::Connected => Some(cmd_receiver),
             Inbox::Dropped => {
@@ -220,28 +249,13 @@ mod tests {
         let congestion = Congestion::default();
         let port = Port::new(DriverName::Audio, cmd_sender, congestion.clone());
 
-        port.send(&drivers, AudioCmd::Stop);
+        for cmd in cmds {
+            port.send(&drivers, cmd);
+        }
 
         let audio_cmds: Vec<AudioCmd> = cmd_receiver
             .map_or_else(Vec::new, |cmd_receiver| cmd_receiver.try_iter().collect());
-        assert_eq!(audio_cmds, expected);
-        assert!(!congestion.take());
-    }
-
-    #[test]
-    fn a_full_cmd_receiver_is_dropped_and_raises_the_flag() {
-        let (cmd_sender, cmd_receiver) = bounded(1);
-        let mut drivers = Drivers::default();
-        drivers.record_mut(DriverName::Audio).status = DriverStatus::Running;
-        let congestion = Congestion::default();
-        let port = Port::new(DriverName::Audio, cmd_sender, congestion.clone());
-
-        port.send(&drivers, AudioCmd::Stop);
-        port.send(&drivers, AudioCmd::ListDevices);
-
-        let audio_cmds: Vec<AudioCmd> = cmd_receiver.try_iter().collect();
-        assert_eq!(audio_cmds, vec![AudioCmd::Stop]);
-        assert!(congestion.take());
+        assert_eq!((audio_cmds, congestion.take()), expected);
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

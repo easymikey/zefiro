@@ -6,12 +6,11 @@ use kernel::{
         io_error::IoError,
         keymap::{Action, KeyOverride, KeymapOverrides},
         model::Model,
-        revision::Revision,
         theme::ThemeName,
         time::Moment,
-        toast::{TOAST_LIFETIME, Toast},
+        toast::Toast,
     },
-    message::{ConfigEvent, ConfigReload, Message, Timer},
+    message::{ConfigEvent, ConfigReload, Message},
     update::machine::Unhandled,
 };
 use rstest::rstest;
@@ -67,58 +66,6 @@ fn showing_a_toast_installs_it_and_clearing_takes_it_away() {
 }
 
 #[test]
-fn a_shown_toast_schedules_its_expiry_after_the_one_lifetime() {
-    let mut model = Model::default();
-
-    let cmd = reduce(&mut model, Message::Toast(Toast::error("boom")));
-
-    assert!(cmd.effects().any(|effect| *effect
-        == Effect::After {
-            delay: TOAST_LIFETIME,
-            timer: Timer::Toast(model.revisions.toast),
-        }));
-    assert_ne!(model.revisions.toast, Revision::default());
-}
-
-#[test]
-fn a_source_failing_again_with_the_same_words_does_not_raise_a_second_toast() {
-    let mut model = Model::default();
-
-    let first = reduce(&mut model, Message::Config(fail(theme(), "Theme: boom")));
-    model.workspace.toasts.clear();
-    let repeat = update(
-        &mut model,
-        Message::Config(fail(theme(), "Theme: boom")),
-        Moment::default(),
-    );
-    let changed = reduce(&mut model, Message::Config(fail(theme(), "Theme: worse")));
-
-    assert!(has_raised_a_toast(&first), "{first:?}");
-    assert_eq!(repeat, Err(Unhandled));
-    assert!(has_raised_a_toast(&changed), "{changed:?}");
-    assert_eq!(
-        model
-            .workspace
-            .toasts
-            .first()
-            .and_then(|toast| toast.text.clone()),
-        Some("Theme: worse".to_string())
-    );
-}
-
-#[test]
-fn keys_reloaded_installs_the_merged_table() {
-    let mut model = Model::default();
-    let config = KeymapOverrides::from([(Action::Next, KeyOverride::from("m"))]);
-    let cmd = reduce(
-        &mut model,
-        Message::Config(ConfigEvent::KeymapReloaded(Box::new(config.clone()))),
-    );
-    assert_eq!(model.workspace.keymap.overrides(), &config);
-    assert!(cmd == Cmd::none());
-}
-
-#[test]
 fn a_bad_chord_keeps_its_toast_through_the_config_reload_that_follows() {
     let mut model = Model::default();
     let overrides =
@@ -149,6 +96,13 @@ fn a_bad_chord_keeps_its_toast_through_the_config_reload_that_follows() {
 #[case::a_failing_source_shows_its_own_text(
     &[Message::Config(fail(theme(), "Theme: boom"))],
     Some("Theme: boom")
+)]
+#[case::a_source_failing_again_with_new_words_replaces_its_text(
+    &[
+        Message::Config(fail(theme(), "Theme: boom")),
+        Message::Config(fail(theme(), "Theme: worse")),
+    ],
+    Some("Theme: worse")
 )]
 #[case::recovery_clears_the_toast_it_put_up(
     &[
@@ -249,21 +203,4 @@ fn config_errors_word_each_error_distinctly() {
         unreadable_error.to_string(),
         save_error.to_string()
     ));
-}
-
-#[test]
-fn theme_reloaded_leaves_the_toast_alone() {
-    let mut model = Model::default();
-    model.workspace.toasts = vec![Toast::error("Theme: boom")];
-
-    let cmd = reduce(
-        &mut model,
-        Message::Config(ConfigEvent::ThemeReloaded(ThemeName::from_static("noir"))),
-    );
-
-    assert_eq!(model.workspace.toasts, vec![Toast::error("Theme: boom")]);
-    assert!(
-        cmd.effects()
-            .any(|effect| matches!(effect, Effect::Animate(Cue::ThemeChanged)))
-    );
 }

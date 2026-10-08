@@ -1,6 +1,9 @@
 use std::time::Duration;
 
-use kernel::cmd::{Media, Playback};
+use kernel::{
+    cmd::{Media, Playback},
+    domain::track::Decibels,
+};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) enum Phase {
@@ -62,7 +65,7 @@ pub(crate) enum Incoming {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LoadedTrack {
     pub(crate) duration: Option<Duration>,
-    pub(crate) decibels: Option<kernel::domain::track::Decibels>,
+    pub(crate) decibels: Option<Decibels>,
     pub(crate) media: Media,
 }
 
@@ -72,7 +75,7 @@ pub(crate) enum NextTrack {
     None,
     Preloading {
         media: Media,
-        decibels: Option<kernel::domain::track::Decibels>,
+        decibels: Option<Decibels>,
     },
     Gapless(LoadedTrack),
     Crossfading {
@@ -90,7 +93,7 @@ pub(crate) enum Fade {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Loading {
     pub(crate) media: Media,
-    pub(crate) decibels: Option<kernel::domain::track::Decibels>,
+    pub(crate) decibels: Option<Decibels>,
     pub(crate) resume: Option<Resume>,
 }
 
@@ -129,7 +132,7 @@ pub(crate) struct Resume {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Upcoming {
     pub(crate) media: Media,
-    pub(crate) decibels: Option<kernel::domain::track::Decibels>,
+    pub(crate) decibels: Option<Decibels>,
 }
 
 impl From<LoadedTrack> for Upcoming {

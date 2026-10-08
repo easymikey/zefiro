@@ -545,9 +545,63 @@ fn read_error(server_name: &ServerName, error: &impl std::error::Error) -> Remot
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        collections::VecDeque,
+        env,
+        fs,
+        io::{ErrorKind, Read},
+        process,
+    };
+
+    use rstest::rstest;
     use ureq::{Body, http::Response};
 
-    use crate::subsonic::redirected;
+    use crate::subsonic::{redirected, written};
+
+    struct ScriptedReader {
+        reads: VecDeque<Result<&'static [u8], ErrorKind>>,
+    }
+
+    impl Read for ScriptedReader {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            match self.reads.pop_front() {
+                None => Ok(0),
+                Some(Ok(mut bytes)) => bytes.read(buffer),
+                Some(Err(kind)) => Err(kind.into()),
+            }
+        }
+    }
+
+    #[rstest]
+    #[case::interrupted_read(
+        vec![Err(ErrorKind::Interrupted), Ok(&b"flac"[..])],
+        Ok(()),
+        b"flac"
+    )]
+    #[case::reset_read(
+        vec![Ok(&b"fl"[..]), Err(ErrorKind::ConnectionReset), Ok(&b"ac"[..])],
+        Err(ErrorKind::ConnectionReset),
+        b"fl"
+    )]
+    fn an_interrupted_read_is_retried_and_another_read_error_ends_the_part(
+        #[case] reads: Vec<Result<&'static [u8], ErrorKind>>,
+        #[case] finished: Result<(), ErrorKind>,
+        #[case] bytes: &[u8],
+    ) {
+        let part_path = env::temp_dir().join(format!(
+            "sifr-written-{}-{}.part",
+            process::id(),
+            bytes.len()
+        ));
+        let mut scripted_reader = ScriptedReader {
+            reads: reads.into(),
+        };
+        let answer = fs::File::create(&part_path)
+            .and_then(|mut part_file| written(&mut scripted_reader, &mut part_file));
+        assert_eq!(answer.ok(), Some(finished));
+        assert_eq!(fs::read(&part_path).ok().as_deref(), Some(bytes));
+        assert!(fs::remove_file(&part_path).is_ok());
+    }
 
     #[test]
     fn a_redirect_from_https_to_http_is_moved() {

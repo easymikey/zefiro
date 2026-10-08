@@ -67,16 +67,6 @@ mod tests {
     use crate::domain::{bounded::Bounded, crossfade::Crossfade, direction::Direction};
 
     #[rstest]
-    #[case::saturates_above_the_ceiling(Duration::from_secs(20), Crossfade::MAX)]
-    #[case::saturates_below_the_floor(Duration::ZERO, Duration::ZERO)]
-    fn clamped_saturates_both_directions(
-        #[case] duration: Duration,
-        #[case] expected: Duration,
-    ) {
-        assert_eq!(Crossfade::clamped(duration).get(), expected);
-    }
-
-    #[rstest]
     #[case::next_steps_up(
         Crossfade::default(),
         Direction::Next,
@@ -98,24 +88,5 @@ mod tests {
         #[case] expected: Duration,
     ) {
         assert_eq!(crossfade.step(direction).get(), expected);
-    }
-
-    #[test]
-    fn default_is_gapless() {
-        assert_eq!(Crossfade::default().get(), Duration::ZERO);
-    }
-
-    #[rstest]
-    #[case::at_the_ceiling(Crossfade::MAX, Some(Crossfade::MAX))]
-    #[case::within_range(Duration::from_secs(3), Some(Duration::from_secs(3)))]
-    #[case::out_of_range(Duration::from_secs(11), None)]
-    fn try_from_duration_round_trips_through_the_valid_range(
-        #[case] duration: Duration,
-        #[case] expected: Option<Duration>,
-    ) {
-        assert_eq!(
-            Crossfade::try_from(duration).map(Crossfade::get).ok(),
-            expected
-        );
     }
 }

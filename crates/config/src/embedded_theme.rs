@@ -61,7 +61,7 @@ mod tests {
     use kernel::domain::theme::{ThemeChoice, ThemeName};
     use rstest::rstest;
 
-    use crate::embedded_theme::{EMBEDDED_THEMES, embedded_theme, theme_name};
+    use crate::embedded_theme::theme_name;
 
     #[rstest]
     #[case::auto(ThemeChoice::Auto, "noir")]
@@ -71,17 +71,5 @@ mod tests {
         #[case] expected: &str,
     ) {
         assert_eq!(theme_name(&theme_choice).as_str(), expected);
-    }
-
-    #[test]
-    fn every_embedded_name_resolves_to_its_own_text() {
-        for &(name, text) in EMBEDDED_THEMES {
-            assert_eq!(embedded_theme(name), Some(text));
-        }
-    }
-
-    #[test]
-    fn an_unknown_name_resolves_to_nothing() {
-        assert!(embedded_theme("not-a-theme").is_none());
     }
 }

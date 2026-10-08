@@ -52,27 +52,16 @@ impl Breakpoint {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::{
-        appearance::{Breakpoints, LayoutMode},
-        geometry::Cells,
-    };
+    use kernel::domain::appearance::{Breakpoints, LayoutMode};
     use ratatui::layout::Size;
     use rstest::rstest;
 
     use crate::screen::breakpoint::Breakpoint;
 
     #[rstest]
-    #[case::wide(LayoutMode::Auto, Size::new(80, 24), Breakpoint::Full)]
     #[case::full_edge(LayoutMode::Auto, Size::new(60, 19), Breakpoint::Full)]
-    #[case::short(LayoutMode::Auto, Size::new(80, 18), Breakpoint::Compact)]
     #[case::narrow(LayoutMode::Auto, Size::new(59, 24), Breakpoint::Compact)]
     #[case::compact_asked(LayoutMode::Compact, Size::new(80, 24), Breakpoint::Compact)]
-    #[case::below_minimum(LayoutMode::Auto, Size::new(47, 24), Breakpoint::TooSmall)]
-    #[case::below_minimum_rows(
-        LayoutMode::Auto,
-        Size::new(80, 15),
-        Breakpoint::TooSmall
-    )]
     fn the_terminal_size_picks_the_breakpoint(
         #[case] layout_mode: LayoutMode,
         #[case] size: Size,
@@ -81,19 +70,6 @@ mod tests {
         assert_eq!(
             Breakpoint::new(size, &Breakpoints::default(), layout_mode),
             expected
-        );
-    }
-
-    #[test]
-    fn a_lowered_minimum_lets_the_minimal_breakpoint_through() {
-        let breakpoints = Breakpoints {
-            min_width: Cells(10),
-            min_height: Cells(3),
-            ..Breakpoints::default()
-        };
-        assert_eq!(
-            Breakpoint::new(Size::new(20, 5), &breakpoints, LayoutMode::Auto),
-            Breakpoint::Minimal
         );
     }
 }

@@ -127,7 +127,7 @@ fn history_rows() -> Vec<KeyBinding> {
         vec![
             (
                 KeyPattern::Chord(Chord::Sequence {
-                    prefix: ChordPrefix::G,
+                    chord_prefix: ChordPrefix::G,
                     key: ChordPrefix::G.key(),
                 }),
                 history(HistoryRequest::SelectFirst),

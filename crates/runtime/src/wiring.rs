@@ -177,11 +177,16 @@ pub(crate) fn join_exited(ports: &mut Ports, reported_driver_names: &[DriverName
 
 #[cfg(test)]
 pub(crate) mod tests {
+    use std::time::Duration;
+
     use audio::tap::SpectrumTap;
     use crossbeam_channel::{Receiver, Sender};
     use kernel::{
         cmd::{AudioCmd, ConfigCmd, LibraryCmd, MacosCmd, RemoteCmd},
-        domain::driver::DriverName,
+        domain::{
+            driver::{DriverName, DriverStatus},
+            startup::Startup,
+        },
         message::{DriverEvent, Message},
     };
 
@@ -191,7 +196,7 @@ pub(crate) mod tests {
         port::{Port, Ports},
         registry,
         spawn::tests::{idle_spawners, spawn_idle, stub_paths},
-        wiring::Wiring,
+        wiring::{Wiring, await_exits},
     };
 
     fn idle_thread<C: Send + 'static>(
@@ -278,5 +283,37 @@ pub(crate) mod tests {
             };
             (wiring, library_cmd_receiver, latest_senders)
         }
+    }
+
+    #[test]
+    fn await_exits_reports_the_stopped_drivers_and_each_awaited_exit_once() {
+        let (mut model, _effects) =
+            kernel::update::startup::startup(Startup::default());
+        for driver_name in [DriverName::Audio, DriverName::Config] {
+            model.drivers.record_mut(driver_name).status = DriverStatus::Stopped;
+        }
+        let (inbox, inbox_receiver) = crossbeam_channel::unbounded();
+        for driver_name in [DriverName::Macos, DriverName::Library, DriverName::Remote]
+        {
+            inbox
+                .send(Message::Driver {
+                    driver_name,
+                    event: DriverEvent::Stopped,
+                })
+                .unwrap();
+        }
+
+        let reported = await_exits(&model, &inbox_receiver, Duration::from_secs(1));
+
+        assert_eq!(
+            reported,
+            [
+                DriverName::Audio,
+                DriverName::Config,
+                DriverName::Macos,
+                DriverName::Library,
+                DriverName::Remote
+            ]
+        );
     }
 }

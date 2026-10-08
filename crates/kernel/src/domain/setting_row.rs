@@ -54,6 +54,26 @@ impl SettingRow {
             | SettingRow::SleepPresets => true,
         }
     }
+
+    #[must_use]
+    pub const fn position(self) -> usize {
+        match self {
+            SettingRow::Appearance(AppearanceField::Preset) => 0,
+            SettingRow::Theme => 1,
+            SettingRow::Appearance(AppearanceField::CoverMode) => 2,
+            SettingRow::Appearance(AppearanceField::CoverBrackets) => 3,
+            SettingRow::Appearance(AppearanceField::FormatChips) => 4,
+            SettingRow::Appearance(AppearanceField::SpeedChip) => 5,
+            SettingRow::Appearance(AppearanceField::ProgressTime) => 6,
+            SettingRow::Appearance(AppearanceField::KeyHints) => 7,
+            SettingRow::Appearance(AppearanceField::Animations) => 8,
+            SettingRow::Appearance(AppearanceField::LayoutMode) => 9,
+            SettingRow::Crossfade => 10,
+            SettingRow::ReplayGain => 11,
+            SettingRow::OutputDevice => 12,
+            SettingRow::SleepPresets => 13,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

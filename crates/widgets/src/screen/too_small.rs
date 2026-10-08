@@ -65,3 +65,51 @@ impl Widget for &TooSmallWidget<'_> {
         Paragraph::new(lines).render(target, buffer);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{
+        buffer::Buffer,
+        layout::{Rect, Size},
+        widgets::Widget,
+    };
+    use rstest::rstest;
+
+    use crate::{
+        screen::too_small::TooSmallWidget,
+        test_support::noir,
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
+    };
+
+    #[rstest]
+    #[case::centred_in_a_tall_area(Rect::new(0, 3, 30, 7), [5, 6, 7])]
+    #[case::at_the_top_of_a_short_area(Rect::new(0, 1, 30, 4), [1, 2, 3])]
+    fn the_three_lines_sit_in_the_vertical_middle_of_the_area(
+        #[case] area: Rect,
+        #[case] rows: [u16; 3],
+    ) {
+        let theme = noir();
+        let widget = TooSmallWidget::new(
+            Size::new(80, 24),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 30, 12));
+        (&widget).render(area, &mut buffer);
+        let row_of = |needle: &str| {
+            (0..buffer.area.height).find(|&y| {
+                (0..buffer.area.width)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains(needle)
+            })
+        };
+        assert_eq!(
+            [
+                row_of("Terminal too small."),
+                row_of("Resize to at least 80"),
+                row_of("(now 30"),
+            ],
+            rows.map(Some)
+        );
+    }
+}

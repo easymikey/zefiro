@@ -20,8 +20,8 @@ impl BackdropStyle {
             background: colors.window_background,
             accent: colors.accent,
             volume_lifted: theme.color(lerp_rgb(
-                theme.colors.accent,
-                theme.colors.foreground,
+                theme.theme.colors.accent,
+                theme.theme.colors.foreground,
                 TIMINGS.volume_pulse_mix,
             )),
         }

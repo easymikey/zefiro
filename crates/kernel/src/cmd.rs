@@ -152,7 +152,7 @@ pub enum AudioCmd {
     SetSpeed(Speed),
     Stop,
     Preload(TrackLoad),
-    CancelPreload,
+    CancelPreload(Revision),
     SetCrossfade(Crossfade),
     SetReplayGain(ReplayGain),
     SetDevice(OutputDevice),
@@ -383,12 +383,15 @@ impl<E, M> FromIterator<E> for Cmd<E, M> {
 mod tests {
     use std::time::Duration;
 
+    use rstest::rstest;
+
     use crate::{
         cmd::{AudioCmd, Cmd, ConfigPatch, Effect, Playback},
         domain::{
             bounded::Bounded,
             crossfade::Crossfade,
             device::{DeviceName, OutputDevice},
+            server::{Account, Endpoint, ServerName, UserName},
             theme::ThemeName,
         },
     };
@@ -397,61 +400,77 @@ mod tests {
         Crossfade::clamped(Duration::from_secs(seconds))
     }
 
-    #[test]
-    fn config_patch_then_folds_disjoint_fields_and_the_later_field_wins() {
-        let earlier_patch = ConfigPatch {
+    fn speakers() -> OutputDevice {
+        OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap())
+    }
+
+    fn account() -> Account {
+        Account {
+            server_name: ServerName::new("home"),
+            endpoint: Endpoint::parse("https://music.example").unwrap(),
+            user_name: UserName::new("ann").unwrap(),
+        }
+    }
+
+    fn stop() -> Cmd {
+        Cmd::effect(Effect::Audio(AudioCmd::Stop))
+    }
+
+    fn pause() -> Effect {
+        Effect::Audio(AudioCmd::SetPlayback(Playback::Paused))
+    }
+
+    #[rstest]
+    #[case::disjoint_fields_fold_and_the_later_field_wins(
+        ConfigPatch {
             theme_name: Some(ThemeName::from_static("dark")),
             crossfade: Some(crossfade(1)),
             ..ConfigPatch::default()
-        };
-        let later = ConfigPatch {
+        },
+        ConfigPatch { crossfade: Some(crossfade(3)), ..ConfigPatch::default() },
+        ConfigPatch {
+            theme_name: Some(ThemeName::from_static("dark")),
             crossfade: Some(crossfade(3)),
             ..ConfigPatch::default()
-        };
-
-        let merged = earlier_patch.then(later);
-
-        assert_eq!(
-            merged.theme_name.as_ref().map(ThemeName::as_str),
-            Some("dark")
-        );
-        assert_eq!(merged.crossfade, Some(crossfade(3)));
+        }
+    )]
+    #[case::an_absent_field_keeps_the_earlier_one(
+        ConfigPatch { device: Some(speakers()), ..ConfigPatch::default() },
+        ConfigPatch::default(),
+        ConfigPatch { device: Some(speakers()), ..ConfigPatch::default() }
+    )]
+    #[case::an_empty_account_list_is_kept(
+        ConfigPatch { accounts: Some(Vec::new()), ..ConfigPatch::default() },
+        ConfigPatch::default(),
+        ConfigPatch { accounts: Some(Vec::new()), ..ConfigPatch::default() }
+    )]
+    #[case::a_later_account_list_wins(
+        ConfigPatch { accounts: Some(Vec::new()), ..ConfigPatch::default() },
+        ConfigPatch { accounts: Some(vec![account()]), ..ConfigPatch::default() },
+        ConfigPatch { accounts: Some(vec![account()]), ..ConfigPatch::default() }
+    )]
+    fn config_patch_then_lets_each_present_later_field_win(
+        #[case] earlier_patch: ConfigPatch,
+        #[case] later: ConfigPatch,
+        #[case] expected: ConfigPatch,
+    ) {
+        assert_eq!(earlier_patch.then(later), expected);
     }
 
-    #[test]
-    fn config_patch_then_an_absent_field_keeps_the_earlier_one() {
-        let speakers =
-            || OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap());
-        let earlier_patch = ConfigPatch {
-            device: Some(speakers()),
-            ..ConfigPatch::default()
-        };
-
-        let merged = earlier_patch.then(ConfigPatch::default());
-
-        assert_eq!(merged.device, Some(speakers()));
-    }
-
-    #[test]
-    fn then_with_none_keeps_the_other_cmd() {
-        let cmd: Cmd = Cmd::effect(Effect::Audio(AudioCmd::Stop));
-        assert_eq!(Cmd::none().then(cmd.clone()), cmd);
-        assert_eq!(cmd.clone().then(Cmd::none()), cmd);
-    }
-
-    #[test]
-    fn then_appends_effects_in_order() {
-        let first: Cmd =
-            Cmd::effect(Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)));
-        let second = Cmd::effect(Effect::Audio(AudioCmd::Stop));
-        let merged = first.then(second);
-        assert_eq!(
-            merged,
-            Cmd::<Effect>::from_iter([
-                Effect::Audio(AudioCmd::SetPlayback(Playback::Paused)),
-                Effect::Audio(AudioCmd::Stop),
-            ])
-        );
+    #[rstest]
+    #[case::none_keeps_the_later_cmd(Cmd::none(), stop(), stop())]
+    #[case::none_keeps_the_earlier_cmd(stop(), Cmd::none(), stop())]
+    #[case::effects_in_order(
+        Cmd::effect(pause()),
+        stop(),
+        Cmd::from_iter([pause(), Effect::Audio(AudioCmd::Stop)])
+    )]
+    fn then_appends_effects_in_order(
+        #[case] first: Cmd,
+        #[case] second: Cmd,
+        #[case] expected: Cmd,
+    ) {
+        assert_eq!(first.then(second), expected);
     }
 
     #[test]
@@ -487,33 +506,5 @@ mod tests {
                 Effect::Audio(AudioCmd::Stop)
             ]
         ));
-    }
-
-    #[test]
-    fn an_empty_account_list_is_kept_and_a_later_list_wins() {
-        use crate::domain::server::{Account, Endpoint, ServerName, UserName};
-
-        let account = Account {
-            server_name: ServerName::new("home"),
-            endpoint: Endpoint::parse("https://music.example").unwrap(),
-            user_name: UserName::new("ann").unwrap(),
-        };
-        let empty_patch = ConfigPatch {
-            accounts: Some(Vec::new()),
-            ..ConfigPatch::default()
-        };
-        let account_patch = ConfigPatch {
-            accounts: Some(vec![account.clone()]),
-            ..ConfigPatch::default()
-        };
-
-        assert_eq!(
-            empty_patch.clone().then(ConfigPatch::default()).accounts,
-            Some(Vec::new())
-        );
-        assert_eq!(
-            empty_patch.then(account_patch).accounts,
-            Some(vec![account])
-        );
     }
 }

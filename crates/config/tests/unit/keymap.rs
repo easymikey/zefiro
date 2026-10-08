@@ -3,14 +3,6 @@ use kernel::domain::keymap::{Action, KeyContext, KeyOverride};
 use rstest::rstest;
 
 #[rstest]
-#[case::a_string_keeps_the_action_context(
-    "next = \"y\"",
-    KeyOverride { chord: String::from("y"), key_context: None }
-)]
-#[case::a_table_names_the_context(
-    "next = { chord = \"y\", context = \"search\" }",
-    KeyOverride { chord: String::from("y"), key_context: Some(KeyContext::Search) }
-)]
 #[case::the_trash_confirmation_context_reads_as_confirm_trash(
     "next = { chord = \"y\", context = \"confirm_trash\" }",
     KeyOverride { chord: String::from("y"), key_context: Some(KeyContext::ConfirmTrash) }

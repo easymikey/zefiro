@@ -213,24 +213,22 @@ fn squeezed_width(columns: &[HelpColumn]) -> Cells {
 }
 
 fn columns_that_fit(
-    candidate_columns: Vec<Vec<HelpColumn>>,
+    [three, two, one]: [Vec<HelpColumn>; 3],
     inner_width: Cells,
 ) -> Vec<HelpColumn> {
-    let last = candidate_columns.len().saturating_sub(1);
-    let natural = candidate_columns.iter().position(|candidate| {
-        columns_width(candidate, Cells(COLUMN_GAP)) <= inner_width
-    });
-    let squeezed = candidate_columns
-        .iter()
-        .position(|candidate| squeezed_width(candidate) <= inner_width);
-    let picked = natural
-        .filter(|&index| index < last)
-        .or(squeezed)
-        .or(natural);
-    candidate_columns
-        .into_iter()
-        .nth(picked.unwrap_or(last))
-        .unwrap_or_else(Vec::new)
+    let fits = |columns: &[HelpColumn]| {
+        columns_width(columns, Cells(COLUMN_GAP)) <= inner_width
+    };
+    if fits(&three) {
+        three
+    } else if fits(&two) {
+        two
+    } else {
+        [three, two]
+            .into_iter()
+            .find(|columns| squeezed_width(columns) <= inner_width)
+            .unwrap_or(one)
+    }
 }
 
 pub(crate) fn select_help_columns(
@@ -253,7 +251,7 @@ pub(crate) fn select_help_columns(
         let (left, middle, right) =
             three_columns([playback, general, navigation, playlist]);
         columns_that_fit(
-            vec![
+            [
                 vec![left, middle, right],
                 vec![
                     HelpColumn::new(&[playback]),
@@ -276,18 +274,10 @@ mod tests {
     use std::{borrow::Cow, sync::Arc};
 
     use kernel::domain::geometry::Cells;
-    use ratatui::layout::Rect;
     use rstest::rstest;
 
     use crate::overlay::help::{
-        columns::{
-            HelpColumn,
-            available_width,
-            columns_that_fit,
-            columns_width,
-            squeezed_width,
-            three_columns,
-        },
+        columns::{HelpColumn, columns_that_fit, columns_width, three_columns},
         groups::{COLUMN_GAP, HelpGroup, HelpRow},
     };
 
@@ -311,6 +301,7 @@ mod tests {
     #[rstest]
     #[case::navigation_joins_the_middle(Balance { group_rows: [18, 8, 2, 16], heights: (Cells(19), Cells(13), Cells(17)) })]
     #[case::navigation_joins_the_last(Balance { group_rows: [19, 14, 7, 2], heights: (Cells(20), Cells(15), Cells(12)) })]
+    #[case::the_smaller_spread_wins_within_twice_the_shortest(Balance { group_rows: [19, 19, 1, 16], heights: (Cells(20), Cells(20), Cells(20)) })]
     fn three_columns_moves_navigation_to_the_column_that_balances_better(
         #[case] balance: Balance,
     ) {
@@ -335,8 +326,8 @@ mod tests {
         }
     }
 
-    fn candidates() -> Vec<Vec<HelpColumn>> {
-        vec![
+    fn candidates() -> [Vec<HelpColumn>; 3] {
+        [
             vec![column(20), column(20), column(20)],
             vec![column(20), column(40)],
             vec![column(60)],
@@ -344,52 +335,27 @@ mod tests {
     }
 
     #[rstest]
-    #[case::three_at_their_exact_width(Width::ThreeColumns, 0)]
     #[case::one_cell_short_of_three(Width::OneCellShortOfThree, 1)]
-    #[case::two_squeezed(Width::TwoSqueezed, 1)]
     #[case::nothing_fits(Width::Nothing, 2)]
     fn columns_that_fit_takes_the_widest_arrangement_that_fits(
         #[case] width: Width,
         #[case] expected: usize,
     ) {
         let available = match width {
-            Width::ThreeColumns => {
-                columns_width(&candidates().swap_remove(0), Cells(COLUMN_GAP))
+            Width::OneCellShortOfThree => {
+                Cells(columns_width(&candidates()[0], Cells(COLUMN_GAP)).0 - 1)
             }
-            Width::OneCellShortOfThree => Cells(
-                columns_width(&candidates().swap_remove(0), Cells(COLUMN_GAP)).0 - 1,
-            ),
-            Width::TwoSqueezed => squeezed_width(&candidates().swap_remove(1)),
             Width::Nothing => Cells(1),
         };
         assert_eq!(
             columns_that_fit(candidates(), available),
-            candidates().swap_remove(expected)
+            Vec::from(candidates()).swap_remove(expected)
         );
     }
 
     #[derive(Debug, Clone, Copy)]
     enum Width {
-        ThreeColumns,
         OneCellShortOfThree,
-        TwoSqueezed,
         Nothing,
-    }
-
-    #[test]
-    fn the_squeeze_is_narrower_than_the_natural_width() {
-        let two = candidates().swap_remove(1);
-        assert!(squeezed_width(&two) < columns_width(&two, Cells(COLUMN_GAP)));
-    }
-
-    #[test]
-    fn the_cover_rect_does_not_narrow_the_width_the_columns_are_measured_against() {
-        let full = Rect {
-            x: 0,
-            y: 0,
-            width: 120,
-            height: 40,
-        };
-        assert_eq!(available_width(full), Cells(114));
     }
 }

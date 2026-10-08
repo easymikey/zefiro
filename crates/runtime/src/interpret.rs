@@ -58,7 +58,6 @@ mod tests {
     use kernel::{
         cmd::{
             AudioCmd,
-            Cmd,
             ConfigCmd,
             ConfigPatch,
             CoverJob,
@@ -77,11 +76,14 @@ mod tests {
             geometry::Pixels,
             index::ViewIndex,
             model::Model,
+            percent::Percent,
             revision::Revision,
             server::{Account, Connection, Credential, Endpoint, ServerName, UserName},
+            theme::ThemeName,
         },
         message::{Message, Timer},
     };
+    use rstest::rstest;
 
     use crate::{
         driver_thread::Congestion,
@@ -129,145 +131,28 @@ mod tests {
                 remote_receiver,
             }
         }
+
+        fn arrived(&self) -> Vec<Effect> {
+            self.audio_receiver
+                .try_iter()
+                .map(Effect::Audio)
+                .chain(self.library_receiver.try_iter().map(Effect::Library))
+                .chain(self.macos_receiver.try_iter().map(Effect::Macos))
+                .chain(self.remote_receiver.try_iter().map(Effect::Remote))
+                .chain(self.config_receiver.try_iter().map(Effect::Config))
+                .collect()
+        }
     }
 
-    fn run(cmd: Cmd, runtime: &mut Runtime) -> Vec<Message> {
-        runtime.interpret(cmd.into_parts().0)
-    }
-
-    #[test]
-    fn a_cmd_to_a_running_driver_is_routed() {
-        let mut fixture = Fixture::new();
-
-        run(
-            Cmd::effect(Effect::Audio(AudioCmd::Stop)),
-            &mut fixture.runtime,
-        );
-
-        assert_eq!(fixture.audio_receiver.try_recv(), Ok(AudioCmd::Stop));
-    }
-
-    #[test]
-    fn a_remote_cmd_reaches_the_remote_port() {
-        let mut fixture = Fixture::new();
-        let remote_cmd = RemoteCmd::Connect(Connection {
+    fn remote_connect() -> RemoteCmd {
+        RemoteCmd::Connect(Connection {
             account: Account {
                 server_name: ServerName::new("home"),
                 endpoint: Endpoint::parse("https://music.example.com").unwrap(),
                 user_name: UserName::new("ann").unwrap(),
             },
             credential: Credential::Stored,
-        });
-
-        run(
-            Cmd::effect(Effect::Remote(remote_cmd.clone())),
-            &mut fixture.runtime,
-        );
-
-        assert_eq!(fixture.remote_receiver.try_recv(), Ok(remote_cmd));
-    }
-
-    #[test]
-    fn a_restart_effect_replaces_the_port_before_the_rest_is_sent() {
-        let mut fixture = Fixture::new();
-        let cmd = Cmd::from_iter([
-            Effect::Restart(DriverName::Audio),
-            Effect::Audio(AudioCmd::Stop),
-            Effect::Audio(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
-        ]);
-
-        let answers = run(cmd, &mut fixture.runtime);
-
-        assert_eq!(answers, Vec::new());
-        assert_eq!(
-            fixture.audio_receiver.try_recv(),
-            Err(TryRecvError::Disconnected)
-        );
-    }
-
-    #[test]
-    fn a_cmd_to_a_dead_driver_is_dropped() {
-        let mut fixture = Fixture::new();
-        fixture
-            .runtime
-            .model
-            .drivers
-            .record_mut(DriverName::Audio)
-            .status = DriverStatus::Stopped;
-
-        run(
-            Cmd::effect(Effect::Audio(AudioCmd::Stop)),
-            &mut fixture.runtime,
-        );
-
-        assert!(fixture.audio_receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn a_send_onto_a_lost_cmd_receiver_is_dropped() {
-        let mut fixture = Fixture::new();
-        fixture.audio_receiver = never();
-
-        let answers = run(
-            Cmd::effect(Effect::Audio(AudioCmd::Stop)),
-            &mut fixture.runtime,
-        );
-
-        assert_eq!(answers, Vec::new());
-        assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());
-        assert_eq!(fixture.runtime.flow, ControlFlow::Continue(()));
-    }
-
-    #[test]
-    fn a_macos_cmd_to_a_stopped_macos_driver_is_dropped() {
-        let mut fixture = Fixture::new();
-        fixture
-            .runtime
-            .model
-            .drivers
-            .record_mut(DriverName::Macos)
-            .status = DriverStatus::Stopped;
-
-        run(
-            Cmd::effect(Effect::Macos(MacosCmd::SetVolume(
-                kernel::domain::percent::Percent::default(),
-            ))),
-            &mut fixture.runtime,
-        );
-
-        assert!(fixture.macos_receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn a_macos_send_onto_a_lost_macos_cmd_receiver_is_dropped() {
-        let mut fixture = Fixture::new();
-        fixture.macos_receiver = never();
-
-        let answers = run(
-            Cmd::effect(Effect::Macos(MacosCmd::SetVolume(
-                kernel::domain::percent::Percent::default(),
-            ))),
-            &mut fixture.runtime,
-        );
-
-        assert_eq!(answers, Vec::new());
-        assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());
-        assert_eq!(fixture.runtime.flow, ControlFlow::Continue(()));
-    }
-
-    #[test]
-    fn a_library_cmd_is_routed() {
-        let mut fixture = Fixture::new();
-
-        run(
-            Cmd::effect(Effect::Library(LibraryCmd::Disk(DiskCmd::LoadFavorites))),
-            &mut fixture.runtime,
-        );
-
-        assert!(matches!(
-            fixture.library_receiver.try_recv(),
-            Ok(LibraryCmd::Disk(DiskCmd::LoadFavorites))
-        ));
+        })
     }
 
     fn cover_job() -> CoverJob {
@@ -277,73 +162,104 @@ mod tests {
         }
     }
 
-    #[test]
-    fn every_cover_job_is_forwarded_to_the_library() {
+    fn dark_theme_save() -> ConfigCmd {
+        ConfigCmd::Save(ConfigPatch {
+            theme_name: Some(ThemeName::from_static("dark")),
+            ..ConfigPatch::default()
+        })
+    }
+
+    fn hidden_brackets() -> ConfigCmd {
+        ConfigCmd::SetAppearance(AppearancePatch {
+            cover_brackets: Some(CoverBrackets::Hidden),
+            ..AppearancePatch::default()
+        })
+    }
+
+    #[rstest]
+    #[case::audio(vec![Effect::Audio(AudioCmd::Stop)])]
+    #[case::macos(vec![Effect::Macos(MacosCmd::SetVolume(Percent::default()))])]
+    #[case::remote(vec![Effect::Remote(remote_connect())])]
+    #[case::library(vec![Effect::Library(LibraryCmd::Disk(DiskCmd::LoadFavorites))])]
+    #[case::every_cover_job(vec![
+        Effect::Library(LibraryCmd::DecodeCover(cover_job())),
+        Effect::Library(LibraryCmd::PrefetchCover(cover_job())),
+    ])]
+    #[case::config_save(vec![Effect::Config(dark_theme_save())])]
+    #[case::setting(vec![Effect::Config(hidden_brackets())])]
+    fn a_cmd_to_a_running_driver_is_routed(#[case] effects: Vec<Effect>) {
         let mut fixture = Fixture::new();
-        let cmd = Cmd::from_iter([
-            Effect::Library(LibraryCmd::DecodeCover(cover_job())),
-            Effect::Library(LibraryCmd::PrefetchCover(cover_job())),
+
+        let answers = fixture.runtime.interpret(effects.clone());
+
+        assert_eq!(answers, Vec::new());
+        assert_eq!(fixture.arrived(), effects);
+        assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());
+    }
+
+    #[rstest]
+    #[case::audio(DriverName::Audio, Effect::Audio(AudioCmd::Stop))]
+    #[case::macos(
+        DriverName::Macos,
+        Effect::Macos(MacosCmd::SetVolume(Percent::default()))
+    )]
+    #[case::cover_job(
+        DriverName::Library,
+        Effect::Library(LibraryCmd::DecodeCover(cover_job()))
+    )]
+    fn a_cmd_to_a_dead_driver_is_dropped(
+        #[case] driver_name: DriverName,
+        #[case] effect: Effect,
+    ) {
+        let mut fixture = Fixture::new();
+        fixture.runtime.model.drivers.record_mut(driver_name).status =
+            DriverStatus::Stopped;
+
+        fixture.runtime.interpret(vec![effect]);
+
+        assert_eq!(fixture.arrived(), Vec::new());
+    }
+
+    #[rstest]
+    #[case::audio(Effect::Audio(AudioCmd::Stop))]
+    #[case::macos(Effect::Macos(MacosCmd::SetVolume(Percent::default())))]
+    fn a_send_onto_a_lost_cmd_receiver_is_dropped(#[case] effect: Effect) {
+        let mut fixture = Fixture::new();
+        fixture.audio_receiver = never();
+        fixture.macos_receiver = never();
+
+        let answers = fixture.runtime.interpret(vec![effect]);
+
+        assert_eq!(answers, Vec::new());
+        assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());
+        assert_eq!(fixture.runtime.flow, ControlFlow::Continue(()));
+    }
+
+    #[test]
+    fn a_restart_effect_replaces_the_port_before_the_rest_is_sent() {
+        let mut fixture = Fixture::new();
+
+        let answers = fixture.runtime.interpret(vec![
+            Effect::Restart(DriverName::Audio),
+            Effect::Audio(AudioCmd::Stop),
+            Effect::Audio(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
         ]);
 
-        run(cmd, &mut fixture.runtime);
-
+        assert_eq!(answers, Vec::new());
         assert_eq!(
-            fixture.library_receiver.try_iter().collect::<Vec<_>>(),
-            [
-                LibraryCmd::DecodeCover(cover_job()),
-                LibraryCmd::PrefetchCover(cover_job()),
-            ]
+            fixture.audio_receiver.try_recv(),
+            Err(TryRecvError::Disconnected)
         );
-    }
-
-    #[test]
-    fn a_cover_job_for_a_stopped_library_is_dropped() {
-        let mut fixture = Fixture::new();
-        fixture
-            .runtime
-            .model
-            .drivers
-            .record_mut(DriverName::Library)
-            .status = DriverStatus::Stopped;
-
-        run(
-            Cmd::effect(Effect::Library(LibraryCmd::DecodeCover(cover_job()))),
-            &mut fixture.runtime,
-        );
-
-        assert!(fixture.library_receiver.try_recv().is_err());
-    }
-
-    #[test]
-    fn a_config_save_is_routed() {
-        let mut fixture = Fixture::new();
-
-        run(
-            Cmd::effect(Effect::Config(ConfigCmd::Save(ConfigPatch {
-                theme_name: Some(kernel::domain::theme::ThemeName::from_static("dark")),
-                ..ConfigPatch::default()
-            }))),
-            &mut fixture.runtime,
-        );
-
-        assert!(matches!(
-            fixture.config_receiver.try_recv(),
-            Ok(ConfigCmd::Save(patch))
-                if patch.theme_name.as_ref().map(kernel::domain::theme::ThemeName::as_str) == Some("dark")
-        ));
     }
 
     #[test]
     fn window_colors_and_animate_become_shell_effects() {
         let mut fixture = Fixture::new();
 
-        run(
-            Cmd::from_iter([
-                Effect::WindowColors(WindowColorsCmd::Reset),
-                Effect::Animate(Cue::TrackChanged),
-            ]),
-            &mut fixture.runtime,
-        );
+        fixture.runtime.interpret(vec![
+            Effect::WindowColors(WindowColorsCmd::Reset),
+            Effect::Animate(Cue::TrackChanged),
+        ]);
 
         assert_eq!(
             fixture.runtime.take_shell_effects(),
@@ -358,79 +274,51 @@ mod tests {
     fn quit_stops_the_flow_after_the_rest_of_the_batch() {
         let mut fixture = Fixture::new();
 
-        run(
-            Cmd::from_iter([Effect::Audio(AudioCmd::Stop), Effect::Quit]),
-            &mut fixture.runtime,
-        );
+        fixture
+            .runtime
+            .interpret(vec![Effect::Audio(AudioCmd::Stop), Effect::Quit]);
 
         assert_eq!(fixture.runtime.flow, ControlFlow::Break(()));
         assert_eq!(fixture.audio_receiver.try_recv(), Ok(AudioCmd::Stop));
     }
 
-    #[test]
-    fn roll_shuffle_answers_with_a_permutation_of_the_right_length() {
+    #[rstest]
+    #[case::one(vec![5])]
+    #[case::two_in_order(vec![2, 3])]
+    fn roll_shuffle_answers_with_a_permutation_of_the_right_length(
+        #[case] lens: Vec<usize>,
+    ) {
         let mut fixture = Fixture::new();
 
-        let answers = run(Cmd::effect(Effect::RollShuffle(5)), &mut fixture.runtime);
-        let [Message::ShuffleRolled(order)] = answers.as_slice() else {
-            panic!("expected a single shuffle answer");
-        };
-        let mut sorted = order.clone();
-        sorted.sort_unstable();
-        assert_eq!(sorted, (0..5).map(ViewIndex::new).collect::<Vec<_>>());
-    }
+        let answers = fixture
+            .runtime
+            .interpret(lens.iter().copied().map(Effect::RollShuffle).collect());
 
-    #[test]
-    fn two_roll_shuffles_in_one_batch_answer_in_order() {
-        let mut fixture = Fixture::new();
-
-        let answers = run(
-            Cmd::from_iter([Effect::RollShuffle(2), Effect::RollShuffle(3)]),
-            &mut fixture.runtime,
-        );
-
-        let [
-            Message::ShuffleRolled(first),
-            Message::ShuffleRolled(second),
-        ] = answers.as_slice()
-        else {
-            panic!("expected two shuffle answers in order");
-        };
-        assert_eq!(first.len(), 2);
-        assert_eq!(second.len(), 3);
-    }
-
-    #[test]
-    fn a_setting_effect_reaches_the_config_cmd_receiver_as_a_setting_cmd() {
-        let mut fixture = Fixture::new();
-        let patch = AppearancePatch {
-            cover_brackets: Some(CoverBrackets::Hidden),
-            ..AppearancePatch::default()
-        };
-
-        run(
-            Cmd::effect(Effect::Config(ConfigCmd::SetAppearance(patch))),
-            &mut fixture.runtime,
-        );
-
-        assert_eq!(
-            fixture.config_receiver.try_recv(),
-            Ok(ConfigCmd::SetAppearance(patch))
-        );
-        assert_eq!(fixture.runtime.take_shell_effects(), Vec::new());
+        let view_indexes: Vec<Vec<ViewIndex>> = answers
+            .into_iter()
+            .map(|answer| {
+                let Message::ShuffleRolled(mut order) = answer else {
+                    panic!("expected a shuffle answer");
+                };
+                order.sort_unstable();
+                order
+            })
+            .collect();
+        let expected: Vec<Vec<ViewIndex>> = lens
+            .iter()
+            .map(|&len| (0..len).map(ViewIndex::new).collect())
+            .collect();
+        assert_eq!(view_indexes, expected);
     }
 
     #[test]
     fn after_schedules_a_timer() {
         let mut fixture = Fixture::new();
 
-        run(
-            Cmd::effect(Effect::After {
-                delay: Duration::from_secs(1),
-                timer: Timer::Toast(Revision::default()),
-            }),
-            &mut fixture.runtime,
-        );
+        fixture.runtime.interpret(vec![Effect::After {
+            delay: Duration::from_secs(1),
+            timer: Timer::Toast(Revision::default()),
+        }]);
 
         assert!(fixture.runtime.timers.next_deadline().is_some());
     }

@@ -322,12 +322,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::output_lost(
-        AudioMessage::Deck(DeckEvent::OutputLost(
-            kernel::domain::transport::OutputError::DeviceGone
-        )),
-        Engine::new(EngineState::Live(live())).lost(kernel::domain::transport::OutputError::DeviceGone)
-    )]
     #[case::decode_error(
         AudioMessage::Decoded { revision: Revision::default(), result: Err(worker_panicked()) },
         step(&mut EngineState::Live(live()), EngineMessage::Error(AudioError::Decode { path: PathBuf::from("/a"), error: DecodeError::Panicked }))
@@ -369,8 +363,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::stale_decode(live(), AudioMessage::Decoded { revision: first(), result: Err(worker_panicked()) })]
-    #[case::stale_preload_error(awaiting(playing(), "/b"), AudioMessage::Preloaded { revision: first(), result: Err(worker_panicked()) })]
     #[case::stale_preload(awaiting(playing(), "/b"), AudioMessage::Preloaded { revision: first(), result: Ok(source_track(first()).decoder) })]
     #[case::preload_while_playing(playing(), AudioMessage::Preloaded { revision: Revision::default(), result: Ok(source_track(Revision::default()).decoder) })]
     fn an_unawaited_answer_is_refused(

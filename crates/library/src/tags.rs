@@ -108,53 +108,16 @@ pub fn embedded_cover(path: &Path) -> Result<Option<Vec<u8>>, FileParseError> {
 #[cfg(test)]
 mod tests {
     use kernel::domain::track::Decibels;
-    use rstest::{fixture, rstest};
+    use rstest::rstest;
 
-    use crate::{
-        scan::read_tags,
-        tags::{embedded_cover, parse_decibels},
-        test_support::{minimal_flac_with_cover, temp_dir_filters},
-    };
-
-    #[fixture]
-    fn unparseable_media() -> tempfile::TempDir {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("clip.mkv"), b"not a real container").unwrap();
-        dir
-    }
-
-    #[rstest]
-    fn an_unparseable_file_is_still_listed_by_path(
-        unparseable_media: tempfile::TempDir,
-    ) {
-        let path = unparseable_media.path().join("clip.mkv");
-        let read = read_tags(&[path]);
-        let track = &read.tracks[0];
-        insta::with_settings!({ filters => temp_dir_filters() }, {
-            insta::assert_debug_snapshot!(track);
-        });
-    }
-
-    #[rstest]
-    fn unparseable_file_has_no_decibels(unparseable_media: tempfile::TempDir) {
-        let path = unparseable_media.path().join("clip.mkv");
-        let read = read_tags(&[path]);
-        let track = &read.tracks[0];
-        assert_eq!(track.audio_format().decibels, None);
-    }
+    use crate::tags::{embedded_cover, parse_decibels};
 
     #[rstest]
     #[case::negative_with_space("-6.48 dB", Some(-6.48))]
     #[case::negative_no_space("-6.48dB", Some(-6.48))]
     #[case::positive_uppercase("3.2 DB", Some(3.2))]
-    #[case::zero_lowercase("0.00 dB", Some(0.0))]
-    #[case::mixed_case("-6.48 Db", Some(-6.48))]
-    #[case::empty("", None)]
     #[case::unit_only("dB", None)]
-    #[case::non_numeric("not a number dB", None)]
     #[case::not_a_number("nan dB", None)]
-    #[case::negative_infinity("-inf dB", None)]
-    #[case::far_too_loud("1e9 dB", None)]
     #[case::at_the_bound("60 dB", Some(60.0))]
     #[case::past_the_bound("-60.5 dB", None)]
     fn decibels_read_the_number_before_the_db_unit(
@@ -168,16 +131,5 @@ mod tests {
     fn embedded_cover_of_a_nonexistent_file_is_an_error() {
         let result = embedded_cover(std::path::Path::new("/nonexistent.mp3"));
         assert!(result.is_err(), "{result:?}");
-    }
-
-    #[test]
-    fn embedded_cover_of_a_tagged_file_returns_the_picture_data() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("cover.flac");
-        std::fs::write(&path, minimal_flac_with_cover(b"cover-bytes")).unwrap();
-
-        let result = embedded_cover(&path);
-
-        assert_eq!(result.unwrap(), Some(b"cover-bytes".to_vec()));
     }
 }

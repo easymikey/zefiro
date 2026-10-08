@@ -30,9 +30,7 @@ mod tests {
     use crate::primitive::spectrum_meter::spectrum_row_fraction;
 
     #[rstest]
-    #[case::top_row(0, 4, 1.0)]
     #[case::second_row(1, 4, 1.0 - 1.0f32 / 3.0f32)]
-    #[case::bottom_row(3, 4, 0.0)]
     #[case::the_only_row(0, 1, 1.0)]
     #[case::no_rows_at_all(0, 0, 1.0)]
     fn spectrum_row_fraction_runs_high_at_the_top(

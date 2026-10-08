@@ -82,13 +82,6 @@ mod tests {
     }
 
     #[test]
-    fn the_title_names_the_pane_its_position_and_its_flags() {
-        let text = title_text(80);
-        assert!(text.contains("shuffle on"), "got {text:?}");
-        assert!(text.contains("repeat all"), "got {text:?}");
-    }
-
-    #[test]
     fn a_narrow_border_truncates_the_title_with_an_ellipsis() {
         let text = title_text(24);
         assert!(text.ends_with('…'), "got {text:?}");

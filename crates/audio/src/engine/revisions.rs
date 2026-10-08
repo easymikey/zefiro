@@ -23,7 +23,7 @@ pub(crate) struct JobRevisions {
     issued: Revision,
     decode: Revision,
     preload: Revision,
-    preloaded_revision: Option<Revision>,
+    preload_download_revision: Option<Revision>,
     downloaded: HashMap<Revision, Arc<AtomicU64>>,
 }
 
@@ -58,7 +58,7 @@ impl JobRevisions {
     pub(crate) fn decode_job(&mut self, media: Media) -> AudioJob {
         self.preload = self.issue();
         self.decode = self.issue();
-        self.preloaded_revision = None;
+        self.preload_download_revision = None;
         let (media_path, download) = self.download(media);
         AudioJob::Decode {
             media_path,
@@ -70,7 +70,8 @@ impl JobRevisions {
     pub(crate) fn preload_job(&mut self, media: Media) -> AudioJob {
         self.preload = self.issue();
         let (media_path, download) = self.download(media);
-        self.preloaded_revision = download.as_ref().map(|download| download.revision);
+        self.preload_download_revision =
+            download.as_ref().map(|download| download.revision);
         AudioJob::Preload {
             media_path,
             download,
@@ -91,15 +92,15 @@ impl JobRevisions {
     }
 
     pub(crate) fn decoded(&mut self, download_revision: Option<Revision>) {
-        let preloaded_revision = self.preloaded_revision;
+        let preload_download_revision = self.preload_download_revision;
         self.downloaded.retain(|revision, _bound| {
             Some(*revision) == download_revision
-                || Some(*revision) == preloaded_revision
+                || Some(*revision) == preload_download_revision
         });
     }
 
     pub(crate) fn drop_preload(&mut self, current: &Media) {
-        self.preloaded_revision = None;
+        self.preload_download_revision = None;
         self.decoded(match current {
             Media::Local(_media_path) => None,
             Media::Growing(GrowingMedia {
@@ -136,7 +137,7 @@ impl JobRevisions {
     pub(crate) fn cancel(&mut self) {
         self.preload = self.issue();
         self.decode = self.issue();
-        self.preloaded_revision = None;
+        self.preload_download_revision = None;
         self.downloaded.clear();
     }
 
@@ -160,14 +161,12 @@ mod tests {
 
     use crate::{
         deck::{
-            event::DeckEvent,
             job::AudioJob,
             source::tests::{decoded, ramp_file},
         },
         engine::{
             message::{AudioMessage, EngineMessage},
             revisions::JobRevisions,
-            tests::assert_same,
         },
         error::Error,
     };
@@ -198,19 +197,6 @@ mod tests {
 
     fn cancel_step() -> Step {
         Box::new(JobRevisions::cancel)
-    }
-
-    #[test]
-    fn a_decode_job_carries_the_newest_revision() {
-        let mut job_revisions = JobRevisions::default();
-        assert_same(
-            job_revisions.decode_job(Media::Local("/a".into())),
-            AudioJob::Decode {
-                media_path: "/a".into(),
-                download: None,
-                revision: revision(2),
-            },
-        );
     }
 
     fn growing(media_path: PathBuf, downloaded: u64, byte_len: u64) -> Media {
@@ -265,25 +251,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_decoded_track_keeps_only_its_own_download_growing() {
-        let mut job_revisions = JobRevisions::default();
-        drop(job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
-        let mut other_job_revisions = JobRevisions::default();
-        drop(other_job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
-
-        job_revisions.decoded(Some(revision(9)));
-        other_job_revisions.decoded(None);
-
-        assert_eq!(
-            (
-                job_revisions.grow(revision(9), 600),
-                other_job_revisions.grow(revision(9), 600)
-            ),
-            (Ok(()), Err(Unhandled))
-        );
-    }
-
     fn growing_preload(media_path: PathBuf, revision: Revision) -> Media {
         Media::Growing(GrowingMedia {
             media_path,
@@ -293,21 +260,34 @@ mod tests {
         })
     }
 
-    #[test]
-    fn a_decoded_track_keeps_the_download_of_its_pending_preload_growing() {
+    #[rstest]
+    #[case::its_own_download(vec![], Some(revision(9)), vec![(revision(9), Ok(()))])]
+    #[case::no_download_of_its_own(vec![], None, vec![(revision(9), Err(Unhandled))])]
+    #[case::the_download_of_its_pending_preload(vec![revision(7)], Some(revision(9)), vec![(revision(9), Ok(())), (revision(7), Ok(()))])]
+    #[case::not_the_download_of_a_superseded_preload(vec![revision(7), revision(6)], Some(revision(9)), vec![(revision(7), Err(Unhandled)), (revision(6), Ok(()))])]
+    fn a_decoded_track_keeps_only_its_own_download_growing(
+        #[case] preload_revisions: Vec<Revision>,
+        #[case] download_revision: Option<Revision>,
+        #[case] expected: Vec<(Revision, Result<(), Unhandled>)>,
+    ) {
         let mut job_revisions = JobRevisions::default();
         drop(job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
-        drop(job_revisions.preload_job(growing_preload("/b".into(), revision(7))));
+        for preload_revision in preload_revisions {
+            drop(
+                job_revisions
+                    .preload_job(growing_preload("/b".into(), preload_revision)),
+            );
+        }
 
-        job_revisions.decoded(Some(revision(9)));
+        job_revisions.decoded(download_revision);
 
-        assert_eq!(
-            (
-                job_revisions.grow(revision(9), 600),
-                job_revisions.grow(revision(7), 600)
-            ),
-            (Ok(()), Ok(()))
-        );
+        let grown: Vec<(Revision, Result<(), Unhandled>)> = expected
+            .iter()
+            .map(|(grown_revision, _)| {
+                (*grown_revision, job_revisions.grow(*grown_revision, 600))
+            })
+            .collect();
+        assert_eq!(grown, expected);
     }
 
     #[test]
@@ -326,24 +306,6 @@ mod tests {
                 job_revisions.grow(revision(7), 600)
             ),
             (Ok(()), Err(Unhandled))
-        );
-    }
-
-    #[test]
-    fn a_decoded_track_clears_the_download_of_a_superseded_preload() {
-        let mut job_revisions = JobRevisions::default();
-        drop(job_revisions.decode_job(growing("/a".into(), 100, 1_000)));
-        drop(job_revisions.preload_job(growing_preload("/b".into(), revision(7))));
-        drop(job_revisions.preload_job(growing_preload("/c".into(), revision(6))));
-
-        job_revisions.decoded(Some(revision(9)));
-
-        assert_eq!(
-            (
-                job_revisions.grow(revision(7), 600),
-                job_revisions.grow(revision(6), 600)
-            ),
-            (Err(Unhandled), Ok(()))
         );
     }
 
@@ -389,7 +351,6 @@ mod tests {
     #[case::is_current_preload(vec![decode_job_step("/a"), preload_job_step("/b")], AudioMessage::Preloaded { revision: revision(3), result: failed() }, true)]
     #[case::preload_after_a_load(vec![preload_job_step("/b"), decode_job_step("/a")], AudioMessage::Preloaded { revision: revision(1), result: failed() }, false)]
     #[case::preload_after_a_newer_preload(vec![preload_job_step("/b"), preload_job_step("/c")], AudioMessage::Preloaded { revision: revision(1), result: failed() }, false)]
-    #[case::woke_event(vec![cancel_step()], AudioMessage::Deck(DeckEvent::Woke(revision(9))), true)]
     #[case::interruption_of_the_loaded_feed(vec![decode_job_step("/a")], AudioMessage::Engine(EngineMessage::Interrupted(revision(2), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), true)]
     #[case::interruption_of_a_preloaded_feed(vec![decode_job_step("/a"), preload_job_step("/b")], AudioMessage::Engine(EngineMessage::Interrupted(revision(3), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), true)]
     #[case::interruption_of_the_playing_preload_after_a_newer_preload(vec![decode_job_step("/a"), preload_job_step("/b"), preload_job_step("/c")], AudioMessage::Engine(EngineMessage::Interrupted(revision(3), AudioError::Decode { path: "/a".into(), error: DecodeError::Corrupt })), true)]

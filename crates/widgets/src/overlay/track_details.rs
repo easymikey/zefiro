@@ -215,11 +215,12 @@ fn track_number(track: &Track) -> Cow<'static, str> {
 }
 
 fn format_summary(track: &Track) -> Cow<'static, str> {
-    Some(format_chip_values(track.audio_format()))
-        .filter(|values| !values.is_empty())
-        .map_or(Cow::Borrowed(glyphs::track_details::MISSING), |values| {
-            Cow::Owned(values.join(glyphs::DOT_SEPARATOR))
-        })
+    let values = format_chip_values(track.audio_format());
+    if values.is_empty() {
+        Cow::Borrowed(glyphs::track_details::MISSING)
+    } else {
+        Cow::Owned(values.join(glyphs::DOT_SEPARATOR))
+    }
 }
 
 fn missing_or_value(tag: Option<&str>) -> Cow<'_, str> {
@@ -307,24 +308,6 @@ mod tests {
             rendered(48, 16, |frame| frame
                 .render_widget(&overlay_widget, frame.area()))
             .to_string()
-        );
-    }
-
-    #[rstest]
-    fn track_details_overlay_does_not_panic_on_a_tiny_terminal(theme: Theme) {
-        let track = full_track();
-        let rows = TrackDetailsRow::all(&track);
-        let overlay_widget = TrackDetailsWidget::new(
-            &rows,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
-        assert_eq!(
-            rendered(4, 3, |frame| frame
-                .render_widget(&overlay_widget, frame.area()))
-            .buffer()
-            .area
-            .height,
-            3
         );
     }
 

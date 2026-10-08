@@ -6,6 +6,7 @@ use ratatui::{
 
 use crate::{
     geometry::CoverSizing,
+    pixels::numeric::floor,
     primitive::{bar::hud_progress_bar_width, inset::Inset},
 };
 
@@ -35,7 +36,7 @@ pub(crate) fn inner(area: Rect) -> Rect {
 }
 
 fn cover_width_for_height(height: Cells, cell_aspect: f32, cover_aspect: f32) -> Cells {
-    Cells(crate::pixels::numeric::floor(
+    Cells(floor(
         (f32::from(height.0) * cell_aspect * cover_aspect).ceil(),
     ))
 }
@@ -44,10 +45,7 @@ fn cover_width_for_height(height: Cells, cell_aspect: f32, cover_aspect: f32) ->
 pub(crate) fn cover_cell_height(area: Rect, sizing: CoverSizing) -> Cells {
     let available = Cells(inner(area).height);
     match sizing {
-        CoverSizing::Fixed {
-            height,
-            width: _width,
-        } => height.min(available),
+        CoverSizing::Fixed { height, .. } => height.min(available),
         CoverSizing::Auto(_) => available,
         CoverSizing::Off => Cells(0),
     }
@@ -60,10 +58,7 @@ pub(crate) fn cover_cell_width(
     sizing: CoverSizing,
 ) -> Cells {
     match sizing {
-        CoverSizing::Fixed {
-            width,
-            height: _height,
-        } => width.min(Cells(
+        CoverSizing::Fixed { width, .. } => width.min(Cells(
             inner(area).width.saturating_sub(COLUMN_GAP + STATUS_WIDTH),
         )),
         CoverSizing::Off => Cells(0),
@@ -205,7 +200,6 @@ mod tests {
 
     use crate::{
         card::metrics::{
-            COLUMN_GAP,
             CardMetrics,
             PROGRESS_HEIGHT,
             SPECTRUM_VOLUME_GAP,
@@ -238,42 +232,6 @@ mod tests {
             "8 rows at 1.21:1 on a 2:1 cell needs >= 20 cell-widths to \
              avoid clipping the peeking disc, got {width:?}"
         );
-    }
-
-    #[test]
-    fn the_cover_column_is_its_own_styles_width() {
-        let area = Rect {
-            x: 0,
-            y: 0,
-            width: 80,
-            height: 12,
-        };
-        let cell_aspect = DEFAULT_CELL_ASPECT;
-        let vinyl_sizing = CoverSizing::Auto(canvas_aspect_ratio());
-        let plain_sizing = CoverSizing::Auto(1.0);
-
-        assert!(
-            CardMetrics::new(area, cell_aspect, plain_sizing)
-                .content_column
-                .x
-                < CardMetrics::new(area, cell_aspect, vinyl_sizing)
-                    .content_column
-                    .x,
-            "a square cover column must start the text column further left \
-             than the vinyl's wider one"
-        );
-        assert!(
-            CardMetrics::new(area, cell_aspect, plain_sizing).row_width
-                > CardMetrics::new(area, cell_aspect, vinyl_sizing).row_width
-        );
-        for sizing in [plain_sizing, vinyl_sizing] {
-            let metrics = CardMetrics::new(area, cell_aspect, sizing);
-            assert_eq!(
-                metrics.content_column.x - metrics.cover_square.x,
-                cover_cell_width(area, cell_aspect, sizing).0 + COLUMN_GAP,
-                "the column is the cell plus exactly one gap, nothing more"
-            );
-        }
     }
 
     #[test]

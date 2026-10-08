@@ -34,13 +34,6 @@ use crate::support::{
     update::{send, update},
 };
 
-fn row_index(row: SettingRow) -> usize {
-    let found = SettingRow::ALL
-        .iter()
-        .position(|candidate| *candidate == row);
-    found.unwrap_or_else(|| panic!("row missing from the settings list: {row:?}"))
-}
-
 fn navigate(model: &mut Model, direction: Direction) -> Cmd {
     let request = SettingRowRequest::Navigate(direction);
     let message = Message::Overlay(OverlayRequest::Settings(request));
@@ -64,39 +57,52 @@ fn navigated_to(row_index: usize) -> Model {
     model
 }
 
-#[test]
-fn navigate_down_steps_to_the_next_row() {
-    let mut model = navigated_to(0);
-    let cmd = navigate(&mut model, Direction::Next);
-    assert_eq!(selected_row(&model), SettingRow::ALL.get(1).copied());
-    assert!(cmd == Cmd::none());
+struct NavigateRow {
+    start: usize,
+    direction: Direction,
+    answer: Result<Cmd, Unhandled>,
+    lands_on: usize,
 }
 
-#[test]
-fn navigating_up_from_the_first_setting_row_is_refused() {
-    let mut model = navigated_to(0);
-    let request = SettingRowRequest::Navigate(Direction::Previous);
-    let result = update(
+#[rstest]
+#[case::down_steps_to_the_next_row(NavigateRow {
+    start: 0,
+    direction: Direction::Next,
+    answer: Ok(Cmd::none()),
+    lands_on: 1,
+})]
+#[case::up_from_the_first_row_is_refused(NavigateRow {
+    start: 0,
+    direction: Direction::Previous,
+    answer: Err(Unhandled),
+    lands_on: 0,
+})]
+#[case::down_from_the_last_row_is_refused(NavigateRow {
+    start: SettingRow::ALL.len() - 1,
+    direction: Direction::Next,
+    answer: Err(Unhandled),
+    lands_on: SettingRow::ALL.len() - 1,
+})]
+fn navigate_steps_the_selection_and_is_refused_past_either_end(
+    #[case] row: NavigateRow,
+) {
+    let NavigateRow {
+        start,
+        direction,
+        answer: expected,
+        lands_on,
+    } = row;
+    let mut model = navigated_to(start);
+    let request = SettingRowRequest::Navigate(direction);
+
+    let answer = update(
         &mut model,
         Message::Overlay(OverlayRequest::Settings(request)),
         Moment::default(),
     );
-    assert_eq!(result, Err(Unhandled));
-    assert_eq!(selected_row(&model), SettingRow::ALL.first().copied());
-}
 
-#[test]
-fn navigating_down_from_the_last_setting_row_is_refused() {
-    let last = SettingRow::ALL.len() - 1;
-    let mut model = navigated_to(last);
-    let request = SettingRowRequest::Navigate(Direction::Next);
-    let result = update(
-        &mut model,
-        Message::Overlay(OverlayRequest::Settings(request)),
-        Moment::default(),
-    );
-    assert_eq!(result, Err(Unhandled));
-    assert_eq!(selected_row(&model), SettingRow::ALL.last().copied());
+    assert_eq!(answer, expected);
+    assert_eq!(selected_row(&model), SettingRow::ALL.get(lands_on).copied());
 }
 
 #[test]
@@ -105,28 +111,6 @@ fn setting_the_selected_row_again_is_refused() {
     let result = setting_row.transition(SettingRowMessage::Set(SettingRow::Crossfade));
     assert_eq!(result, Err(Unhandled));
     assert_eq!(setting_row, SettingRow::Crossfade);
-}
-
-#[rstest]
-#[case::step_hands_the_router_the_selected_row(SettingRow::ReplayGain, Direction::Next)]
-#[case::step_keeps_the_direction(SettingRow::SleepPresets, Direction::Previous)]
-fn step_resolves_the_row_under_the_cursor(
-    #[case] row: SettingRow,
-    #[case] direction: Direction,
-) {
-    let mut model = navigated_to(row_index(row));
-    assert_eq!(selected_row(&model), Some(row));
-
-    let request = SettingRowRequest::Step(direction);
-    let cmd = update(
-        &mut model,
-        Message::Overlay(OverlayRequest::Settings(request)),
-        Moment::default(),
-    )
-    .unwrap();
-
-    assert_eq!(selected_row(&model), Some(row));
-    assert!(cmd != Cmd::none());
 }
 
 fn seeded() -> Model {
@@ -154,18 +138,6 @@ fn seeded() -> Model {
     model
 }
 
-#[test]
-fn step_row_theme_never_touches_window_colors() {
-    let mut model = seeded();
-
-    let cmd = step(&mut model, SettingRow::Theme, Direction::Next);
-
-    assert!(
-        !cmd.effects()
-            .any(|effect| matches!(effect, Effect::WindowColors(_)))
-    );
-}
-
 fn press(model: &mut Model, row: SettingRow, direction: Direction) {
     send(model, Message::Step { row, direction });
 }
@@ -175,7 +147,7 @@ fn step(model: &mut Model, row: SettingRow, direction: Direction) -> Cmd {
 }
 
 #[test]
-fn step_row_toggles_a_config_row() {
+fn step_row_toggles_a_config_row_and_keeps_the_two_config_files_apart() {
     fn saves(cmd: &Cmd) -> bool {
         cmd.effects()
             .any(|effect| matches!(effect, Effect::Config(ConfigCmd::Save(_))))
@@ -185,13 +157,36 @@ fn step_row_toggles_a_config_row() {
 
     assert_eq!(model.settings.audio_settings.replay_gain, ReplayGain::On);
     assert!(saves(&cmd));
-    assert!(cmd.effects().any(
-        |effect| *effect == Effect::Audio(AudioCmd::SetReplayGain(ReplayGain::On))
+    let audio_effects: Vec<&Effect> = cmd
+        .effects()
+        .filter(|effect| matches!(effect, Effect::Audio(_) | Effect::Library(_)))
+        .collect();
+    assert!(matches!(
+        audio_effects.as_slice(),
+        [Effect::Audio(AudioCmd::SetReplayGain(ReplayGain::On))]
     ));
 
     let toggled_back = step(&mut model, SettingRow::ReplayGain, Direction::Previous);
     assert_eq!(model.settings.audio_settings.replay_gain, ReplayGain::Off);
     assert!(saves(&toggled_back));
+
+    let custom = step(
+        &mut model,
+        SettingRow::Appearance(AppearanceField::LayoutMode),
+        Direction::Next,
+    );
+    assert!(!saves(&custom));
+    assert!(
+        !custom
+            .effects()
+            .any(|effect| matches!(effect, Effect::Audio(_) | Effect::Library(_)))
+    );
+    assert!(
+        custom.effects().any(|effect| matches!(
+            effect,
+            Effect::Config(ConfigCmd::SetAppearance(_))
+        ))
+    );
 }
 
 #[test]
@@ -224,77 +219,77 @@ fn step_row_crossfade_steps_by_500ms_and_clamps_both_ends() {
     assert_eq!(model.settings.audio_settings.crossfade, ceiling);
 }
 
-#[test]
-fn stepping_crossfade_below_its_floor_is_refused() {
-    let mut model = seeded();
-    let message = Message::Step {
-        row: SettingRow::Crossfade,
-        direction: Direction::Previous,
-    };
-
-    let result = update(&mut model, message, Moment::default());
-
-    assert_eq!(result, Err(Unhandled));
-    assert_eq!(
-        model.settings.audio_settings.crossfade,
-        Crossfade::default()
-    );
-}
-
-#[test]
-fn stepping_crossfade_past_its_ceiling_is_refused() {
-    let mut model = seeded();
-    let ceiling = Crossfade::try_from(Duration::from_secs(10)).unwrap();
-    model.settings.audio_settings.crossfade = ceiling;
-    let message = Message::Step {
-        row: SettingRow::Crossfade,
-        direction: Direction::Next,
-    };
-
-    let result = update(&mut model, message, Moment::default());
-
-    assert_eq!(result, Err(Unhandled));
-    assert_eq!(model.settings.audio_settings.crossfade, ceiling);
-}
-
-#[test]
-fn step_row_theme_selects_the_theme_and_raises_no_wash_cue() {
-    let mut model = seeded();
-
-    let cmd = step(&mut model, SettingRow::Theme, Direction::Next);
-
-    assert!(cmd.effects().any(|effect| matches!(
-        effect,
-        Effect::Config(ConfigCmd::SelectTheme(choice))
-            if choice.to_string() == "solar"
-    )));
-    assert!(
-        !cmd.effects()
-            .any(|effect| matches!(effect, Effect::Animate(_)))
-    );
+struct CrossfadeRow {
+    crossfade: Crossfade,
+    direction: Direction,
 }
 
 #[rstest]
-#[case::forward_one(Direction::Next, &["solar", "mono", "noir"])]
-#[case::backward_one(Direction::Previous, &["mono", "solar", "noir"])]
-fn step_row_theme_cycles_model_themes_and_wraps(
-    #[case] direction: Direction,
-    #[case] walk: &[&str],
-) {
-    fn theme_patch(cmd: &Cmd) -> Option<String> {
-        cmd.effects().find_map(|effect| {
+#[case::below_its_floor(CrossfadeRow {
+    crossfade: Crossfade::default(),
+    direction: Direction::Previous,
+})]
+#[case::past_its_ceiling(CrossfadeRow {
+    crossfade: Crossfade::try_from(Duration::from_secs(10)).unwrap(),
+    direction: Direction::Next,
+})]
+fn stepping_crossfade_past_either_end_is_refused(#[case] row: CrossfadeRow) {
+    let CrossfadeRow {
+        crossfade,
+        direction,
+    } = row;
+    let mut model = seeded();
+    model.settings.audio_settings.crossfade = crossfade;
+    let message = Message::Step {
+        row: SettingRow::Crossfade,
+        direction,
+    };
+
+    let result = update(&mut model, message, Moment::default());
+
+    assert_eq!(result, Err(Unhandled));
+    assert_eq!(model.settings.audio_settings.crossfade, crossfade);
+}
+
+struct ThemeRow {
+    direction: Direction,
+    walk: &'static [&'static str],
+}
+
+#[rstest]
+#[case::forward_one(ThemeRow {
+    direction: Direction::Next,
+    walk: &["solar", "mono", "noir"],
+})]
+#[case::backward_one(ThemeRow {
+    direction: Direction::Previous,
+    walk: &["mono", "solar", "noir"],
+})]
+fn step_row_theme_cycles_model_themes_and_wraps(#[case] row: ThemeRow) {
+    let ThemeRow { direction, walk } = row;
+    let mut model = seeded();
+    for expected in walk {
+        let cmd = step(&mut model, SettingRow::Theme, direction);
+        let saved = cmd.effects().find_map(|effect| {
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
                 return None;
             };
             patch.theme_name.as_ref().map(ThemeName::to_string)
-        })
-    }
+        });
+        let selected = cmd.effects().find_map(|effect| {
+            let Effect::Config(ConfigCmd::SelectTheme(choice)) = effect else {
+                return None;
+            };
+            Some(choice.to_string())
+        });
 
-    let mut model = seeded();
-    for expected in walk {
-        let cmd = step(&mut model, SettingRow::Theme, direction);
         assert_eq!(model.themes.theme_choice.to_string(), *expected);
-        assert_eq!(theme_patch(&cmd).as_deref(), Some(*expected));
+        assert_eq!(saved.as_deref(), Some(*expected));
+        assert_eq!(selected.as_deref(), Some(*expected));
+        assert!(!cmd.effects().any(|effect| matches!(
+            effect,
+            Effect::Animate(_) | Effect::WindowColors(_)
+        )));
     }
 }
 
@@ -375,7 +370,7 @@ fn step_row_output_device_cycles_system_default_and_devices_and_wraps() {
 }
 
 #[test]
-fn step_row_sleep_presets_cycles_and_wraps_and_persists() {
+fn step_row_sleep_presets_cycles_wraps_persists_and_snaps_a_custom_value() {
     fn sleep_presets_patch(cmd: &Cmd) -> Option<SleepPresets> {
         cmd.effects().find_map(|effect| {
             let Effect::Config(ConfigCmd::Save(patch)) = effect else {
@@ -409,16 +404,10 @@ fn step_row_sleep_presets_cycles_and_wraps_and_persists() {
             .is_empty()
     );
     assert_eq!(sleep_presets_patch(&wrapped), Some(SleepPresets::bundle(4)));
-}
 
-#[test]
-fn step_row_sleep_presets_snaps_a_custom_value_to_the_nearest_bundle() {
-    let mut model = seeded();
     model.settings.audio_settings.sleep_presets =
         SleepPresets::from_minutes(&[100]).unwrap();
-
     press(&mut model, SettingRow::SleepPresets, Direction::Next);
-
     assert_eq!(
         Some(model.settings.audio_settings.sleep_presets.as_slice()),
         SleepPresets::BUNDLES.get(1).copied()
@@ -445,43 +434,6 @@ fn step_row_sleep_presets_leaves_the_clamp_to_the_next_cycle() {
     assert!(model.transport.sleep_timer.is_none());
 }
 
-#[test]
-fn step_row_keeps_the_two_config_files_apart() {
-    let mut model = seeded();
-
-    let audio = step(&mut model, SettingRow::ReplayGain, Direction::Next);
-    let audio_effects: Vec<&Effect> = audio
-        .effects()
-        .filter(|effect| matches!(effect, Effect::Audio(_) | Effect::Library(_)))
-        .collect();
-    assert!(matches!(
-        audio_effects.as_slice(),
-        [Effect::Audio(AudioCmd::SetReplayGain(ReplayGain::On))]
-    ));
-
-    let custom = step(
-        &mut model,
-        SettingRow::Appearance(AppearanceField::LayoutMode),
-        Direction::Next,
-    );
-    assert!(
-        !custom
-            .effects()
-            .any(|effect| matches!(effect, Effect::Config(ConfigCmd::Save(_))))
-    );
-    assert!(
-        !custom
-            .effects()
-            .any(|effect| matches!(effect, Effect::Audio(_) | Effect::Library(_)))
-    );
-    assert!(
-        custom.effects().any(|effect| matches!(
-            effect,
-            Effect::Config(ConfigCmd::SetAppearance(_))
-        ))
-    );
-}
-
 fn selected_row(model: &Model) -> Option<SettingRow> {
     let Some(Overlay::Settings(selected)) = &model.workspace.overlay else {
         return None;
@@ -494,7 +446,7 @@ fn navigate_down(model: &mut Model) {
 }
 
 #[test]
-fn the_highlighted_row_is_the_row_that_changes_across_steps() {
+fn the_highlighted_row_changes_across_steps_and_stays_through_an_appearance_reload() {
     let mut model = Model::default();
     let cover_mode_field = AppearanceField::CoverMode;
 
@@ -530,23 +482,6 @@ fn the_highlighted_row_is_the_row_that_changes_across_steps() {
             Some(SettingRow::Appearance(cover_mode_field))
         );
     }
-}
-
-#[test]
-fn an_appearance_reload_while_open_keeps_the_selection_on_the_same_row() {
-    let mut model = Model::default();
-    let cover_mode_field = AppearanceField::CoverMode;
-
-    send(
-        &mut model,
-        Message::Overlay(OverlayRequest::Open(OverlayName::Settings)),
-    );
-    navigate_down(&mut model);
-    navigate_down(&mut model);
-    assert_eq!(
-        selected_row(&model),
-        Some(SettingRow::Appearance(cover_mode_field))
-    );
 
     send(
         &mut model,

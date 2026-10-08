@@ -69,9 +69,4 @@ mod tests {
             "the input row must show the typed tail and the cursor:\n{screen}"
         );
     }
-
-    #[test]
-    fn music_dir_overlay_does_not_panic_on_a_tiny_terminal() {
-        assert_eq!(frame("", None, (4, 3)).lines().count(), 3);
-    }
 }

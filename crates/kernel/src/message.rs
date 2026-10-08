@@ -364,8 +364,8 @@ pub enum AudioEvent {
     DeviceOpened(DeviceName),
     Buffering(Revision),
     Buffered(Revision),
-    PreloadCancelled,
-    PreloadKept,
+    PreloadCancelled(Revision),
+    PreloadKept(Revision),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]
@@ -383,14 +383,7 @@ pub enum RemoteEvent {
         server_name: ServerName,
         session: Session,
     },
-    Listed {
-        server_name: ServerName,
-        listing: Listing,
-        page: Page,
-        catalog_rows: Vec<CatalogRow>,
-        favorites: Favorites,
-        revision: Revision,
-    },
+    Listed(CatalogPage),
     Error(RemoteError),
     Fetched {
         revision: Revision,
@@ -401,13 +394,26 @@ pub enum RemoteEvent {
         result: Result<(Vec<CatalogRow>, Favorites), RemoteError>,
         revision: Revision,
     },
-    Starred {
-        server_name: ServerName,
-        server_track_id: ServerTrackId,
-        favorite: Favorite,
-    },
+    Starred(ServerFavorite),
     Restored(Result<Vec<PlayReport>, IoError>),
     Unsaved(IoError),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatalogPage {
+    pub server_name: ServerName,
+    pub listing: Listing,
+    pub page: Page,
+    pub catalog_rows: Vec<CatalogRow>,
+    pub favorites: Favorites,
+    pub revision: Revision,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerFavorite {
+    pub server_name: ServerName,
+    pub server_track_id: ServerTrackId,
+    pub favorite: Favorite,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -493,7 +499,6 @@ mod tests {
 
     use crate::{
         domain::{
-            bounded::Bounded,
             config::Diagnostic,
             device::OutputDevice,
             io_error::IoError,
@@ -512,8 +517,6 @@ mod tests {
             Message,
             OsStatus,
             PaintError,
-            SEEK_TENTHS_MAX,
-            SeekTenths,
         },
     };
 
@@ -677,12 +680,5 @@ mod tests {
             (paint_error.to_string(), paint_error.diagnostic().text()),
             (title.to_owned(), diagnostic)
         );
-    }
-
-    #[rstest::rstest]
-    #[case::above_the_ceiling(SEEK_TENTHS_MAX + 1, SEEK_TENTHS_MAX)]
-    #[case::at_the_ceiling(SEEK_TENTHS_MAX, SEEK_TENTHS_MAX)]
-    fn seek_tenths_clamped_saturates(#[case] raw: u8, #[case] expected: u8) {
-        assert_eq!(SeekTenths::clamped(raw).get(), expected);
     }
 }

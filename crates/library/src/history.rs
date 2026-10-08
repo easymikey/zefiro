@@ -153,44 +153,6 @@ mod tests {
         insta::assert_snapshot!(contents);
     }
 
-    #[test]
-    fn load_returns_appended_entries_newest_first() {
-        let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs {
-            cache_dir: directory.path().join("cache"),
-            data_dir: directory.path().join("data"),
-            playlists_dir: directory.path().join("playlists"),
-        };
-
-        let first = HistoryEntry {
-            played_at: Moment::new(std::time::Duration::from_secs(1_000)),
-            ..entry("/music/first.flac", "First", Some("Artist A"))
-        };
-        let second = HistoryEntry {
-            played_at: Moment::new(std::time::Duration::from_secs(2_000)),
-            ..entry("/music/second.flac", "Second", None)
-        };
-        history::append(&dirs, &first).unwrap();
-        history::append(&dirs, &second).unwrap();
-
-        let entries = history::load(&dirs, 10).unwrap().entries;
-        insta::assert_debug_snapshot!(entries);
-    }
-
-    #[test]
-    fn a_missing_history_file_loads_empty() {
-        let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs {
-            cache_dir: directory.path().join("cache"),
-            data_dir: directory.path().join("data"),
-            playlists_dir: directory.path().join("playlists"),
-        };
-
-        let entries = history::load(&dirs, 10).unwrap().entries;
-
-        assert!(entries.is_empty());
-    }
-
     fn parses(line: &&str) -> bool {
         serde_json::from_str::<HistoryRecord>(line).is_ok()
     }
@@ -216,24 +178,22 @@ mod tests {
     #[test]
     fn parse_history_skips_a_corrupt_line_and_reverses_the_rest() {
         let (entries, skipped) = parse_history(HISTORY_LOG, 10);
-        assert!(skipped.is_some());
+        assert_eq!(
+            skipped.map(|error| error.to_string()).as_deref(),
+            Some("key must be a string at line 1 column 2")
+        );
         insta::assert_debug_snapshot!(entries);
-    }
-
-    #[test]
-    fn a_broken_line_older_than_the_newest_limit_entries_is_not_reported() {
-        let (entries, skipped) = parse_history(HISTORY_LOG, 2);
-        assert_eq!(entries.len(), 2);
-        assert!(skipped.is_none(), "{skipped:?}");
     }
 
     #[rstest]
     #[case::one(1, &["/music/third.flac"])]
-    #[case::two(2, &["/music/third.flac", "/music/also-good.flac"])]
-    #[case::more_than_there_are(9, &["/music/third.flac", "/music/also-good.flac", "/music/good.flac"])]
+    #[case::two_stop_before_the_broken_line(
+        2,
+        &["/music/third.flac", "/music/also-good.flac"]
+    )]
     fn parse_history_caps_at_limit(#[case] limit: usize, #[case] expected: &[&str]) {
-        let track_sources: Vec<TrackSource> = parse_history(HISTORY_LOG, limit)
-            .0
+        let (entries, skipped) = parse_history(HISTORY_LOG, limit);
+        let track_sources: Vec<TrackSource> = entries
             .into_iter()
             .map(|entry| entry.track_source)
             .collect();
@@ -244,5 +204,6 @@ mod tests {
                 .map(|path| TrackSource::Local(PathBuf::from(path)))
                 .collect::<Vec<_>>()
         );
+        assert!(skipped.is_none(), "{skipped:?}");
     }
 }

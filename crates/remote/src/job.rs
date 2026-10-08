@@ -160,35 +160,12 @@ impl RemoteJob {
         match self {
             RemoteJob::Connect(_connection) => None,
             RemoteJob::Forget(_account) => None,
-            RemoteJob::List {
-                server_name: _server_name,
-                session: _session,
-                listing: _listing,
-                page: _page,
-                revision,
-            } => Some(*revision),
-            RemoteJob::Fetch {
-                media_fetch: _media_fetch,
-                media_dir: _media_dir,
-                kept_cache_keys: _kept_cache_keys,
+            RemoteJob::List { revision, .. } | RemoteJob::Search { revision, .. } => {
+                Some(*revision)
             }
-            | RemoteJob::Prefetch {
-                media_fetch: _media_fetch,
-                media_dir: _media_dir,
-                kept_cache_keys: _kept_cache_keys,
-            } => None,
-            RemoteJob::Search {
-                server_name: _server_name,
-                session: _session,
-                input: _input,
-                revision,
-            } => Some(*revision),
-            RemoteJob::Star {
-                server_name: _server_name,
-                session: _session,
-                server_track_id: _server_track_id,
-                favorite: _favorite,
-            } => None,
+            RemoteJob::Fetch { .. }
+            | RemoteJob::Prefetch { .. }
+            | RemoteJob::Star { .. } => None,
             RemoteJob::Report(_signed_reports) => None,
         }
     }
@@ -197,35 +174,11 @@ impl RemoteJob {
         match self {
             RemoteJob::Connect(connection) => Some(&connection.account.server_name),
             RemoteJob::Forget(account) => Some(&account.server_name),
-            RemoteJob::List {
-                server_name,
-                session: _session,
-                listing: _listing,
-                page: _page,
-                revision: _revision,
-            } => Some(server_name),
-            RemoteJob::Search {
-                server_name,
-                session: _session,
-                input: _input,
-                revision: _revision,
-            } => Some(server_name),
-            RemoteJob::Star {
-                server_name,
-                session: _session,
-                server_track_id: _server_track_id,
-                favorite: _favorite,
-            } => Some(server_name),
-            RemoteJob::Fetch {
-                media_fetch,
-                media_dir: _media_dir,
-                kept_cache_keys: _kept_cache_keys,
-            }
-            | RemoteJob::Prefetch {
-                media_fetch,
-                media_dir: _media_dir,
-                kept_cache_keys: _kept_cache_keys,
-            } => Some(&media_fetch.server_name),
+            RemoteJob::List { server_name, .. }
+            | RemoteJob::Search { server_name, .. }
+            | RemoteJob::Star { server_name, .. } => Some(server_name),
+            RemoteJob::Fetch { media_fetch, .. }
+            | RemoteJob::Prefetch { media_fetch, .. } => Some(&media_fetch.server_name),
             RemoteJob::Report(_signed_reports) => None,
         }
     }

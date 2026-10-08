@@ -67,9 +67,9 @@ pub(crate) fn request(
                 player,
                 catalog_name,
                 catalogs,
-                revisions: _revisions,
-                favorites: _favorites,
-                overlay: _overlay,
+                revisions: _,
+                favorites: _,
+                overlay: _,
                 play_reports: kept_play_reports,
             } = server_parts;
             let index = servers
@@ -96,14 +96,14 @@ fn add(
 ) -> Cmd {
     let ServerParts {
         servers,
-        downloads: _downloads,
-        player: _player,
+        downloads: _,
+        player: _,
         catalog_name,
         catalogs,
-        revisions: _revisions,
-        favorites: _favorites,
-        overlay: _overlay,
-        play_reports: _play_reports,
+        revisions: _,
+        favorites: _,
+        overlay: _,
+        play_reports: _,
     } = server_parts;
     let account = &connection.account;
     let warning = if account.endpoint.is_https() {
@@ -147,7 +147,7 @@ fn save_accounts(servers: &[Server]) -> Effect {
 }
 
 pub(crate) fn update(
-    server_parts: ServerParts<'_>,
+    mut server_parts: ServerParts<'_>,
     event: RemoteEvent,
 ) -> Result<Cmd, Unhandled> {
     match event {
@@ -163,9 +163,15 @@ pub(crate) fn update(
         RemoteEvent::Fetched { revision, result } => {
             download::fetched(server_parts, revision, result)
         }
-        event @ (RemoteEvent::Listed { .. }
-        | RemoteEvent::Found { .. }
-        | RemoteEvent::Starred { .. }) => catalog::update(server_parts, event),
+        RemoteEvent::Listed(catalog_page) => {
+            catalog::listed(&mut server_parts, catalog_page)
+        }
+        RemoteEvent::Found {
+            result, revision, ..
+        } => catalog::found(&mut server_parts, result, revision),
+        RemoteEvent::Starred(server_favorite) => {
+            catalog::starred(&mut server_parts, server_favorite)
+        }
         RemoteEvent::Restored(_) | RemoteEvent::Unsaved(_) => Err(Unhandled),
     }
 }
@@ -177,14 +183,14 @@ fn status(
 ) -> Result<Cmd, Unhandled> {
     let ServerParts {
         servers,
-        downloads: _downloads,
-        player: _player,
+        downloads: _,
+        player: _,
         catalog_name,
         catalogs,
         revisions,
-        favorites: _favorites,
-        overlay: _overlay,
-        play_reports: _play_reports,
+        favorites: _,
+        overlay: _,
+        play_reports: _,
     } = server_parts;
     let server = servers
         .iter_mut()
@@ -275,75 +281,56 @@ mod tests {
         )
     }
 
-    #[test]
-    fn connected_gives_online() {
-        let mut model = model_with(vec![server(ServerStatus::Connecting)], Vec::new());
-
-        let answer = update(
-            server_parts(&mut model),
-            RemoteEvent::Connected {
-                server_name: ServerName::new("home"),
-                session: session(),
-            },
-        );
-
-        assert_eq!(answer, Ok(Cmd::none()));
-        assert_eq!(model.servers, vec![server(ServerStatus::Online(session()))]);
-    }
-
-    #[test]
-    fn unreachable_gives_offline_and_a_toast() {
-        let mut model =
-            model_with(vec![server(ServerStatus::Online(session()))], Vec::new());
-
-        let answer = update(
-            server_parts(&mut model),
-            RemoteEvent::Error(unreachable("home")),
-        );
-
-        assert_eq!(
-            answer,
-            Ok(Cmd::message(Message::Toast(Toast::error(
-                unreachable("home").to_string()
-            ))))
-        );
-        assert_eq!(
-            model.servers,
-            vec![server(ServerStatus::Offline(unreachable("home")))]
-        );
-    }
-
-    #[test]
-    fn the_same_error_again_gives_no_second_toast() {
-        let mut model = model_with(
-            vec![server(ServerStatus::Offline(unreachable("home")))],
-            Vec::new(),
-        );
-
-        let answer = update(
-            server_parts(&mut model),
-            RemoteEvent::Error(unreachable("home")),
-        );
-
-        assert_eq!(answer, Err(Unhandled));
-        assert_eq!(
-            model.servers,
-            vec![server(ServerStatus::Offline(unreachable("home")))]
-        );
+    struct RemoteRow {
+        server_status: ServerStatus,
+        event: RemoteEvent,
+        expected: Result<Cmd, Unhandled>,
+        expected_server_status: ServerStatus,
     }
 
     #[rstest]
-    #[case::connected(RemoteEvent::Connected {
-        server_name: ServerName::new("elsewhere"),
-        session: session(),
+    #[case::connected(RemoteRow {
+        server_status: ServerStatus::Connecting,
+        event: RemoteEvent::Connected {
+            server_name: ServerName::new("home"),
+            session: session(),
+        },
+        expected: Ok(Cmd::none()),
+        expected_server_status: ServerStatus::Online(session()),
     })]
-    #[case::error(RemoteEvent::Error(unreachable("elsewhere")))]
-    fn an_unknown_server_is_refused(#[case] event: RemoteEvent) {
-        let mut model = model_with(vec![server(ServerStatus::Connecting)], Vec::new());
+    #[case::unreachable(RemoteRow {
+        server_status: ServerStatus::Online(session()),
+        event: RemoteEvent::Error(unreachable("home")),
+        expected: Ok(Cmd::message(Message::Toast(Toast::error(unreachable("home").to_string())))),
+        expected_server_status: ServerStatus::Offline(unreachable("home")),
+    })]
+    #[case::same_error_again(RemoteRow {
+        server_status: ServerStatus::Offline(unreachable("home")),
+        event: RemoteEvent::Error(unreachable("home")),
+        expected: Err(Unhandled),
+        expected_server_status: ServerStatus::Offline(unreachable("home")),
+    })]
+    #[case::unknown_server_connected(RemoteRow {
+        server_status: ServerStatus::Connecting,
+        event: RemoteEvent::Connected {
+            server_name: ServerName::new("elsewhere"),
+            session: session(),
+        },
+        expected: Err(Unhandled),
+        expected_server_status: ServerStatus::Connecting,
+    })]
+    #[case::unknown_server_error(RemoteRow {
+        server_status: ServerStatus::Connecting,
+        event: RemoteEvent::Error(unreachable("elsewhere")),
+        expected: Err(Unhandled),
+        expected_server_status: ServerStatus::Connecting,
+    })]
+    fn a_remote_event_moves_the_server_status(#[case] row: RemoteRow) {
+        let mut model = model_with(vec![server(row.server_status)], Vec::new());
 
-        let answer = update(server_parts(&mut model), event);
+        let answer = update(server_parts(&mut model), row.event);
 
-        assert_eq!(answer, Err(Unhandled));
-        assert_eq!(model.servers, vec![server(ServerStatus::Connecting)]);
+        assert_eq!(answer, row.expected);
+        assert_eq!(model.servers, vec![server(row.expected_server_status)]);
     }
 }

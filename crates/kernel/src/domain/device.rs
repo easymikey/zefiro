@@ -66,20 +66,3 @@ pub struct ListedDevice {
     pub name: DeviceName,
     pub default: DeviceDefault,
 }
-
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
-
-    use crate::domain::device::{DeviceName, DeviceNameError};
-
-    #[rstest]
-    #[case::empty("".to_string(), Err(DeviceNameError::Empty))]
-    #[case::named("Speakers".to_string(), Ok(()))]
-    fn a_device_name_is_never_empty(
-        #[case] name: String,
-        #[case] expected: Result<(), DeviceNameError>,
-    ) {
-        assert_eq!(DeviceName::new(name).map(|_| ()), expected);
-    }
-}

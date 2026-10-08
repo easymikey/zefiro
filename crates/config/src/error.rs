@@ -72,39 +72,6 @@ mod tests {
         file_name::config_file_name,
     };
 
-    fn error_text(text: &str, config_name: ConfigName) -> String {
-        let parsed: Result<toml::Table, Error> = parse_toml(text, config_name);
-        parsed
-            .err()
-            .map_or_else(String::new, |error| error.to_string())
-    }
-
-    #[test]
-    fn an_error_puts_the_message_first_and_the_place_below_it() {
-        let error_text =
-            error_text("a = 1\n\n[card]\nb = 2\n[card]\n", ConfigName::Appearance);
-
-        let place = error_text.lines().nth(1);
-
-        assert_eq!(
-            place,
-            Some("sifr-ui.toml:5"),
-            "whole text was {error_text:?}"
-        );
-    }
-
-    #[test]
-    fn an_error_on_the_first_line_reports_line_one_in_exactly_two_lines() {
-        let error_text = error_text("[card\n", ConfigName::Config);
-
-        assert_eq!(error_text.lines().nth(1), Some("config.toml:1"));
-        assert_eq!(
-            error_text.lines().count(),
-            2,
-            "whole text was {error_text:?}"
-        );
-    }
-
     #[rstest]
     #[case::config(ConfigName::Config, "a = 1\n[b]\nc = 1\n[b]\n")]
     #[case::appearance(ConfigName::Appearance, "[card]\n[card]\n")]

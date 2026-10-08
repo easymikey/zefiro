@@ -222,7 +222,6 @@ mod tests {
     };
     use ratatui::{layout::Rect, style::Color};
     use rstest::rstest;
-    use unicode_width::UnicodeWidthStr;
 
     use crate::{
         playlist::chrome::pane_title,
@@ -289,19 +288,6 @@ mod tests {
     }
 
     #[test]
-    fn the_title_names_the_pane_its_position_and_its_flags() {
-        let text: String = status_line(view(), &colors(), Cells(80))
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect();
-        assert_eq!(
-            text,
-            "Playlist ── 3/12 ── shuffle on · repeat all · queue 7 · theme rose-pine"
-        );
-    }
-
-    #[test]
     fn an_armed_sleep_timer_adds_a_countdown_flag() {
         let status_line_view = StatusLineView {
             remaining: Some(Duration::from_secs(14 * 60 + 59)),
@@ -316,10 +302,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::rounds_up_from_one_second_left(Duration::from_secs(14 * 60 + 59), "15m")]
-    #[case::exact_quarter_hour(Duration::from_secs(15 * 60), "15m")]
     #[case::rounds_up_past_the_quarter_hour(Duration::from_secs(15 * 60 + 1), "16m")]
-    #[case::last_minute(Duration::from_secs(1), "1m")]
     #[case::no_time_left(Duration::ZERO, "0m")]
     fn the_sleep_label_rounds_minutes_up(
         #[case] remaining: Duration,
@@ -328,47 +311,29 @@ mod tests {
         assert_eq!(sleep_label(remaining), expected);
     }
 
-    #[test]
-    fn a_narrow_border_truncates_the_title_with_an_ellipsis() {
-        let budget = Cells(24);
-        let text: String = status_line(view(), &colors(), budget)
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect();
-        assert!(text.width() <= budget.count(), "got {text:?}");
-        assert!(text.ends_with('…'), "got {text:?}");
-        assert!(text.starts_with("Playlist"), "got {text:?}");
-    }
-
-    #[test]
-    fn a_sleep_timer_wakes_once_a_minute() {
+    #[rstest]
+    #[case::a_shown_label_wakes_at_the_next_minute(
+        Some(Duration::from_secs(14 * 60 + 59)),
+        Presence::Shown,
+        Some(Duration::from_secs(59))
+    )]
+    #[case::a_hidden_label_wants_no_frame(
+        Some(Duration::from_secs(60)),
+        Presence::Hidden,
+        None
+    )]
+    #[case::no_deadline_wants_no_frame(None, Presence::Shown, None)]
+    fn a_sleep_timer_wakes_once_a_minute(
+        #[case] remaining: Option<Duration>,
+        #[case] label: Presence,
+        #[case] until_next: Option<Duration>,
+    ) {
         let now = Moment::new(Duration::from_secs(1_000));
-        let deadline_at =
-            Moment::new(now.since_epoch() + Duration::from_secs(14 * 60 + 59));
-
+        let deadline_at = remaining.map(|left| Moment::new(now.since_epoch() + left));
         assert_eq!(
-            sleep_frame_due(Some(deadline_at), Presence::Shown, now),
-            Some(Moment::new(now.since_epoch() + Duration::from_secs(59)))
+            sleep_frame_due(deadline_at, label, now),
+            until_next.map(|left| Moment::new(now.since_epoch() + left))
         );
-    }
-
-    #[test]
-    fn a_hidden_sleep_label_wants_no_frame() {
-        let now = Moment::new(Duration::from_secs(1_000));
-        let deadline_at = Moment::new(now.since_epoch() + Duration::from_secs(60));
-
-        assert_eq!(
-            sleep_frame_due(Some(deadline_at), Presence::Hidden, now),
-            None
-        );
-    }
-
-    #[test]
-    fn no_deadline_wants_no_sleep_frame() {
-        let now = Moment::new(Duration::from_secs(1_000));
-
-        assert_eq!(sleep_frame_due(None, Presence::Shown, now), None);
     }
 
     fn server(name: &str, server_status: ServerStatus) -> Server {

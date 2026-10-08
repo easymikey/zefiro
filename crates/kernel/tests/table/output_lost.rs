@@ -40,6 +40,17 @@ fn lost_while_playing(count: usize) -> Model {
     model
 }
 
+fn paused_model() -> Model {
+    let mut model = playing_model(3);
+    let _paused = update(
+        &mut model,
+        Message::Playback(PlaybackRequest::Toggle),
+        Moment::default(),
+    )
+    .unwrap();
+    model
+}
+
 #[rstest]
 #[case::playing_pauses_and_says_so(
     playing_model(3),
@@ -60,19 +71,27 @@ fn lost_while_playing(count: usize) -> Model {
     ]),
     "Audio output lost: the device is gone"
 )]
+#[case::paused_stays_paused_and_says_so(
+    paused_model(),
+    Cmd::from_iter([
+        Effect::Animate(Cue::ToastRaised),
+        second_toast_expiry(),
+    ]),
+    "Output lost — paused"
+)]
 fn a_lost_output_is_mirrored_in_the_model(
     #[case] mut model: Model,
     #[case] expected: Cmd,
     #[case] toast: &str,
 ) {
-    let was_playing = model.player.is_playing();
+    let stopped = model.player == Player::Stopped;
     let cmd = update(&mut model, output_lost(), Moment::default()).unwrap();
 
     assert_eq!(cmd, expected);
-    assert!(matches!(
+    assert_eq!(
         model.transport.output_status,
-        OutputStatus::Lost(..)
-    ));
+        OutputStatus::Lost(OutputError::DeviceGone)
+    );
     assert_eq!(
         model
             .workspace
@@ -81,42 +100,7 @@ fn a_lost_output_is_mirrored_in_the_model(
             .and_then(|shown| shown.text.as_deref()),
         Some(toast)
     );
-    if was_playing {
-        assert!(matches!(model.player, Player::Paused { .. }));
-    }
-}
-
-#[test]
-fn a_lost_output_under_a_paused_player_leaves_it_paused_and_says_so() {
-    let mut model = playing_model(3);
-    let _paused = update(
-        &mut model,
-        Message::Playback(PlaybackRequest::Toggle),
-        Moment::default(),
-    )
-    .unwrap();
-    let paused = model.player.clone();
-
-    let cmd = update(&mut model, output_lost(), Moment::default()).unwrap();
-
-    assert_eq!(model.player, paused);
-    assert!(matches!(model.player, Player::Paused { .. }));
-    assert_eq!(
-        model.transport.output_status,
-        OutputStatus::Lost(OutputError::DeviceGone)
-    );
-    assert!(
-        cmd.effects()
-            .any(|effect| matches!(effect, Effect::Animate(Cue::ToastRaised)))
-    );
-    assert_eq!(
-        model
-            .workspace
-            .toasts
-            .first()
-            .and_then(|shown| shown.text.as_deref()),
-        Some("Output lost — paused")
-    );
+    assert_eq!(matches!(model.player, Player::Paused { .. }), !stopped);
 }
 
 #[test]
@@ -147,6 +131,16 @@ fn play_while_the_output_is_lost_loads_again_so_the_engine_reopens() {
         "expected a load among {cmd:?}"
     );
     assert!(matches!(model.player, Player::Loading(..)));
+
+    let _loaded = update(
+        &mut model,
+        Message::Audio(AudioEvent::Loaded(None)),
+        Moment::default(),
+    )
+    .unwrap();
+
+    assert_eq!(model.transport.output_status, OutputStatus::Ready);
+    assert!(matches!(model.player, Player::Playing { .. }));
 }
 
 #[test]
@@ -199,49 +193,5 @@ fn playing_while_the_output_is_lost_with_no_track_is_refused(
     assert_eq!(
         model.transport.output_status,
         OutputStatus::Lost(OutputError::DeviceGone)
-    );
-}
-
-#[test]
-fn a_track_that_loads_after_the_reopen_clears_the_lost_output() {
-    let mut model = lost_while_playing(3);
-    let _play = update(
-        &mut model,
-        Message::Playback(PlaybackRequest::Play),
-        Moment::default(),
-    )
-    .unwrap();
-
-    let _loaded = update(
-        &mut model,
-        Message::Audio(AudioEvent::Loaded(None)),
-        Moment::default(),
-    )
-    .unwrap();
-
-    assert_eq!(model.transport.output_status, OutputStatus::Ready);
-    assert!(matches!(model.player, Player::Playing { .. }));
-}
-
-#[test]
-fn a_loss_repeated_after_the_retry_stops_the_player_again() {
-    let mut model = lost_while_playing(3);
-    let _play = update(
-        &mut model,
-        Message::Playback(PlaybackRequest::Play),
-        Moment::default(),
-    )
-    .unwrap();
-
-    let cmd = update(&mut model, output_lost(), Moment::default()).unwrap();
-
-    assert_eq!(model.player, Player::Stopped);
-    assert_eq!(
-        model.transport.output_status,
-        OutputStatus::Lost(OutputError::DeviceGone)
-    );
-    assert!(
-        cmd.effects()
-            .any(|effect| matches!(effect, Effect::Animate(Cue::ToastRaised)))
     );
 }

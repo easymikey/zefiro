@@ -169,3 +169,29 @@ pub(crate) fn indented(text: &str, lead_width: Cells, width: Cells) -> String {
     let fitted = truncate(text, budget);
     format!("{:lead$}{fitted}", "")
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{layout::Rect, text::Line};
+    use rstest::rstest;
+
+    use crate::{
+        overlay::modal::placement::ModalBorder,
+        primitive::list_chrome::ScrollAreas,
+        test_support::noir,
+        theme::{active_theme::ActiveTheme, rgb::ColorDepth},
+    };
+
+    #[rstest]
+    #[case::no_columns_inside(Rect::new(0, 0, 2, 8))]
+    #[case::no_rows_inside(Rect::new(0, 0, 20, 2))]
+    fn a_border_with_nothing_inside_has_no_scroll_areas(#[case] area: Rect) {
+        let theme = noir();
+        let border = ModalBorder {
+            area,
+            title: Line::default(),
+            theme: ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        };
+        assert_eq!(border.areas(), ScrollAreas::empty(area));
+    }
+}

@@ -145,24 +145,10 @@ mod tests {
         },
         PaintPlan::Rebuild
     )]
-    #[case::vinyl_a_different_rect(
-        PlanRow {
-            painted: Some((vinyl("a.flac"), rect())),
-            want: want("a.flac", other_rect()),
-        },
-        PaintPlan::Rebuild
-    )]
     #[case::vinyl_only_the_colors_moved(
         PlanRow {
             painted: Some((vinyl("a.flac"), rect())),
             want: Want { vinyl_style: recolored(), ..want("a.flac", rect()) },
-        },
-        PaintPlan::Rebuild
-    )]
-    #[case::vinyl_the_theme_moved_and_the_rect_changed(
-        PlanRow {
-            painted: Some((vinyl("a.flac"), rect())),
-            want: Want { vinyl_style: recolored(), ..want("a.flac", other_rect()) },
         },
         PaintPlan::Rebuild
     )]

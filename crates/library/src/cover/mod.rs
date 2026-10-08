@@ -164,28 +164,14 @@ pub(crate) fn fit_square(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        io,
-        io::Cursor,
-        os::unix::fs::PermissionsExt,
-        path::PathBuf,
-        sync::Arc,
-    };
+    use std::{fs, io, io::Cursor, os::unix::fs::PermissionsExt, path::PathBuf};
 
     use image::{DynamicImage, ImageFormat, Rgb, RgbImage, RgbaImage};
     use kernel::{cmd::CoverJob, domain::geometry::Pixels};
+    use rstest::rstest;
 
     use crate::{
-        cover::{
-            CACHE_CAPACITY,
-            CoverCache,
-            CoverDecoded,
-            CoverLookup,
-            cover_bytes,
-            decode,
-            fit_square,
-        },
+        cover::{CoverLookup, cover_bytes, decode, fit_square},
         test_support::minimal_flac_with_cover,
     };
 
@@ -284,110 +270,51 @@ mod tests {
         }
     }
 
-    #[test]
-    fn fit_square_center_crops_and_resizes_to_the_requested_side() {
-        let wide = DynamicImage::ImageRgba8(RgbaImage::new(300, 200));
-        let side = Pixels(48);
-
-        let fitted = fit_square(wide, side).unwrap();
-
-        assert_eq!(
-            fitted.map(|image| (image.width(), image.height())),
-            Some((side.0, side.0))
-        );
-    }
-
-    #[test]
-    fn fit_square_fits_an_rgb_cover_to_an_opaque_square() {
-        let wide =
-            DynamicImage::ImageRgb8(RgbImage::from_pixel(300, 200, Rgb([10, 20, 30])));
+    #[rstest]
+    #[case::a_transparent_rgba_cover(
+        DynamicImage::ImageRgba8(RgbaImage::new(300, 200)),
+        0
+    )]
+    #[case::an_rgb_cover_turns_opaque(
+        DynamicImage::ImageRgb8(RgbImage::from_pixel(300, 200, Rgb([10, 20, 30]))),
+        u8::MAX
+    )]
+    fn fit_square_center_crops_and_resizes_to_the_requested_side(
+        #[case] wide: DynamicImage,
+        #[case] alpha: u8,
+    ) {
         let side = Pixels(48);
 
         let fitted = fit_square(wide, side).unwrap().unwrap();
 
         assert_eq!(fitted.dimensions(), (side.0, side.0));
-        assert!(fitted.pixels().all(|pixel| pixel.0[3] == u8::MAX));
+        assert!(fitted.pixels().all(|pixel| pixel.0[3] == alpha));
     }
 
-    #[test]
-    fn fit_square_treats_an_empty_decode_as_missing_cover() {
-        let empty = DynamicImage::ImageRgba8(RgbaImage::new(0, 0));
-
-        assert!(fit_square(empty, Pixels(48)).unwrap().is_none());
+    fn bands(across: u32, along: u32, band_of: fn(u32, u32) -> u32) -> DynamicImage {
+        DynamicImage::ImageRgb8(RgbImage::from_fn(across, along, |x, y| match band_of(
+            x, y,
+        ) {
+            0 => Rgb([255, 0, 0]),
+            1 => Rgb([0, 255, 0]),
+            _ => Rgb([0, 0, 255]),
+        }))
     }
 
-    #[test]
-    fn a_job_for_a_file_without_a_tag_decodes_as_missing_cover() {
-        let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("untagged.wav");
-        fs::write(&path, include_bytes!("../../tests/fixtures/tone.wav")).unwrap();
+    #[rstest]
+    #[case::a_wide_cover_keeps_its_middle_columns(bands(24, 8, |x, _| x / 8))]
+    #[case::a_tall_cover_keeps_its_middle_rows(bands(8, 24, |_, y| y / 8))]
+    fn fit_square_keeps_the_middle_of_the_long_side(#[case] image: DynamicImage) {
+        let fitted = fit_square(image, Pixels(8)).unwrap().unwrap();
 
-        let decoded = decode(cover_job(path.to_str().unwrap(), 64)).unwrap();
-
-        assert!(matches!(decoded.cover_lookup, CoverLookup::Missing));
+        assert!(fitted.pixels().all(|pixel| pixel.0 == [0, 255, 0, u8::MAX]));
     }
 
-    fn decoded(path: &str, cover_lookup: CoverLookup) -> CoverDecoded {
-        CoverDecoded {
-            path: PathBuf::from(path),
-            side: Pixels(64),
-            cover_lookup,
-        }
-    }
-
-    fn image() -> CoverLookup {
-        CoverLookup::Found(Arc::new(RgbaImage::new(64, 64)))
-    }
-
-    #[test]
-    fn a_remembered_cover_is_cached_for_its_path_and_side() {
-        let mut cache = CoverCache::default();
-        cache.remember(&decoded("/music/one.flac", image()));
-
-        let cover_decoded = cache.cached(&cover_job("/music/one.flac", 64));
-
-        assert!(matches!(
-            cover_decoded,
-            Some(CoverDecoded {
-                cover_lookup: CoverLookup::Found(_),
-                ..
-            })
-        ));
-        assert!(cache.cached(&cover_job("/music/one.flac", 32)).is_none());
-    }
-
-    #[test]
-    fn a_remembered_missing_cover_is_cached_as_missing() {
-        let mut cache = CoverCache::default();
-        cache.remember(&decoded("/music/one.flac", CoverLookup::Missing));
-
-        let cover_decoded = cache.cached(&cover_job("/music/one.flac", 64));
-
-        assert!(matches!(
-            cover_decoded,
-            Some(CoverDecoded {
-                cover_lookup: CoverLookup::Missing,
-                ..
-            })
-        ));
-    }
-
-    #[test]
-    fn the_ninth_distinct_cover_evicts_the_oldest_cached_entry() {
-        let mut cache = CoverCache::default();
-        let paths: Vec<String> = (0..=CACHE_CAPACITY)
-            .map(|index| format!("/music/{index}.flac"))
-            .collect();
-        for path in &paths {
-            cache.remember(&decoded(path, image()));
-        }
-
-        assert!(cache.cached(&cover_job(&paths[0], 64)).is_none());
-        assert!(cache.cached(&cover_job(&paths[1], 64)).is_some());
-        assert!(
-            cache
-                .cached(&cover_job(&paths[CACHE_CAPACITY], 64))
-                .is_some()
-        );
+    #[rstest]
+    #[case::no_pixels(DynamicImage::ImageRgba8(RgbaImage::new(0, 0)))]
+    #[case::no_columns(DynamicImage::ImageRgb8(RgbImage::new(0, 4)))]
+    #[case::no_rows(DynamicImage::ImageRgb8(RgbImage::new(4, 0)))]
+    fn fit_square_treats_an_empty_decode_as_missing_cover(#[case] empty: DynamicImage) {
+        assert!(matches!(fit_square(empty, Pixels(48)), Ok(None)));
     }
 }

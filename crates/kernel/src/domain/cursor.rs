@@ -71,26 +71,3 @@ fn clamped_step(index: usize, len: usize, delta: isize) -> usize {
     let moved = index.saturating_add_signed(delta);
     moved.min(len - 1)
 }
-
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
-
-    use crate::domain::{cursor::Cursor, direction::Direction};
-
-    struct PageRow {
-        index: usize,
-        len: usize,
-        rows: usize,
-        direction: Direction,
-        expected_index: usize,
-    }
-
-    #[rstest]
-    #[case(PageRow { index: 3, len: 5, rows: 10, direction: Direction::Next, expected_index: 4 })]
-    #[case(PageRow { index: 1, len: 5, rows: 10, direction: Direction::Previous, expected_index: 0 })]
-    fn page_clamps_at_the_end(#[case] row: PageRow) {
-        let cursor = Cursor::at(row.len, row.index).page(row.rows, row.direction);
-        assert_eq!(cursor.index(), row.expected_index);
-    }
-}

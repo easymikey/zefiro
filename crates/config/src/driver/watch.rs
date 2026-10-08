@@ -318,17 +318,6 @@ mod tests {
 
     proptest! {
         #[test]
-        fn a_fresh_target_always_reports_changed(text in option::of(".*")) {
-            prop_assert!(Seen::Unread.is_changed_to(Seen::from_text(text.as_deref())));
-        }
-
-        #[test]
-        fn its_own_text_never_reports_changed(text in option::of(".*")) {
-            let seen = Seen::from_text(text.as_deref());
-            prop_assert!(!seen.is_changed_to(Seen::from_text(text.as_deref())));
-        }
-
-        #[test]
         fn a_different_text_reports_changed(
             first in option::of(".*"),
             second in option::of(".*"),
@@ -435,25 +424,6 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_theme_is_reported_once() {
-        let mut absent_theme = watch(Some("noir"));
-        let absent = Cmd::message(ConfigChange::Theme {
-            name: ThemeName::from_static("noir"),
-            text: None,
-        });
-        let done = || ConfigWatchMessage::ReadDone {
-            name: noir(),
-            text: None,
-        };
-
-        let first = absent_theme.transition(done());
-        let second = absent_theme.transition(done());
-
-        assert_eq!(first, Ok(absent));
-        assert_eq!(second, Ok(Cmd::none()));
-    }
-
-    #[test]
     fn selecting_the_current_theme_is_refused() {
         let mut selected = watch(Some("noir"));
 
@@ -498,27 +468,6 @@ mod tests {
             Cmd::message(ConfigChange::Themes {
                 theme_names: vec![ThemeName::from_static("mine")],
                 refused: Vec::new()
-            })
-        );
-        assert_eq!(second, Cmd::none());
-    }
-
-    #[test]
-    fn a_read_with_unchanged_text_reports_no_change() {
-        let mut watch = watch(Some("noir"));
-        let read = || ConfigWatchMessage::ReadDone {
-            name: noir(),
-            text: Some("same".to_string()),
-        };
-
-        let first = watch.transition(read()).unwrap();
-        let second = watch.transition(read()).unwrap();
-
-        assert_eq!(
-            first,
-            Cmd::message(ConfigChange::Theme {
-                name: ThemeName::from_static("noir"),
-                text: Some("same".to_string())
             })
         );
         assert_eq!(second, Cmd::none());

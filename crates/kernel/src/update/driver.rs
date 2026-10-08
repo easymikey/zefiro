@@ -180,17 +180,10 @@ pub(crate) fn resume_driver(
 
 fn resumed(player: &Player) -> Option<(&Arc<Track>, Playback)> {
     match player {
-        Player::Playing {
-            track,
-            playhead: _playhead,
-            preloaded: _preloaded,
-        } => Some((track, Playback::Playing)),
-        Player::Loading(track) => Some((track, Playback::Playing)),
-        Player::Paused {
-            track,
-            position: _position,
-            by: _by,
-        } => Some((track, Playback::Paused)),
+        Player::Playing { track, .. } | Player::Loading(track) => {
+            Some((track, Playback::Playing))
+        }
+        Player::Paused { track, .. } => Some((track, Playback::Paused)),
         Player::Stopped => None,
     }
 }

@@ -102,23 +102,13 @@ impl From<&Error> for LibraryError {
                 path,
                 source,
             } => (*subject, path, source.kind().into()),
-            Error::Json {
-                subject,
-                path,
-                source: _source,
-            } => (*subject, path, IoError::Malformed),
-            Error::Encode {
-                path,
-                source: _source,
-            } => (LibrarySubject::Cache, path, IoError::Malformed),
-            Error::Decode {
-                path,
-                source: _source,
-            } => (LibrarySubject::Cache, path, IoError::Malformed),
-            Error::Tags {
-                path,
-                source: _source,
-            } => (LibrarySubject::Scan, path, IoError::Malformed),
+            Error::Json { subject, path, .. } => (*subject, path, IoError::Malformed),
+            Error::Encode { path, .. } | Error::Decode { path, .. } => {
+                (LibrarySubject::Cache, path, IoError::Malformed)
+            }
+            Error::Tags { path, .. } => {
+                (LibrarySubject::Scan, path, IoError::Malformed)
+            }
             Error::Trash { path, source } => {
                 (LibrarySubject::Trash, path, trash_error(source))
             }

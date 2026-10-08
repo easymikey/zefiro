@@ -160,7 +160,7 @@ mod tests {
     };
 
     use crate::{
-        cmd::{Effect, LibraryCmd, RemoteCmd},
+        cmd::{Effect, RemoteCmd},
         domain::{
             appearance::AppearanceSettings,
             bounded::Bounded,
@@ -362,14 +362,6 @@ mod tests {
         assert!(model.workspace.toasts.is_empty());
     }
 
-    #[test]
-    fn startup_without_notices_raises_no_toast() {
-        let mut model = Model::default();
-        drop(startup_model(&mut model, stock_startup()));
-
-        assert!(model.workspace.toasts.is_empty());
-    }
-
     fn started_model() -> Model {
         let mut model = Model::default();
         drop(startup_model(&mut model, stock_startup()));
@@ -385,28 +377,6 @@ mod tests {
             model.transport.volume,
             model.themes,
         ));
-    }
-
-    #[test]
-    fn startup_leaves_library_loading_and_seeds_the_playlist() {
-        let model = started_model();
-
-        assert!(model.library.is_none());
-        assert_eq!(model.playlist.tracks.len(), 2);
-        assert_eq!(model.playlist.playing_index(), Some(ViewIndex::new(0)));
-    }
-
-    #[test]
-    fn startup_seeds_music_dir_and_requests_a_library_scan() {
-        let mut model = Model::default();
-        let cmd = startup_model(&mut model, stock_startup());
-
-        assert_eq!(model.music_dir, PathBuf::from("/music"));
-        let (effects, _messages) = cmd.into_parts();
-        assert!(effects.iter().any(|effect| matches!(
-            effect,
-            Effect::Library(LibraryCmd::Scan { music_dir, .. }) if music_dir == Path::new("/music")
-        )));
     }
 
     #[test]

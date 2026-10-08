@@ -43,19 +43,11 @@ impl Player {
         now: Moment,
     ) -> Result<Cmd, Unhandled> {
         match self {
-            Player::Playing {
-                playhead,
-                track: _track,
-                preloaded: _preloaded,
-            } => {
+            Player::Playing { playhead, .. } => {
                 *playhead = Playhead::anchored(target, now, playhead.speed);
                 Ok(seek_effect(target))
             }
-            Player::Paused {
-                position,
-                track: _track,
-                by: _by,
-            } => {
+            Player::Paused { position, .. } => {
                 *position = target;
                 Ok(seek_effect(target))
             }
@@ -70,9 +62,7 @@ impl Player {
     ) -> Result<Cmd, Unhandled> {
         match mem::replace(self, Player::Stopped) {
             Player::Playing {
-                track,
-                playhead,
-                preloaded: _preloaded,
+                track, playhead, ..
             } => {
                 *self = Player::Paused {
                     track,
@@ -92,8 +82,7 @@ impl Player {
         match self {
             Player::Paused {
                 by: PausedBy::Overlay,
-                track: _track,
-                position: _position,
+                ..
             } => self.resume(anchor),
             Player::Paused {
                 by: PausedBy::Listener,
@@ -108,9 +97,7 @@ impl Player {
     fn resume(&mut self, anchor: Anchor) -> Result<Cmd, Unhandled> {
         match mem::replace(self, Player::Stopped) {
             Player::Paused {
-                track,
-                position,
-                by: _by,
+                track, position, ..
             } => {
                 *self = Player::Playing {
                     track,

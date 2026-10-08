@@ -316,6 +316,8 @@ fn update_overlay(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use crate::{
         cmd::{Effect, RemoteCmd},
         domain::{
@@ -399,42 +401,70 @@ mod tests {
         })
     }
 
-    #[test]
-    fn c_opens_servers_on_the_first_server() {
-        let mut model = model_with(two_servers(), None);
-
-        press(&mut model, KeyCode::Char('c')).unwrap();
-
-        assert_eq!(model.workspace.overlay, Some(servers_at(0, 2)));
+    fn user_step(link: &str, user: &str) -> Overlay {
+        Overlay::AddServer(ServerPrompt::User {
+            origin_server_name: None,
+            endpoint: Endpoint::parse(link).unwrap(),
+            text_entry: TextEntry {
+                input: user.to_owned(),
+                error: None,
+            },
+        })
     }
 
-    #[test]
-    fn j_moves_down_and_k_moves_back_up() {
-        let mut model = model_with(two_servers(), Some(servers_at(0, 2)));
+    #[rstest]
+    #[case::c_opens_servers_on_the_first_server(
+        None,
+        KeyCode::Char('c'),
+        servers_at(0, 2)
+    )]
+    #[case::j_moves_down(Some(servers_at(0, 2)), KeyCode::Char('j'), servers_at(1, 2))]
+    #[case::k_moves_back_up(
+        Some(servers_at(1, 2)),
+        KeyCode::Char('k'),
+        servers_at(0, 2)
+    )]
+    #[case::enter_edits_the_selected_server_at_link_with_its_endpoint_typed_in(
+        Some(servers_at(1, 2)),
+        KeyCode::Enter,
+        Overlay::AddServer(ServerPrompt::Link {
+            origin_server_name: Some(ServerName::new("tunes.example.com")),
+            text_entry: TextEntry {
+                input: "https://tunes.example.com".to_owned(),
+                error: None,
+            },
+        })
+    )]
+    #[case::the_user_step_of_a_known_host_starts_with_its_user_typed_in(
+        Some(link("https://tunes.example.com")),
+        KeyCode::Enter,
+        user_step("https://tunes.example.com", "bob")
+    )]
+    #[case::the_user_step_of_a_new_host_starts_empty(
+        Some(link("https://other.example.com")),
+        KeyCode::Enter,
+        user_step("https://other.example.com", "")
+    )]
+    #[case::d_asks_to_remove_the_selected_server(
+        Some(servers_at(1, 2)),
+        KeyCode::Char('d'),
+        Overlay::ConfirmRemove(ServerName::new("tunes.example.com"))
+    )]
+    #[case::u_adds_a_server_from_an_empty_link(
+        Some(servers_at(1, 2)),
+        KeyCode::Char('u'),
+        link("")
+    )]
+    fn a_key_in_the_servers_overlays_opens_the_next_step(
+        #[case] overlay: Option<Overlay>,
+        #[case] code: KeyCode,
+        #[case] expected: Overlay,
+    ) {
+        let mut model = model_with(two_servers(), overlay);
 
-        press(&mut model, KeyCode::Char('j')).unwrap();
-        assert_eq!(model.workspace.overlay, Some(servers_at(1, 2)));
+        press(&mut model, code).unwrap();
 
-        press(&mut model, KeyCode::Char('k')).unwrap();
-        assert_eq!(model.workspace.overlay, Some(servers_at(0, 2)));
-    }
-
-    #[test]
-    fn enter_edits_the_selected_server_at_link_with_its_endpoint_typed_in() {
-        let mut model = model_with(two_servers(), Some(servers_at(1, 2)));
-
-        press(&mut model, KeyCode::Enter).unwrap();
-
-        assert_eq!(
-            model.workspace.overlay,
-            Some(Overlay::AddServer(ServerPrompt::Link {
-                origin_server_name: Some(ServerName::new("tunes.example.com")),
-                text_entry: TextEntry {
-                    input: "https://tunes.example.com".to_owned(),
-                    error: None,
-                },
-            }))
-        );
+        assert_eq!(model.workspace.overlay, Some(expected));
     }
 
     fn type_text(model: &mut Model, text: &str) {
@@ -483,43 +513,6 @@ mod tests {
     }
 
     #[test]
-    fn the_user_step_of_a_known_host_starts_with_its_user_typed_in() {
-        let mut model =
-            model_with(two_servers(), Some(link("https://tunes.example.com")));
-
-        press(&mut model, KeyCode::Enter).unwrap();
-
-        assert_eq!(
-            model.workspace.overlay,
-            Some(Overlay::AddServer(ServerPrompt::User {
-                origin_server_name: None,
-                endpoint: Endpoint::parse("https://tunes.example.com").unwrap(),
-                text_entry: TextEntry {
-                    input: "bob".to_owned(),
-                    error: None,
-                },
-            }))
-        );
-    }
-
-    #[test]
-    fn the_user_step_of_a_new_host_starts_empty() {
-        let mut model =
-            model_with(two_servers(), Some(link("https://other.example.com")));
-
-        press(&mut model, KeyCode::Enter).unwrap();
-
-        assert_eq!(
-            model.workspace.overlay,
-            Some(Overlay::AddServer(ServerPrompt::User {
-                origin_server_name: None,
-                endpoint: Endpoint::parse("https://other.example.com").unwrap(),
-                text_entry: TextEntry::default(),
-            }))
-        );
-    }
-
-    #[test]
     fn t_reconnects_the_selected_server_with_its_stored_password() {
         let mut model = model_with(two_servers(), Some(servers_at(1, 2)));
         let account = two_servers()[1].account.clone();
@@ -535,27 +528,6 @@ mod tests {
             })))
         );
         assert_eq!(model.workspace.overlay, Some(servers_at(1, 2)));
-    }
-
-    #[test]
-    fn d_asks_to_remove_the_selected_server() {
-        let mut model = model_with(two_servers(), Some(servers_at(1, 2)));
-
-        press(&mut model, KeyCode::Char('d')).unwrap();
-
-        assert_eq!(
-            model.workspace.overlay,
-            Some(Overlay::ConfirmRemove(ServerName::new("tunes.example.com")))
-        );
-    }
-
-    #[test]
-    fn u_adds_a_server_from_an_empty_link() {
-        let mut model = model_with(two_servers(), Some(servers_at(1, 2)));
-
-        press(&mut model, KeyCode::Char('u')).unwrap();
-
-        assert_eq!(model.workspace.overlay, Some(link("")));
     }
 
     #[test]

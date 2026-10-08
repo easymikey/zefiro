@@ -26,7 +26,7 @@ use kernel::{
         },
         track::CatalogRow,
     },
-    message::RemoteEvent,
+    message::{CatalogPage, RemoteEvent, ServerFavorite},
     update::machine::{Driver, LoopCmd, LoopEffect, Machine, Unhandled},
 };
 
@@ -522,11 +522,11 @@ fn starred(
     server_track_id: ServerTrackId,
     favorite: Favorite,
 ) -> RemoteEvent {
-    RemoteEvent::Starred {
+    RemoteEvent::Starred(ServerFavorite {
         server_name,
         server_track_id,
         favorite,
-    }
+    })
 }
 
 fn found(
@@ -570,13 +570,15 @@ impl Machine for RemoteDriver {
                 revision,
             } => self.listed(
                 revision,
-                result.map(|(catalog_rows, favorites)| RemoteEvent::Listed {
-                    server_name,
-                    listing,
-                    page,
-                    catalog_rows,
-                    favorites,
-                    revision,
+                result.map(|(catalog_rows, favorites)| {
+                    RemoteEvent::Listed(CatalogPage {
+                        server_name,
+                        listing,
+                        page,
+                        catalog_rows,
+                        favorites,
+                        revision,
+                    })
                 }),
             ),
             RemoteMessage::Fetched { revision, result } => {

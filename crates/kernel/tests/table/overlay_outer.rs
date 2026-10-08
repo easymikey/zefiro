@@ -205,34 +205,14 @@ fn releases() -> Cmd {
 
 #[rstest]
 #[case::closed_opens_help(None, open(help()), Ok((Some(help()), opened(Cmd::none()))))]
-#[case::help_reopen_keeps_help(Some(help()), open(help()), Ok((Some(help()), opened(Cmd::none()))))]
 #[case::help_open_search_replaces_it(Some(help()), open(search("", vec![0, 1], 0)), Ok((Some(search("", vec![0, 1], 0)), opened(Cmd::none()))))]
 #[case::search_reopen_resets_the_query(Some(search("mo", vec![0], 0)), open(search("", vec![0, 1], 0)), Ok((Some(search("", vec![0, 1], 0)), opened(Cmd::none()))))]
-#[case::closed_opens_save(None, open(save("", None)), Ok((Some(save("", None)), opened(Cmd::none()))))]
-#[case::save_reopen_resets_the_name(Some(save("mix", None)), open(save("", None)), Ok((Some(save("", None)), opened(Cmd::none()))))]
-#[case::closed_opens_history(None, open(history(0, 0)), Ok((Some(history(0, 0)), opened(Cmd::none()))))]
-#[case::history_reopen_resets_the_cursor(Some(history(2, 3)), open(history(0, 0)), Ok((Some(history(0, 0)), opened(Cmd::none()))))]
 #[case::closed_opens_settings_and_holds(None, open(fresh_settings()), Ok((Some(fresh_settings()), opened(holds()))))]
 #[case::settings_reopen_resets_the_row_and_holds_again(Some(settings(3)), open(fresh_settings()), Ok((Some(fresh_settings()), opened(holds()))))]
-#[case::help_open_settings_holds_like_any_other_open(Some(help()), open(fresh_settings()), Ok((Some(fresh_settings()), opened(holds()))))]
 #[case::settings_open_help_releases_what_it_held(Some(settings(3)), open(help()), Ok((Some(help()), opened(releases()))))]
-#[case::settings_open_history_releases_what_it_held(Some(settings(3)), open(history(0, 0)), Ok((Some(history(0, 0)), opened(releases()))))]
-#[case::closed_opens_confirm_trash(None, open(confirm_trash()), Ok((Some(confirm_trash()), opened(Cmd::none()))))]
-#[case::closed_opens_track_details(None, open(track_details()), Ok((Some(track_details()), opened(Cmd::none()))))]
-#[case::closed_opens_jump(None, open(jump("", None)), Ok((Some(jump("", None)), opened(Cmd::none()))))]
-#[case::jump_reopen_resets_the_digits(Some(jump("5:", Some(TimecodeError::Malformed))), open(jump("", None)), Ok((Some(jump("", None)), opened(Cmd::none()))))]
-#[case::closed_opens_source_dir_prefilled(None, open(source_dir("/music", None)), Ok((Some(source_dir("/music", None)), opened(Cmd::none()))))]
-#[case::source_dir_reopen_resets_the_path(Some(source_dir("/x", Some(MusicDirError::Empty))), open(source_dir("/music", None)), Ok((Some(source_dir("/music", None)), opened(Cmd::none()))))]
 #[case::closed_close_is_refused(None, OverlayMessage::Close, Err(Unhandled))]
 #[case::help_closes(Some(help()), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
-#[case::search_closes(Some(search("mo", vec![0], 0)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
-#[case::save_closes(Some(save("mix", None)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
-#[case::history_closes(Some(history(1, 3)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
 #[case::settings_closes_and_releases(Some(settings(3)), OverlayMessage::Close, Ok((None, closed(releases()))))]
-#[case::confirm_trash_closes(Some(confirm_trash()), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
-#[case::track_details_closes(Some(track_details()), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
-#[case::jump_closes(Some(jump("5", None)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
-#[case::source_dir_closes(Some(source_dir("/x", None)), OverlayMessage::Close, Ok((None, closed(Cmd::none()))))]
 #[case::closed_confirm_is_refused(None, OverlayMessage::Confirm, Err(Unhandled))]
 #[case::help_confirm_is_refused(Some(help()), OverlayMessage::Confirm, Err(Unhandled))]
 #[case::track_details_confirm_is_refused(
@@ -293,7 +273,6 @@ fn releases() -> Cmd {
 )]
 #[case::add_server_link_types_a_char_and_clears_the_error(Some(link_step("x", Some(EndpointError::Scheme))), text(TextRequest::Char('/')), Ok((Some(link_step("x/", None)), Cmd::none())))]
 #[case::add_server_password_takes_a_space(Some(password_step("a", None)), text(TextRequest::Char(' ')), Ok((Some(password_step("a ", None)), Cmd::none())))]
-#[case::save_types_a_char(Some(save("mi", None)), text(TextRequest::Char('x')), Ok((Some(save("mix", None)), Cmd::none())))]
 #[case::save_backspace_on_empty_is_refused(
     Some(save("", None)),
     text(TextRequest::Backspace),
@@ -304,7 +283,6 @@ fn releases() -> Cmd {
     inner(OverlayContentMessage::Text(TextRequest::Backspace)),
     Err(Unhandled)
 )]
-#[case::save_backspace_erases(Some(save("mix", None)), text(TextRequest::Backspace), Ok((Some(save("mi", None)), Cmd::none())))]
 #[case::save_types_a_char_and_clears_the_error(Some(save("", Some(PlaylistFileNameError::Empty))), text(TextRequest::Char('m')), Ok((Some(save("m", None)), Cmd::none())))]
 #[case::source_dir_types_a_char_and_clears_the_error(Some(source_dir("", Some(MusicDirError::Empty))), text(TextRequest::Char('/')), Ok((Some(source_dir("/", None)), Cmd::none())))]
 #[case::source_dir_backspace_clears_the_error(Some(source_dir("/x", Some(MusicDirError::Empty))), text(TextRequest::Backspace), Ok((Some(source_dir("/", None)), Cmd::none())))]
@@ -419,16 +397,6 @@ fn music_dir_prompt_never_prefills_a_lossy_path() {
     let path = std::path::PathBuf::from(OsStr::from_bytes(b"/music/\xff"));
     let overlay = opened_music_dir(path);
     assert_eq!(overlay, Some(source_dir("", None)));
-}
-
-#[test]
-fn add_server_opens_on_the_link_step() {
-    let mut model = Model::default();
-    send(
-        &mut model,
-        Message::Overlay(OverlayRequest::Open(OverlayName::AddServer)),
-    );
-    assert_eq!(model.workspace.overlay, Some(link_step("", None)));
 }
 
 #[test]

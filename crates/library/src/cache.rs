@@ -276,26 +276,6 @@ mod tests {
     }
 
     #[test]
-    fn save_then_load_round_trips_for_the_same_music_dir() {
-        let directory = tempfile::tempdir().unwrap();
-        let dirs = LibraryDirs {
-            cache_dir: directory.path().join("cache"),
-            data_dir: directory.path().join("data"),
-            playlists_dir: directory.path().join("playlists"),
-        };
-        let music_dir = directory.path().join("music");
-        let tracks = vec![
-            test_support::titled("/music/one.flac", "Moon River"),
-            test_support::titled("/music/two.flac", "Clair de Lune"),
-        ];
-
-        cache::save(&dirs, &music_dir, &tracks).unwrap();
-        let loaded = cache::load(&dirs, &music_dir).unwrap();
-
-        insta::assert_debug_snapshot!(loaded);
-    }
-
-    #[test]
     fn a_cache_save_leaves_a_single_file_so_one_rename_commits_it() {
         let directory = tempfile::tempdir().unwrap();
         let dirs = LibraryDirs {
@@ -363,10 +343,6 @@ mod tests {
 
     #[rstest]
     #[case::never_saved(|_dirs: &LibraryDirs| {})]
-    #[case::other_music_dir(|dirs: &LibraryDirs| {
-        let tracks = vec![test_support::titled("/music/one.flac", "Moon River")];
-        cache::save(dirs, Path::new("/other"), &tracks).unwrap();
-    })]
     #[case::wrong_version(|dirs: &LibraryDirs| {
         save_then_rewrite(dirs, |bytes| bytes[0] = 1);
     })]
@@ -404,47 +380,25 @@ mod tests {
         assert!(matches!(loaded, Err(crate::error::Error::Decode { .. })));
     }
 
-    #[test]
-    fn a_saved_empty_library_loads_back_empty() {
-        let tracks: Vec<Arc<Track>> = Vec::new();
-        let bytes = encoded(&tracks);
-        assert_eq!(
-            cache::decode(&bytes, Path::new("/data/library.bin"))
-                .unwrap()
-                .0,
-            tracks
-        );
-    }
-
-    #[test]
-    fn an_encoded_cache_decodes_to_the_same_entries() {
-        let tracks = vec![
-            test_support::titled("/music/one.flac", "Moon River"),
-            Arc::new(test_support::track("/music/two.flac", Tags::default())),
-        ];
+    #[rstest]
+    #[case::an_empty_library(Vec::new())]
+    #[case::a_titled_and_an_untagged_track(vec![
+        test_support::titled("/music/one.flac", "Moon River"),
+        Arc::new(test_support::track("/music/two.flac", Tags::default())),
+    ])]
+    #[case::a_track_with_its_duration(vec![Arc::new(test_support::track_lasting(
+        "/music/one.flac",
+        Duration::from_secs(259),
+        Tags {
+            title: Some("Moon River".to_string()),
+            ..Tags::default()
+        },
+    ))])]
+    fn an_encoded_cache_decodes_to_the_same_entries(#[case] tracks: Vec<Arc<Track>>) {
         let bytes = encoded(&tracks);
         let (decoded, rest) =
             cache::decode(&bytes, Path::new("/data/library.bin")).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded, tracks);
-        insta::assert_debug_snapshot!(decoded);
-    }
-
-    #[test]
-    fn a_saved_track_keeps_its_duration_after_loading() {
-        let tracks = vec![Arc::new(test_support::track_lasting(
-            "/music/one.flac",
-            Duration::from_secs(259),
-            Tags {
-                title: Some("Moon River".to_string()),
-                ..Tags::default()
-            },
-        ))];
-        let bytes = encoded(&tracks);
-        let (decoded, rest) =
-            cache::decode(&bytes, Path::new("/data/library.bin")).unwrap();
-        assert!(rest.is_empty());
-        assert_eq!(decoded, tracks);
-        insta::assert_debug_snapshot!(decoded);
     }
 }

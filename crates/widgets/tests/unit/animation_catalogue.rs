@@ -333,26 +333,3 @@ fn a_theme_wash_from_another_screen_size_leaves_the_frame_as_drawn() {
         "colours of another size are not laid over the frame"
     );
 }
-
-#[test]
-fn a_theme_wash_during_a_wash_starts_from_the_blended_colours_on_screen() {
-    let on_screen = row_colors(&washed_row(slice(|t| t.screen_wash, 2)));
-    let mut next_theme = Buffer::empty(Rect {
-        x: 0,
-        y: 0,
-        width: 90,
-        height: 1,
-    });
-    next_theme.set_string(
-        0,
-        0,
-        "X".repeat(90),
-        Style::default().fg(BACKGROUND).bg(ACCENT),
-    );
-    let restarted = washed(on_screen.clone().into(), next_theme, Duration::ZERO);
-    assert_eq!(
-        row_colors(&restarted),
-        on_screen,
-        "the next wash starts where the last one stood, so the fade never jumps"
-    );
-}

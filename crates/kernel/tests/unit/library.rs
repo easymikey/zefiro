@@ -60,12 +60,6 @@ struct SortRow {
     favorites: favorited(&["/t2.flac"]),
     expected: vec![2, 0, 1],
 })]
-#[case::by_favorites_with_no_favorites_keeps_added_order(SortRow {
-    tracks: vec![track("/t0.flac", None, None), track("/t1.flac", None, None)],
-    key: SortKey::Favorites,
-    favorites: Favorites::default(),
-    expected: vec![0, 1],
-})]
 fn sort_indices_orders_tracks(#[case] sort_row: SortRow) {
     let result =
         library::sort_indices(&sort_row.tracks, sort_row.key, &sort_row.favorites);

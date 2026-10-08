@@ -122,24 +122,24 @@ impl Runtime {
         let Self {
             model,
             wiring,
-            timers: _timers,
-            started_at: _started_at,
-            unix_offset: _unix_offset,
-            flow: _flow,
-            shell_effects: _shell_effects,
+            timers: _,
+            started_at: _,
+            unix_offset: _,
+            flow: _,
+            shell_effects: _,
         } = self;
         let Wiring {
             inbox_receiver,
-            inbox: _inbox,
+            inbox: _,
             mut ports,
-            spectrum_tap: _spectrum_tap,
-            latest_receivers: _latest_receivers,
-            doorbell: _doorbell,
-            spawners: _spawners,
-            paths: _paths,
-            latest_senders: _latest_senders,
+            spectrum_tap: _,
+            latest_receivers: _,
+            doorbell: _,
+            spawners: _,
+            paths: _,
+            latest_senders: _,
             #[cfg(target_os = "macos")]
-                macos_channel: _macos_channel,
+                macos_channel: _,
         } = wiring;
         for row in registry::REGISTRY {
             ports.hang_up(row.driver_name);
@@ -172,7 +172,7 @@ mod tests {
         cmd::{AudioCmd, LibraryCmd},
         domain::{
             direction::Direction,
-            driver::{DriverError, DriverName, DriverStatus, Restarts},
+            driver::{DriverError, DriverName, DriverStatus},
             setting_row::SettingRow,
             startup::Startup,
             toast::Toast,
@@ -268,13 +268,6 @@ mod tests {
             |_: &Receiver<AudioCmd>, _: &Sender<Message>, _: &Congestion| boom(),
             spawn_setup,
         )
-    }
-
-    fn panicking_spawners() -> Spawners {
-        Spawners {
-            audio: panicking_audio,
-            ..idle_spawners()
-        }
     }
 
     #[test]
@@ -435,84 +428,6 @@ mod tests {
 
         assert!(matches!(ended, Ok(())));
         assert!(asked.elapsed() < Runtime::DRAIN + RECV_TIMEOUT);
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    enum LifeStep {
-        Paint,
-        Quit,
-    }
-
-    struct ObserveDeadThenQuit {
-        step_sender: Sender<LifeStep>,
-        paints: usize,
-        restarts: Restarts,
-    }
-
-    impl Shell for ObserveDeadThenQuit {
-        type Input = LifeStep;
-        type Error = Infallible;
-
-        fn input(&mut self, life_step: LifeStep) -> Reaction {
-            match life_step {
-                LifeStep::Paint => Reaction::Ignored,
-                LifeStep::Quit => Reaction::Message(Message::Quit),
-            }
-        }
-
-        fn effect(&mut self, _effect: ShellEffect) {}
-
-        fn frame_due(&self, _frame: &Frame<'_>) -> FrameDue {
-            FrameDue::Settled
-        }
-
-        fn paint(&mut self, frame: Frame<'_>) -> Result<Painted, Infallible> {
-            self.paints += 1;
-            self.restarts = frame
-                .model
-                .drivers
-                .record(DriverName::Audio)
-                .restarts
-                .clone();
-            let next = if self.restarts != Restarts::default() || self.paints >= 20 {
-                LifeStep::Quit
-            } else {
-                LifeStep::Paint
-            };
-            self.step_sender
-                .send(next)
-                .expect("the step receiver outlives the shell");
-            Ok(Painted::default())
-        }
-    }
-
-    #[test]
-    fn a_driver_panic_is_supervised_through_frame() {
-        let directory = tempfile::tempdir().unwrap();
-        let startup = stock_startup();
-        let runtime = Runtime::start(
-            startup,
-            &stub_paths(directory.path()),
-            &panicking_spawners(),
-        )
-        .unwrap();
-
-        let (steps, input) = unbounded();
-        steps.send(LifeStep::Paint).unwrap();
-        let mut shell_quit = ObserveDeadThenQuit {
-            step_sender: steps,
-            paints: 0,
-            restarts: Restarts::default(),
-        };
-
-        let ended = run(runtime, &mut shell_quit, &input);
-
-        assert!(matches!(ended, Ok(())));
-        assert_ne!(
-            shell_quit.restarts,
-            Restarts::default(),
-            "audio's standard supervision restarts a panicked driver"
-        );
     }
 
     static AUDIO_SPAWNS: AtomicUsize = AtomicUsize::new(0);

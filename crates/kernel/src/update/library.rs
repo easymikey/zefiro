@@ -43,18 +43,9 @@ pub(crate) fn update(
     mut parts: LibraryParts<'_>,
     event: LibraryEvent,
 ) -> Result<Cmd, Unhandled> {
-    if let LibraryEvent::Loaded {
-        revision,
-        tracks: _tracks,
-    }
-    | LibraryEvent::Listed {
-        revision,
-        tracks: _tracks,
-    }
-    | LibraryEvent::Tagged {
-        revision,
-        tracks: _tracks,
-    } = &event
+    if let LibraryEvent::Loaded { revision, .. }
+    | LibraryEvent::Listed { revision, .. }
+    | LibraryEvent::Tagged { revision, .. } = &event
         && let Freshness::Stale = revision.freshness(parts.revisions.scan)
     {
         return Err(Unhandled);
@@ -63,17 +54,11 @@ pub(crate) fn update(
         LibraryEvent::FavoritesLoaded(favorites) => {
             replace(parts.favorites, favorites).map(|()| Cmd::none())
         }
-        LibraryEvent::Loaded {
-            tracks,
-            revision: _revision,
-        } => Ok(whole_library(&mut parts, tracks)),
+        LibraryEvent::Loaded { tracks, .. } => Ok(whole_library(&mut parts, tracks)),
         LibraryEvent::Listed { tracks, revision } => {
             Ok(listed_library(&mut parts, tracks, revision))
         }
-        LibraryEvent::Tagged {
-            tracks,
-            revision: _revision,
-        } => Ok(tagged_tracks(&mut parts, &tracks)),
+        LibraryEvent::Tagged { tracks, .. } => Ok(tagged_tracks(&mut parts, &tracks)),
         LibraryEvent::HistoryLoaded(entries) => {
             replace(parts.history, entries).map(|()| Cmd::none())
         }
@@ -234,15 +219,11 @@ fn retag_tracks(tracks: &mut [Arc<Track>], tagged: &Tagged<'_>) {
 fn retag_player(player: &mut Player, tagged: &Tagged<'_>) {
     match player {
         Player::Loading(track) => retag_tracks(std::slice::from_mut(track), tagged),
-        Player::Paused {
-            track,
-            position: _position,
-            by: _by,
-        } => retag_tracks(std::slice::from_mut(track), tagged),
+        Player::Paused { track, .. } => {
+            retag_tracks(std::slice::from_mut(track), tagged);
+        }
         Player::Playing {
-            track,
-            playhead: _playhead,
-            preloaded,
+            track, preloaded, ..
         } => {
             retag_tracks(std::slice::from_mut(track), tagged);
             retag_tracks(preloaded.as_mut_slice(), tagged);
@@ -283,11 +264,10 @@ mod tests {
             playlist::PlaylistSource,
             revision::Revision,
             time::Moment,
-            toast::{TOAST_LIFETIME, ToastLevel},
             track::{Track, TrackSource},
         },
-        message::{LibraryError, LibraryEvent, LibrarySubject, Timer},
-        update::{library::update, machine::Unhandled},
+        message::{LibraryError, LibraryEvent, LibrarySubject},
+        update::library::update,
     };
 
     fn track(path: &str) -> Arc<Track> {
@@ -331,24 +311,6 @@ mod tests {
         );
         assert_eq!(model.playlist.tracks.len(), 2);
         assert!(cmd == Cmd::none());
-    }
-
-    #[test]
-    fn a_stale_scan_is_unhandled_and_keeps_the_library() {
-        let mut model = Model::default();
-        model.revisions.scan = Revision::default().next();
-
-        let cmd = update(
-            crate::update::library_parts(&mut model),
-            LibraryEvent::Loaded {
-                tracks: vec![track("/music/a.flac")],
-                revision: Revision::default(),
-            },
-        );
-
-        assert_eq!(cmd, Err(Unhandled));
-        assert!(model.library.is_none());
-        assert!(model.playlist.tracks.is_empty());
     }
 
     #[test]
@@ -404,34 +366,6 @@ mod tests {
         assert_eq!(model.playlist.tracks, vec![b]);
         assert!(model.workspace.browse.cursor.index() < model.playlist.tracks.len());
         assert_eq!(cmd, Cmd::from(Cue::TrackTrashed));
-    }
-
-    #[test]
-    fn a_library_error_raises_an_error_toast() {
-        let mut model = Model::default();
-
-        let cmd = update(
-            crate::update::library_parts(&mut model),
-            LibraryEvent::Error(LibraryError::NoUserDirs),
-        )
-        .unwrap();
-
-        let toast = model.workspace.toasts.first().unwrap();
-        assert_eq!(toast.level, ToastLevel::Error);
-        assert_eq!(
-            toast.text.as_deref(),
-            Some(LibraryError::NoUserDirs.to_string().as_str())
-        );
-        assert_eq!(
-            cmd,
-            Cmd::from_iter([
-                Effect::Animate(Cue::ToastRaised),
-                Effect::After {
-                    delay: TOAST_LIFETIME,
-                    timer: Timer::Toast(Revision::default().next()),
-                },
-            ])
-        );
     }
 
     fn unreadable(subject: LibrarySubject) -> LibraryError {

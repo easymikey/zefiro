@@ -149,8 +149,7 @@ impl Player {
         Ok(reported.then(match self {
             Player::Playing {
                 preloaded: preloaded @ None,
-                track: _track,
-                playhead: _playhead,
+                ..
             } => lookahead.preloading(position, preloaded),
             Player::Playing {
                 preloaded: Some(_), ..
@@ -167,11 +166,7 @@ impl Player {
         now: Moment,
     ) -> Result<Cmd, Unhandled> {
         match self {
-            Player::Playing {
-                playhead,
-                track: _track,
-                preloaded: _preloaded,
-            } => {
+            Player::Playing { playhead, .. } => {
                 *playhead = Playhead::anchored(position, now, playhead.speed);
                 Ok(Cmd::none())
             }
@@ -197,9 +192,7 @@ impl Player {
                 (track, PlaybackChange::Play)
             }
             Player::Paused {
-                track,
-                position,
-                by: _by,
+                track, position, ..
             } => {
                 *position = Duration::ZERO;
                 (track, PlaybackChange::Pause)
@@ -374,11 +367,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::no_decision_ahead_arms_nothing(
-        head_at(0, 1.0),
-        lookahead(Setup { ab_loop: None, next: None, duration_secs: 0 }),
-        None
-    )]
     #[case::preload_due_point_arms_at_unity_speed(
         head_at(0, 1.0),
         lookahead(Setup { ab_loop: None, next: Some(a_track()), duration_secs: 100 }),

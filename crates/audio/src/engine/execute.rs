@@ -168,9 +168,14 @@ mod tests {
         FeedChannel,
         deck::{
             Deck,
-            envelope::EnvelopeControl,
-            feed::serve::serve,
-            mixer::{Mixer, RETIRED_SLOTS},
+            envelope::{EnvelopeControl, Ramp},
+            feed::{Feed, FeedCmd},
+            mixer::{
+                Mixer,
+                MixerOrder,
+                RETIRED_SLOTS,
+                tests::{MONO_8K, served, voice},
+            },
             output::{Fader, Output, tests::mixed_output},
             source::{
                 DecodedTrack,
@@ -197,6 +202,7 @@ mod tests {
         deck: Deck,
         mixer: Mixer,
         heard: Vec<f32>,
+        feed: Feed,
     }
 
     fn listen(mixer: &mut Mixer, heard: &mut Vec<f32>, frames: usize) {
@@ -208,8 +214,7 @@ mod tests {
     impl Listening {
         fn playing_ramp(frames: usize) -> Self {
             let file = ramp_file(1, frames);
-            let (feed_sender, feed_receiver) = crossbeam_channel::bounded(4);
-            thread::spawn(move || serve(&feed_receiver));
+            let (feed_sender, feed_receiver) = crossbeam_channel::unbounded();
             let (spectrum_buffers, _spectrum_tap) = tap::spectrum_channel();
             let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
             let (output, mixer) = mixed_output(RAMP_RATE, &spectrum_buffers);
@@ -219,16 +224,16 @@ mod tests {
                 revision: Revision::default().next(),
                 decoder: decode(file.path()).unwrap(),
             });
+            assert!(execute(EngineEffect::Start(Gain::UNITY), &mut deck).is_none());
+            let Ok(FeedCmd::Serve(feed)) = feed_receiver.try_recv() else {
+                panic!("start sends its feed to the feeder");
+            };
             let mut listening = Self {
                 deck,
                 mixer,
                 heard: Vec::new(),
+                feed: *feed,
             };
-            assert!(
-                listening
-                    .execute(EngineEffect::Start(Gain::UNITY))
-                    .is_none()
-            );
             assert!(listening.execute(EngineEffect::Play).is_none());
             listening.pull(4_000);
             listening
@@ -239,6 +244,7 @@ mod tests {
         }
 
         fn pull(&mut self, frames: usize) {
+            self.feed.serve();
             listen(&mut self.mixer, &mut self.heard, frames);
         }
 
@@ -246,11 +252,17 @@ mod tests {
             &mut self,
             effect: EngineEffect,
         ) -> Option<AudioMessage> {
-            let Self { deck, mixer, heard } = self;
+            let Self {
+                deck,
+                mixer,
+                heard,
+                feed,
+            } = self;
             let executed = AtomicBool::new(false);
             thread::scope(|scope| {
                 scope.spawn(|| {
                     while !executed.load(Ordering::Acquire) {
+                        feed.serve();
                         listen(mixer, heard, 16);
                     }
                 });
@@ -286,13 +298,9 @@ mod tests {
         listening.pull(4_000);
         let start = listening.heard.len();
 
-        assert!(
-            listening
-                .executed_while_pulled(EngineEffect::Seek(target))
-                .is_none()
-        );
+        assert!(listening.execute(EngineEffect::Seek(target)).is_none());
         assert!(listening.execute(EngineEffect::Play).is_none());
-        listening.pull(1);
+        listen(&mut listening.mixer, &mut listening.heard, 1);
         let Some(AudioMessage::Engine(EngineMessage::Reported(Some(reported)))) =
             listening.execute(EngineEffect::Report)
         else {
@@ -303,19 +311,11 @@ mod tests {
         listening.heard_since(start + usize::from(DECLICK_FRAMES), 200)
     }
 
-    #[test]
-    fn a_seek_while_paused_plays_from_the_target_after_play() {
-        let target = Duration::from_secs(5);
-        assert_eq!(
-            paused_and_sought(80_000, target),
-            ramp_from(target, usize::from(DECLICK_FRAMES), 200)
-        );
-    }
-
     #[rstest]
-    #[case::decoded_to_the_end(16_000, Duration::from_millis(1_500))]
-    #[case::still_decoding(80_000, Duration::from_millis(8_500))]
-    fn a_seek_in_the_last_two_seconds_plays_from_the_target_after_play(
+    #[case::mid_track(80_000, Duration::from_secs(5))]
+    #[case::last_two_seconds_decoded_to_the_end(16_000, Duration::from_millis(1_500))]
+    #[case::last_two_seconds_still_decoding(80_000, Duration::from_millis(8_500))]
+    fn a_seek_while_paused_plays_from_the_target_after_play(
         #[case] frames: usize,
         #[case] target: Duration,
     ) {
@@ -337,7 +337,6 @@ mod tests {
                 .is_none()
         );
         listening.pull(16);
-        thread::sleep(Duration::from_millis(100));
 
         let heard = listening.heard_since(last_before, 10_000);
         let after_the_jump: Vec<f32> = heard
@@ -385,27 +384,14 @@ mod tests {
         assert_eq!(pulled(&mut source, &mut envelope, 16).len(), 8);
         deck.output.as_mut().unwrap().incoming_control = Some(control);
 
-        let answer = execute(EngineEffect::Advance(Gain::UNITY), &mut deck);
+        let answer =
+            execute(EngineEffect::Advance(Gain::from_amplitude(0.5)), &mut deck);
 
         assert!(matches!(
             answer,
             Some(AudioMessage::SignalsTaken { role: SinkRole::Current, signals })
                 if signals.contains(Signals::FINISHED)
         ));
-    }
-
-    #[test]
-    fn advance_sets_the_gain_on_the_new_current_control() {
-        let mut deck = deck_with_detached_output();
-        let (_file, _source, _envelope, control, _feed) =
-            played(1, Revision::default().next());
-        deck.output.as_mut().unwrap().incoming_control = Some(control);
-
-        assert!(
-            execute(EngineEffect::Advance(Gain::from_amplitude(0.5)), &mut deck)
-                .is_some()
-        );
-
         assert_eq!(
             deck.output
                 .as_ref()
@@ -436,7 +422,6 @@ mod tests {
                 .is_none()
         );
         listening.pull(8_000);
-        thread::sleep(Duration::from_millis(100));
         listening.pull(8_000);
 
         assert!(listening.heard.len() <= start + usize::from(DECLICK_FRAMES));
@@ -504,6 +489,75 @@ mod tests {
         }
     }
 
+    fn crossfading(test: impl FnOnce(&mut Deck, &mut Mixer)) {
+        let file = ramp_file(1, 8_000);
+        served(|feed_sender| {
+            let (spectrum_buffers, _spectrum_tap) = tap::spectrum_channel();
+            let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
+            let (mut output, mut mixer) = mixed_output(MONO_8K.rate, &spectrum_buffers);
+            let (incoming, control) = voice(&file, MONO_8K, feed_sender);
+            output.mixer_control.order(MixerOrder::Attach {
+                role: SinkRole::Incoming,
+                voice: incoming,
+            });
+            output.incoming_fader = Some(Fader { control });
+            let mut deck =
+                Deck::new(spectrum_buffers, callback_sender, feed_sender.clone());
+            deck.output = Some(output);
+            test(&mut deck, &mut mixer);
+        });
+    }
+
+    fn heard(mixer: &mut Mixer) -> Vec<f32> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut heard = Vec::new();
+        while heard.is_empty() && Instant::now() < deadline {
+            listen(mixer, &mut heard, 1_024);
+        }
+        heard
+    }
+
+    fn crossfade() -> EngineEffect {
+        EngineEffect::Crossfade {
+            duration: Duration::from_millis(10),
+            incoming: Gain::UNITY,
+        }
+    }
+
+    #[test]
+    fn a_crossfade_plays_the_paused_incoming_voice() {
+        crossfading(|deck, mixer| {
+            let mut silent = Vec::new();
+            listen(mixer, &mut silent, 1_024);
+            assert!(silent.is_empty());
+
+            assert!(execute(crossfade(), deck).is_none());
+
+            assert!(!heard(mixer).is_empty());
+        });
+    }
+
+    #[test]
+    fn a_cancelled_crossfade_pauses_the_incoming_voice() {
+        crossfading(|deck, mixer| {
+            assert!(execute(crossfade(), deck).is_none());
+            assert!(!heard(mixer).is_empty());
+
+            assert!(execute(EngineEffect::CancelCrossfade, deck).is_none());
+            mixer.mix(&mut [0.0_f32; 1_024]);
+            deck.output
+                .as_mut()
+                .and_then(|output| output.incoming_fader.as_mut())
+                .expect("a cancelled crossfade keeps the incoming fader")
+                .control
+                .ramp(Ramp::hold(Gain::UNITY));
+
+            let mut paused = Vec::new();
+            listen(mixer, &mut paused, 1_024);
+            assert!(paused.is_empty());
+        });
+    }
+
     #[test]
     fn a_dropped_gapless_preload_leaves_no_incoming_control() {
         let mut deck = deck_with_detached_output();
@@ -567,7 +621,7 @@ mod tests {
         assert!(faded[80..].iter().all(|sample| sample.abs() < 1e-6));
         assert_eq!(raised.len(), 800);
         assert!(raised[..40].iter().zip(&plain).all(|(sample, unity)| {
-            sample.abs() < unity.abs() * gain.amplitude() + 1e-6
+            sample.abs() + 1e-6 < unity.abs() * gain.amplitude()
         }));
         assert!(
             raised[80..]

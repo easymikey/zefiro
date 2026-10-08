@@ -1,8 +1,0 @@
----
-source: crates/library/tests/unit/m3u.rs
-expression: "m3u::parse(text)"
----
-[
-    "/no/header.flac",
-    "/plain/path.mp3",
-]

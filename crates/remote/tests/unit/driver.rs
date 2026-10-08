@@ -30,7 +30,7 @@ use kernel::{
             UserName,
         },
     },
-    message::RemoteEvent,
+    message::{CatalogPage, RemoteEvent, ServerFavorite},
     update::machine::{LoopEffect, Machine, Unhandled},
 };
 use remote::{
@@ -38,6 +38,7 @@ use remote::{
     job::RemoteJob,
     message::{RemoteMessage, RemoteTimer},
 };
+use rstest::rstest;
 
 pub(crate) type Answer = (
     Vec<LoopEffect<RemoteEffect, RemoteJob, RemoteMessage>>,
@@ -231,54 +232,46 @@ fn an_empty_order_is_unhandled() {
     ));
 }
 
-#[test]
-fn a_refused_ping_reports_the_error() {
-    let Some(a) = stored("a") else {
-        panic!("valid connection");
-    };
-    let remote_error = RemoteError::NoPassword {
+#[rstest]
+#[case::refused_ping(
+    Some(RemoteMessage::Connected {
         server_name: ServerName::new("a"),
-    };
-    let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
-    assert!(driver.transition(asked(vec![a])).is_ok());
-    assert_eq!(
-        jobs(answered(
-            &mut driver,
-            RemoteMessage::Connected {
-                server_name: ServerName::new("a"),
-                result: Err(remote_error.clone()),
-                stored: Ok(()),
-            }
-        )),
-        Some((vec![], vec![RemoteEvent::Error(remote_error)]))
-    );
-}
-
-#[test]
-fn a_failed_store_answers_online_and_reports_the_keychain_error() {
+        result: Err(RemoteError::NoPassword { server_name: ServerName::new("a") }),
+        stored: Ok(()),
+    }),
+    Some(vec![RemoteEvent::Error(RemoteError::NoPassword {
+        server_name: ServerName::new("a"),
+    })])
+)]
+#[case::failed_store(
+    connected(
+        "a",
+        Err(RemoteError::Keychain {
+            server_name: ServerName::new("a"),
+            source: IoError::from(ErrorKind::PermissionDenied),
+        })
+    ),
+    online("a").map(|event| vec![
+        event,
+        RemoteEvent::Error(RemoteError::Keychain {
+            server_name: ServerName::new("a"),
+            source: IoError::from(ErrorKind::PermissionDenied),
+        })
+    ])
+)]
+fn a_connect_answer_with_an_error_reports_it(
+    #[case] remote_message: Option<RemoteMessage>,
+    #[case] events: Option<Vec<RemoteEvent>>,
+) {
     let Some(a) = typed("a", "hunter2") else {
         panic!("valid connection");
     };
-    let remote_error = RemoteError::Keychain {
-        server_name: ServerName::new("a"),
-        source: IoError::from(ErrorKind::PermissionDenied),
-    };
     let mut driver =
         RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
     assert!(driver.transition(asked(vec![a])).is_ok());
     assert_eq!(
-        jobs(
-            connected("a", Err(remote_error.clone()))
-                .and_then(|message| answered(&mut driver, message))
-        ),
-        Some((
-            vec![],
-            online("a")
-                .into_iter()
-                .chain([RemoteEvent::Error(remote_error)])
-                .collect()
-        ))
+        remote_message.and_then(|message| jobs(answered(&mut driver, message))),
+        events.map(|events| (vec![], events))
     );
 }
 
@@ -370,14 +363,14 @@ fn two_lists_give_one_in_flight_and_the_newest_waiting_and_the_answer_starts_the
         )),
         Some((
             list_job("a", listing, third).into_iter().collect(),
-            vec![RemoteEvent::Listed {
+            vec![RemoteEvent::Listed(CatalogPage {
                 server_name: ServerName::new("a"),
                 listing: Listing::Albums(AlbumOrder::Newest),
                 page: Page::default(),
                 catalog_rows: vec![],
                 favorites: Favorites::default(),
                 revision: first,
-            }]
+            })]
         ))
     );
 }
@@ -603,21 +596,6 @@ fn a_found_answer_gives_its_rows_and_a_failed_search_answers_found_with_its_revi
     );
 }
 
-#[test]
-fn a_search_with_no_connect_before_it_runs_from_the_orders_session() {
-    let revision = Revision::default().next();
-    let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
-    assert!(
-        search_cmd("mil", revision)
-            .is_some_and(|message| driver.transition(message).is_ok())
-    );
-    assert_eq!(
-        jobs(answered(&mut driver, elapsed(revision))),
-        Some((search_job("mil", revision).into_iter().collect(), vec![]))
-    );
-}
-
 pub(crate) fn star_cmd(id: &str, favorite: Favorite) -> Option<RemoteCmd> {
     Some(RemoteCmd::Star {
         server_name: ServerName::new("a"),
@@ -650,11 +628,11 @@ pub(crate) fn starred(
 }
 
 pub(crate) fn holds(id: &str, favorite: Favorite) -> RemoteEvent {
-    RemoteEvent::Starred {
+    RemoteEvent::Starred(ServerFavorite {
         server_name: ServerName::new("a"),
         server_track_id: ServerTrackId::new(id),
         favorite,
-    }
+    })
 }
 
 #[test]

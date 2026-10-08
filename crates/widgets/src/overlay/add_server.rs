@@ -38,23 +38,22 @@ pub(crate) fn prompt<'a>(
             .min_width(MIN_WIDTH)
     };
     match server_prompt {
-        ServerPrompt::Link {
-            origin_server_name: _origin_server_name,
-            text_entry,
-        } => widget(Cow::Borrowed(text_entry.input.as_str()))
-            .error(text_entry.error.as_ref()),
+        ServerPrompt::Link { text_entry, .. } => {
+            widget(Cow::Borrowed(text_entry.input.as_str()))
+                .error(text_entry.error.as_ref())
+        }
         ServerPrompt::User {
-            origin_server_name: _origin_server_name,
             endpoint,
             text_entry,
+            ..
         } => widget(Cow::Borrowed(text_entry.input.as_str()))
             .answers(vec![answer("Link  ", endpoint.as_str(), active_theme)])
             .error(text_entry.error.as_ref()),
         ServerPrompt::Password {
-            origin_server_name: _origin_server_name,
             endpoint,
             user_name,
             text_entry,
+            ..
         } => widget(Cow::Owned(
             SECRET_DOT.repeat(text_entry.input.chars().count()),
         ))
@@ -100,7 +99,7 @@ mod tests {
         rendered(100, 30, |frame| {
             let area = frame.area();
             widget.paint(
-                widget.areas(area),
+                widget.areas(area, &[]),
                 Canvas {
                     area,
                     buffer: frame.buffer_mut(),

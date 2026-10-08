@@ -151,10 +151,10 @@ mod tests {
                 tests::{MONO_8K, attach, channel, mixed, served, voice},
             },
             source::tests::{decoded, ramp_file},
-            varispeed::OutputFormat,
+            varispeed::{OutputFormat, Varispeed},
             voice::DECLICK_FRAMES,
         },
-        engine::message::SinkRole,
+        engine::message::{Signals, SinkRole},
     };
 
     const STEREO_8K: OutputFormat = OutputFormat {
@@ -230,11 +230,12 @@ mod tests {
             attach(&mut control, SinkRole::Current, current_voice);
             control.order(MixerOrder::Transport(Playback::Playing));
 
-            let out = mixed(&mut mixer, 4_000);
+            let out = mixed(&mut mixer, 4_400);
 
             let frames = out.as_chunks::<2>().0;
             let declick = usize::from(DECLICK_FRAMES);
-            assert_eq!(frames.get(declick..), expected.get(declick..));
+            assert_eq!(frames.get(declick..2_000), expected.get(declick..));
+            assert!(frames.iter().skip(2_000).all(|frame| *frame == [0.0; 2]));
         });
     }
 
@@ -294,6 +295,74 @@ mod tests {
 
             mixed(&mut mixer, 1_024);
             assert_eq!(incoming_control.position(), Duration::from_millis(160));
+        });
+    }
+
+    #[test]
+    fn a_resampled_stereo_voice_mixed_in_uneven_buffers_renders_its_file_to_the_end() {
+        const STEREO_12K: OutputFormat = OutputFormat {
+            channels: 2,
+            rate: 12_000,
+        };
+        let file = ramp_file(2, 1_000);
+        let expected = decoded(&file);
+        let mut fresh = Varispeed::new(8_000, STEREO_12K, Speed::default()).unwrap();
+        let mut target = vec![0.0_f32; 4_000];
+        let (mut read, mut written) = (0, 0);
+        while read * 2 < expected.len() {
+            let (taken, given) = fresh
+                .fill(&expected[read * 2..], &mut target[written * 2..])
+                .unwrap();
+            read += taken;
+            written += given;
+        }
+        written += fresh.flush(&mut target[written * 2..]).unwrap();
+        target.truncate(written * 2);
+        served(|feed_sender| {
+            let MixerChannel {
+                mut mixer,
+                mut control,
+                retired_voices: _retired_voices,
+            } = channel(STEREO_12K);
+            let (current_voice, _current_control) =
+                voice(&file, STEREO_12K, feed_sender);
+            attach(&mut control, SinkRole::Current, current_voice);
+            control.order(MixerOrder::Transport(Playback::Playing));
+
+            let out: Vec<f32> = (0..20).flat_map(|_| mixed(&mut mixer, 200)).collect();
+
+            let declick = usize::from(DECLICK_FRAMES) * 2;
+            let gap = out
+                .iter()
+                .zip(&target)
+                .skip(declick)
+                .map(|(sample, wanted)| (sample - wanted).abs())
+                .fold(0.0_f32, f32::max);
+            assert!(gap < 1e-6, "{gap} off over {written} frames");
+            assert!(out.iter().skip(target.len()).all(|&sample| sample == 0.0));
+        });
+    }
+
+    #[test]
+    fn a_voice_raises_finished_only_once_its_source_runs_short() {
+        let file = ramp_file(1, 2_000);
+        served(|feed_sender| {
+            let MixerChannel {
+                mut mixer,
+                mut control,
+                retired_voices: _retired_voices,
+            } = channel(MONO_8K);
+            let (current_voice, current_control) = voice(&file, MONO_8K, feed_sender);
+            attach(&mut control, SinkRole::Current, current_voice);
+            control.order(MixerOrder::Transport(Playback::Playing));
+
+            mixed(&mut mixer, 1_024);
+            let playing = current_control.take_signals();
+            mixed(&mut mixer, 2_048);
+            let ended = current_control.take_signals();
+
+            assert!(!playing.contains(Signals::FINISHED), "{playing:?}");
+            assert!(ended.contains(Signals::FINISHED), "{ended:?}");
         });
     }
 }

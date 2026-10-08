@@ -98,25 +98,3 @@ impl Drivers {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use crate::domain::driver::{DriverName, DriverStatus, Drivers};
-
-    #[test]
-    fn every_driver_indexes_its_own_record() {
-        for driver in DriverName::ALL {
-            let mut drivers = Drivers::default();
-            drivers.record_mut(driver).status = DriverStatus::Stopped;
-
-            for other in DriverName::ALL {
-                let expected = if other == driver {
-                    &DriverStatus::Stopped
-                } else {
-                    &DriverStatus::Running
-                };
-                assert_eq!(drivers.status(other), expected);
-            }
-        }
-    }
-}

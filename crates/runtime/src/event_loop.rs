@@ -246,11 +246,12 @@ pub(crate) mod tests {
         },
         message::{ConfigEvent, DriverEvent, LibraryEvent, Message, Timer},
     };
+    use rstest::rstest;
 
     use crate::{
         driver_thread::{Congestion, send},
         error::Error,
-        event_loop::EventLoop,
+        event_loop::{Arrival, EventLoop},
         latest::LatestSenders,
         port::Port,
         repaint::{FRAME_INTERVAL, Repaint, RepaintCause},
@@ -521,6 +522,54 @@ pub(crate) mod tests {
         fixture.runtime.drain();
     }
 
+    #[rstest]
+    #[case::a_doorbell_arrival_repaints_at_the_next_frame(
+        Arrival::Doorbell,
+        0,
+        Repaint::NextFrame
+    )]
+    #[case::a_ring_behind_a_refused_message_repaints_at_the_next_frame(
+        Arrival::Message(Message::Driver {
+            driver_name: DriverName::Audio,
+            event: DriverEvent::Stopped,
+        }),
+        1,
+        Repaint::NextFrame
+    )]
+    #[case::a_refused_message_with_no_ring_repaints_nothing(
+        Arrival::Message(Message::Driver {
+            driver_name: DriverName::Audio,
+            event: DriverEvent::Stopped,
+        }),
+        0,
+        Repaint::Settled
+    )]
+    fn gather_repaints_once_for_a_rung_doorbell(
+        #[case] first: Arrival<Key>,
+        #[case] rings: usize,
+        #[case] repaint: Repaint,
+    ) {
+        let mut fixture = fixture();
+        fixture
+            .runtime
+            .model
+            .drivers
+            .record_mut(DriverName::Audio)
+            .status = DriverStatus::Stopped;
+        for _ in 0..rings {
+            fixture._latest_senders.theme_sender.publish(stub_theme());
+        }
+        let (keys, input) = unbounded();
+        let mut shell = ScriptedShell::new(keys, usize::MAX);
+        let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
+        event_loop.repaint = Repaint::Settled;
+
+        event_loop.gather(Some(first));
+
+        assert_eq!(event_loop.repaint, repaint);
+        fixture.runtime.drain();
+    }
+
     #[test]
     fn a_side_the_frame_keeps_reporting_decodes_the_cover_once() {
         let mut fixture = fixture();
@@ -677,6 +726,9 @@ pub(crate) mod tests {
         fill_the_inbox(&inbox, &congestion);
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
 
+        fill_the_inbox(&inbox, &congestion);
+        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
+
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
 
         fill_the_inbox(&inbox, &congestion);
@@ -686,36 +738,6 @@ pub(crate) mod tests {
         fixture.runtime.flow = ControlFlow::Break(());
         assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
         assert!(congestion.take());
-        fixture.runtime.drain();
-    }
-
-    #[test]
-    fn two_flagged_batches_in_one_congestion_episode_report_full_once() {
-        let mut fixture = fixture();
-        let (inbox, congestion) = congested_library_port(&mut fixture.runtime);
-
-        fill_the_inbox(&inbox, &congestion);
-        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
-
-        fill_the_inbox(&inbox, &congestion);
-        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
-        fixture.runtime.drain();
-    }
-
-    #[test]
-    fn a_new_congestion_episode_after_the_inbox_drains_reports_full_again() {
-        let mut fixture = fixture();
-        let (inbox, congestion) = congested_library_port(&mut fixture.runtime);
-
-        fill_the_inbox(&inbox, &congestion);
-        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
-        fill_the_inbox(&inbox, &congestion);
-        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
-
-        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 0);
-
-        fill_the_inbox(&inbox, &congestion);
-        assert_eq!(toasts_in_one_iteration(&mut fixture.runtime), 1);
         fixture.runtime.drain();
     }
 

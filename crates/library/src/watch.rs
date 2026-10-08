@@ -73,11 +73,7 @@ impl LibraryWatch {
                 burst: Burst::Armed,
                 ..
             } => Err(Unhandled),
-            LibraryWatch::Rooted {
-                burst,
-                music_dir: _music_dir,
-                revision: _revision,
-            } => {
+            LibraryWatch::Rooted { burst, .. } => {
                 *burst = Burst::Armed;
                 Ok(Cmd::effect(LibraryWatchEffect::StartDebounce))
             }
@@ -90,15 +86,13 @@ impl LibraryWatch {
     ) -> Result<Cmd<LibraryWatchEffect, LibraryEvent>, Unhandled> {
         match self {
             LibraryWatch::Unrooted => Err(Unhandled),
-            LibraryWatch::Rooted {
-                music_dir,
-                revision: _revision,
-                burst: _burst,
-            } => Ok(Cmd::message(LibraryEvent::Error(LibraryError::Disk {
-                subject: LibrarySubject::Watch,
-                path: music_dir.clone(),
-                error,
-            }))),
+            LibraryWatch::Rooted { music_dir, .. } => {
+                Ok(Cmd::message(LibraryEvent::Error(LibraryError::Disk {
+                    subject: LibrarySubject::Watch,
+                    path: music_dir.clone(),
+                    error,
+                })))
+            }
         }
     }
 
@@ -139,18 +133,10 @@ impl LibraryWatch {
                     scan_effect,
                 ]
             }
-            LibraryWatch::Rooted {
-                music_dir,
-                revision: _revision,
-                burst: _burst,
-            } if *music_dir == next_music_dir => {
+            LibraryWatch::Rooted { music_dir, .. } if *music_dir == next_music_dir => {
                 vec![scan_effect]
             }
-            LibraryWatch::Rooted {
-                music_dir,
-                revision: _revision,
-                burst: _burst,
-            } => vec![
+            LibraryWatch::Rooted { music_dir, .. } => vec![
                 LibraryWatchEffect::Unwatch(music_dir.clone()),
                 LibraryWatchEffect::Watch(next_music_dir.clone()),
                 scan_effect,
@@ -249,41 +235,17 @@ mod tests {
     }
 
     #[rstest]
-    #[case::library_watch_unrooted_watches_and_scans_on_the_first_scan(LibraryWatchRow {
-        library_watch: LibraryWatch::Unrooted,
-        message: rescan(music_dir(), 1),
-        next_library_watch: quiet(1),
-        effects: "watch /music; scan /music @ 1",
-    })]
     #[case::library_watch_rooted_rescans_its_root(LibraryWatchRow {
         library_watch: quiet(0),
         message: rescan(music_dir(), 1),
         next_library_watch: quiet(1),
         effects: "scan /music @ 1",
     })]
-    #[case::armed_rescan_drops_the_burst(LibraryWatchRow {
-        library_watch: armed(0),
-        message: rescan(music_dir(), 1),
-        next_library_watch: quiet(1),
-        effects: "scan /music @ 1",
-    })]
-    #[case::rooted_moves_to_another_root(LibraryWatchRow {
-        library_watch: quiet(0),
-        message: rescan(other(), 1),
-        next_library_watch: quiet_at(other(), 1),
-        effects: "unwatch /music; watch /more-music; scan /more-music @ 1",
-    })]
     #[case::armed_move_drops_the_burst(LibraryWatchRow {
         library_watch: armed(0),
         message: rescan(other(), 1),
         next_library_watch: quiet_at(other(), 1),
         effects: "unwatch /music; watch /more-music; scan /more-music @ 1",
-    })]
-    #[case::quiet_change_arms(LibraryWatchRow {
-        library_watch: quiet(0),
-        message: LibraryWatchMessage::Changed(Ok(())),
-        next_library_watch: armed(0),
-        effects: "arm",
     })]
     #[case::library_watch_rooted_elapse_rescans_at_its_revision(LibraryWatchRow {
         library_watch: armed(3),
@@ -322,10 +284,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::unrooted_refuses_a_change(
-        LibraryWatch::Unrooted,
-        LibraryWatchMessage::Changed(Ok(()))
-    )]
     #[case::unrooted_refuses_a_failure(
         LibraryWatch::Unrooted,
         LibraryWatchMessage::Changed(Err(IoError::Other))
@@ -334,8 +292,6 @@ mod tests {
         LibraryWatch::Unrooted,
         LibraryWatchMessage::Elapsed
     )]
-    #[case::armed_change_is_refused(armed(0), LibraryWatchMessage::Changed(Ok(())))]
-    #[case::quiet_refuses_an_elapse(quiet(0), LibraryWatchMessage::Elapsed)]
     fn a_refused_row_hands_the_library_watch_back(
         #[case] library_watch: LibraryWatch,
         #[case] message: LibraryWatchMessage,

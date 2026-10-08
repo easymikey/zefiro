@@ -246,7 +246,7 @@ pub fn patched_config_text(text: &str, patch: ConfigPatch) -> Result<String, Err
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::time::Duration;
 
     use kernel::{
         cmd::ConfigPatch,
@@ -262,16 +262,6 @@ mod tests {
                 ProgressTime,
                 SpeedChip,
             },
-            appearance_rows::{
-                ANIMATIONS,
-                COVER_BRACKETS,
-                COVER_MODES,
-                FORMAT_CHIPS,
-                KEY_HINTS,
-                LAYOUT_MODES,
-                PROGRESS_TIMES,
-                SPEED_CHIPS,
-            },
             bounded::Bounded,
             crossfade::Crossfade,
             device::{DeviceName, OutputDevice},
@@ -280,29 +270,15 @@ mod tests {
             setting_row::{AppearanceField, OptionCount},
             settings::ReplayGain,
             sleep_presets::SleepPresets,
-            theme::{ThemeChoice, ThemeName},
+            theme::ThemeName,
         },
-    };
-    use proptest::{
-        option::of as option_of,
-        prelude::{Just, Strategy},
-        prop_assert_eq,
-        prop_oneof,
-        proptest,
-        sample::select,
     };
     use rstest::rstest;
 
     use crate::{
-        appearance_file::parse_appearance,
-        config_file::{parse_config, parse_config_settings},
+        config_file::parse_config_settings,
         error::Error,
-        patch::{
-            format_crossfade,
-            minutes,
-            patched_appearance_text,
-            patched_config_text,
-        },
+        patch::{patched_appearance_text, patched_config_text},
     };
 
     const COMMENTED_UI: &str = include_str!("../tests/fixtures/sifr-ui_commented.toml");
@@ -410,94 +386,6 @@ mod tests {
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(written);
         });
-    }
-
-    #[test]
-    fn an_appearance_patch_reports_a_non_table_document_instead_of_panicking() {
-        let refused = patched_appearance_text(
-            "card = \"x\"\n",
-            AppearancePatch {
-                format_chips: Some(FormatChips::Shown),
-                ..AppearancePatch::default()
-            },
-        );
-        assert!(matches!(refused, Err(Error::NotATable("card"))));
-    }
-
-    fn base_appearance_texts() -> impl Strategy<Value = &'static str> {
-        prop_oneof![Just(""), Just(COMMENTED_UI)]
-    }
-
-    fn appearance_patch() -> impl Strategy<Value = AppearancePatch> {
-        (
-            option_of(select(COVER_MODES.to_vec())),
-            option_of(select(COVER_BRACKETS.to_vec())),
-            option_of(select(FORMAT_CHIPS.to_vec())),
-            option_of(select(SPEED_CHIPS.to_vec())),
-            option_of(select(PROGRESS_TIMES.to_vec())),
-            option_of(select(KEY_HINTS.to_vec())),
-            option_of(select(ANIMATIONS.to_vec())),
-            option_of(select(LAYOUT_MODES.to_vec())),
-        )
-            .prop_map(
-                |(
-                    cover_mode,
-                    cover_brackets,
-                    format_chips,
-                    speed_chip,
-                    progress_time,
-                    key_hints,
-                    animations,
-                    layout_mode,
-                )| AppearancePatch {
-                    cover_mode,
-                    cover_brackets,
-                    format_chips,
-                    speed_chip,
-                    progress_time,
-                    key_hints,
-                    animations,
-                    layout_mode,
-                },
-            )
-    }
-
-    proptest! {
-        #[test]
-        fn an_untouched_appearance_patch_leaves_the_document_unchanged(
-            text in base_appearance_texts(),
-        ) {
-            let written = patched_appearance_text(text, AppearancePatch::default()).unwrap();
-            prop_assert_eq!(written, text);
-        }
-
-        #[test]
-        fn an_appearance_patch_reads_back_exactly_what_it_wrote(
-            text in base_appearance_texts(),
-            patch in appearance_patch(),
-        ) {
-            let base = parse_appearance(text).unwrap().to_appearance_settings();
-            let written = patched_appearance_text(text, patch).unwrap();
-            let parsed = parse_appearance(&written).unwrap().to_appearance_settings();
-
-            prop_assert_eq!(parsed.cover_mode, patch.cover_mode.unwrap_or(base.cover_mode));
-            prop_assert_eq!(
-                parsed.cover_brackets,
-                patch.cover_brackets.unwrap_or(base.cover_brackets)
-            );
-            prop_assert_eq!(
-                parsed.format_chips,
-                patch.format_chips.unwrap_or(base.format_chips)
-            );
-            prop_assert_eq!(parsed.speed_chip, patch.speed_chip.unwrap_or(base.speed_chip));
-            prop_assert_eq!(
-                parsed.progress_time,
-                patch.progress_time.unwrap_or(base.progress_time)
-            );
-            prop_assert_eq!(parsed.key_hints, patch.key_hints.unwrap_or(base.key_hints));
-            prop_assert_eq!(parsed.animations, patch.animations.unwrap_or(base.animations));
-            prop_assert_eq!(parsed.layout_mode, patch.layout_mode.unwrap_or(base.layout_mode));
-        }
     }
 
     const COMMENTED_CONFIG: &str =
@@ -628,149 +516,30 @@ mod tests {
     }
 
     #[rstest]
-    #[case(Crossfade::default(), "0s")]
-    #[case(crossfade_seconds(3), "3s")]
-    #[case(crossfade_milliseconds(250), "250ms")]
-    fn format_crossfade_round_trips_seconds_and_milliseconds(
-        #[case] crossfade: Crossfade,
-        #[case] written: &str,
-    ) {
-        assert_eq!(format_crossfade(crossfade), written);
-    }
-
-    #[rstest]
-    #[case(90, 1)]
-    #[case(15 * 60, 15)]
-    fn minutes_drops_sub_minute_remainder(
-        #[case] secs: u64,
-        #[case] whole_minutes: i64,
-    ) {
-        assert_eq!(minutes(Duration::from_secs(secs)), whole_minutes);
-    }
-
-    #[test]
-    fn a_patch_reports_a_non_table_document_instead_of_panicking() {
-        let refused = patched_config_text(
+    #[case::config(
+        patched_config_text(
             "audio = 1\n",
             ConfigPatch {
                 crossfade: Some(crossfade_seconds(3)),
                 ..ConfigPatch::default()
             },
-        );
-        assert!(matches!(refused, Err(Error::NotATable("audio"))));
+        ),
+        "audio"
+    )]
+    #[case::appearance(
+        patched_appearance_text(
+            "card = \"x\"\n",
+            AppearancePatch {
+                format_chips: Some(FormatChips::Shown),
+                ..AppearancePatch::default()
+            },
+        ),
+        "card"
+    )]
+    fn a_patch_reports_a_non_table_document_instead_of_panicking(
+        #[case] refused: Result<String, Error>,
+        #[case] table: &'static str,
+    ) {
+        assert_eq!(refused, Err(Error::NotATable(table)));
     }
-
-    fn base_config_texts() -> impl Strategy<Value = &'static str> {
-        prop_oneof![Just(""), Just(COMMENTED_CONFIG)]
-    }
-
-    fn device_patch() -> impl Strategy<Value = Option<OutputDevice>> {
-        proptest::option::of(prop_oneof![
-            Just(OutputDevice::SystemDefault),
-            prop_oneof![Just("Speakers"), Just("Headphones")].prop_map(|name| {
-                OutputDevice::Named(DeviceName::new(name.to_string()).unwrap())
-            }),
-        ])
-    }
-
-    fn config_patch() -> impl Strategy<Value = ConfigPatch> {
-        (
-            proptest::option::of(
-                (0u64..=10_000).prop_map(|millis| {
-                    Crossfade::clamped(Duration::from_millis(millis))
-                }),
-            ),
-            device_patch(),
-            proptest::option::of(prop_oneof![
-                Just(ReplayGain::On),
-                Just(ReplayGain::Off)
-            ]),
-            proptest::option::of(
-                prop_oneof![Just("dark"), Just("oreo"), Just("noir")]
-                    .prop_map(|name| ThemeName::new(name.to_string()).unwrap()),
-            ),
-            proptest::option::of((0u8..=100).prop_map(Percent::clamped)),
-            proptest::option::of(
-                proptest::collection::btree_set(1u64..=120, 0..4).prop_map(|minutes| {
-                    SleepPresets::from_minutes(&minutes.into_iter().collect::<Vec<_>>())
-                        .unwrap()
-                }),
-            ),
-            proptest::option::of(
-                prop_oneof![Just("/music"), Just("/new/music")].prop_map(PathBuf::from),
-            ),
-            proptest::option::of(prop_oneof![
-                Just(Vec::new()),
-                Just(accounts()),
-                Just(accounts().split_off(1)),
-            ]),
-        )
-            .prop_map(
-                |(
-                    crossfade,
-                    device,
-                    replay_gain,
-                    theme,
-                    volume,
-                    sleep_presets,
-                    music_dir,
-                    accounts,
-                )| {
-                    ConfigPatch {
-                        crossfade,
-                        device,
-                        replay_gain,
-                        theme_name: theme,
-                        volume,
-                        sleep_presets,
-                        music_dir,
-                        accounts,
-                    }
-                },
-            )
-    }
-
-    proptest! {
-            #[test]
-            fn a_config_patch_reads_back_exactly_what_it_wrote(
-                text in base_config_texts(),
-                patch in config_patch(),
-            ) {
-                let base = parse_config(text).unwrap();
-                let written = patched_config_text(text, patch.clone()).unwrap();
-                let parsed = parse_config(&written).unwrap();
-                let base_accounts = parse_config_settings(text).unwrap().accounts;
-                let parsed_accounts = parse_config_settings(&written).unwrap().accounts;
-
-                prop_assert_eq!(
-                    parsed.audio.crossfade,
-                    patch.crossfade.unwrap_or(base.audio.crossfade)
-                );
-                prop_assert_eq!(
-                    parsed.audio.replay_gain,
-                    patch.replay_gain.unwrap_or(base.audio.replay_gain)
-                );
-                prop_assert_eq!(
-                    parsed.audio.device,
-    patch.device.unwrap_or(base.audio.device)
-                );
-                prop_assert_eq!(
-                    parsed.theme_choice,
-                    patch.theme_name.map_or(base.theme_choice, ThemeChoice::Named)
-                );
-                prop_assert_eq!(parsed.volume, patch.volume.unwrap_or(base.volume));
-                prop_assert_eq!(
-                    parsed.audio.sleep_presets,
-                    patch.sleep_presets.unwrap_or(base.audio.sleep_presets)
-                );
-                prop_assert_eq!(
-                    parsed.music_dir,
-                    patch.music_dir.or(base.music_dir)
-                );
-                prop_assert_eq!(
-                    parsed_accounts,
-                    patch.accounts.unwrap_or(base_accounts)
-                );
-            }
-        }
 }

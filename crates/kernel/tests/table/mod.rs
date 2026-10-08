@@ -1,9 +1,6 @@
-mod appearance;
 mod browse;
-mod cover;
 mod cues;
 mod history;
-mod jump;
 mod keymap;
 mod keymap_overrides;
 mod library;

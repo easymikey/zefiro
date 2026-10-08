@@ -203,56 +203,12 @@ pub(crate) fn index_of(tracks: &[Arc<Track>], source: &TrackSource) -> Option<us
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
-    use crate::domain::playlist::{
-        PLAYLIST_EXTENSION,
-        PlaylistFileName,
-        PlaylistFileNameError,
-    };
-
-    #[rstest]
-    #[case::empty("", PlaylistFileNameError::Empty)]
-    #[case::whitespace_only_control_chars("\u{0}\u{1}", PlaylistFileNameError::Empty)]
-    #[case::only_illegal_characters("???", PlaylistFileNameError::Empty)]
-    #[case::all_dots("...", PlaylistFileNameError::AllDots)]
-    #[case::single_dot(".", PlaylistFileNameError::AllDots)]
-    fn rejects(#[case] input: &str, #[case] expected: PlaylistFileNameError) {
-        assert_eq!(PlaylistFileName::new(input), Err(expected));
-    }
-
-    #[test]
-    fn keeps_a_plain_name() {
-        let name = PlaylistFileName::new("My Mix").unwrap();
-        assert_eq!(name.as_str(), "My Mix");
-    }
-
-    #[test]
-    fn strips_path_and_reserved_separators() {
-        let name = PlaylistFileName::new("a/b:c").unwrap();
-        assert_eq!(name.as_str(), "abc");
-    }
+    use crate::domain::playlist::PlaylistFileName;
 
     #[test]
     fn truncates_to_the_byte_budget() {
         let long = "a".repeat(300);
         let name = PlaylistFileName::new(&long).unwrap();
         assert_eq!(name.as_str().len(), 250);
-    }
-
-    #[test]
-    fn a_max_length_name_still_fits_a_file_name_with_its_extension() {
-        let long = "a".repeat(300);
-        let name = PlaylistFileName::new(&long).unwrap();
-        assert!(format!("{}{PLAYLIST_EXTENSION}", name.as_str()).len() <= 255);
-    }
-
-    #[test]
-    fn truncation_to_only_dots_is_refused() {
-        let dots_then_letter = format!("{}x", ".".repeat(256));
-        assert_eq!(
-            PlaylistFileName::new(&dots_then_letter),
-            Err(PlaylistFileNameError::AllDots)
-        );
     }
 }

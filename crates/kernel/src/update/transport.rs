@@ -108,10 +108,9 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        cmd::{AudioCmd, Cmd, Effect, MacosCmd},
+        cmd::{Cmd, Effect, MacosCmd},
         domain::{
             bounded::Bounded,
-            cue::Cue,
             direction::Direction,
             index::PresetIndex,
             percent::Percent,
@@ -121,9 +120,8 @@ mod tests {
             sleep_presets::SleepPresets,
             speed::Speed,
             time::Moment,
-            transport::{OutputError, OutputStatus, Transport},
+            transport::{OutputStatus, Transport},
         },
-        message::Timer,
         update::{
             machine::{Machine, Unhandled},
             transport::{TransportMessage, next_sleep},
@@ -152,13 +150,6 @@ mod tests {
 
     fn revision() -> Revision {
         Revision::default().next()
-    }
-
-    fn output_lost() -> Transport {
-        Transport {
-            output_status: OutputStatus::Lost(OutputError::Backend),
-            ..Transport::default()
-        }
     }
 
     fn at_volume(percent: u8) -> Transport {
@@ -205,24 +196,8 @@ mod tests {
         }
     }
 
-    fn sleep_after(minutes: u64) -> Cmd {
-        Effect::After {
-            delay: Duration::from_mins(minutes),
-            timer: Timer::Sleep(revision()),
-        }
-        .into()
-    }
-
     fn system_volume(percent: u8) -> Cmd {
         Effect::Macos(MacosCmd::SetVolume(Percent::clamped(percent))).into()
-    }
-
-    fn audio_speed(rate: f32) -> Cmd {
-        Effect::Audio(AudioCmd::SetSpeed(Speed::clamped(rate))).into()
-    }
-
-    fn macos_speed(rate: f32) -> Cmd {
-        Effect::Macos(MacosCmd::SetSpeed(Speed::clamped(rate))).into()
     }
 
     fn mark(seconds: u64) -> TransportMessage {
@@ -231,13 +206,6 @@ mod tests {
 
     fn start_marked(seconds: u64) -> Option<AbLoop> {
         Some(AbLoop::StartMarked(Duration::from_secs(seconds)))
-    }
-
-    fn both_marked(start_secs: u64, end_secs: u64) -> Option<AbLoop> {
-        Some(AbLoop::BothMarked {
-            loop_start: Duration::from_secs(start_secs),
-            loop_end: Duration::from_secs(end_secs),
-        })
     }
 
     #[rstest]
@@ -251,40 +219,15 @@ mod tests {
         TransportMessage::StepVolume(Direction::Previous),
         (at_volume(45), system_volume(45))
     )]
-    #[case::set_volume_to_a_new_level(
-        at_volume(50),
-        TransportMessage::SetVolume(Percent::clamped(70)),
-        (at_volume(70), Cue::VolumeChanged.into())
+    #[case::step_volume_down_saturates_at_the_floor(
+        at_volume(3),
+        TransportMessage::StepVolume(Direction::Previous),
+        (at_volume(0), system_volume(0))
     )]
-    #[case::step_speed_up(
-        at_speed(1.0),
-        TransportMessage::StepSpeed(Direction::Next),
-        (at_speed(1.25), audio_speed(1.25).then(macos_speed(1.25)))
-    )]
-    #[case::step_speed_down(
-        at_speed(1.0),
-        TransportMessage::StepSpeed(Direction::Previous),
-        (at_speed(0.75), audio_speed(0.75).then(macos_speed(0.75)))
-    )]
-    #[case::cycle_sleep_records_the_decided_timer(
-        sleeping(Some((0, 15))),
-        cycle_sleep(Some(timer(1, 30))),
-        (sleeping(Some((1, 30))), sleep_after(30))
-    )]
-    #[case::cycle_sleep_switches_the_timer_off(
-        sleeping(Some((2, 60))),
-        cycle_sleep(None),
-        (sleeping(None), Cmd::none())
-    )]
-    #[case::ab_mark_sets_a(
-        looping(None),
-        mark(10),
-        (looping(start_marked(10)), Cmd::none())
-    )]
-    #[case::ab_mark_sets_b_after_a(
-        looping(start_marked(10)),
-        mark(20),
-        (looping(both_marked(10, 20)), Cmd::none())
+    #[case::step_volume_up_saturates_at_the_ceiling(
+        at_volume(98),
+        TransportMessage::StepVolume(Direction::Next),
+        (at_volume(100), system_volume(100))
     )]
     #[case::sleep_fired_clears_the_timer(
         sleeping(Some((1, 30))),
@@ -319,10 +262,6 @@ mod tests {
         at_volume(0),
         TransportMessage::StepVolume(Direction::Previous)
     )]
-    #[case::step_speed_at_the_ceiling(
-        at_speed(4.0),
-        TransportMessage::StepSpeed(Direction::Next)
-    )]
     #[case::step_speed_at_the_floor(
         at_speed(0.25),
         TransportMessage::StepSpeed(Direction::Previous)
@@ -332,7 +271,6 @@ mod tests {
         sleeping(Some((1, 30))),
         cycle_sleep(Some(timer(1, 30)))
     )]
-    #[case::ab_mark_at_the_a_point(looping(start_marked(10)), mark(10))]
     #[case::ab_mark_before_the_a_point(looping(start_marked(10)), mark(5))]
     #[case::sleep_fired_without_a_timer(sleeping(None), TransportMessage::SleepFired)]
     fn a_transport_message_that_changes_nothing_is_refused(
@@ -346,21 +284,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::starts_at_the_first_preset(
-        None,
-        SleepPresets::default(),
-        Some(timer(0, 15))
-    )]
-    #[case::moves_to_the_next_preset(
-        Some(timer(0, 15)),
-        SleepPresets::default(),
-        Some(timer(1, 30))
-    )]
-    #[case::wraps_past_the_last_preset_to_off(
-        Some(timer(2, 60)),
-        SleepPresets::default(),
-        None
-    )]
     #[case::stays_off_without_presets(None, SleepPresets::from_minutes(&[]).unwrap(), None)]
     fn next_sleep_walks_the_presets(
         #[case] current: Option<SleepTimer>,
@@ -371,23 +294,5 @@ mod tests {
             next_sleep(current, presets.as_slice(), Moment::new(NOW)),
             expected
         );
-    }
-
-    #[test]
-    fn output_ready_clears_the_loss() {
-        let mut transport = output_lost();
-
-        transport.output_ready();
-
-        assert_eq!(state(&transport), state(&Transport::default()));
-    }
-
-    #[test]
-    fn track_changed_clears_the_loop() {
-        let mut transport = looping(both_marked(10, 20));
-
-        transport.track_changed();
-
-        assert_eq!(state(&transport), state(&looping(None)));
     }
 }

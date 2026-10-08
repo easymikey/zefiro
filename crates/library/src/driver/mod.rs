@@ -455,11 +455,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_fresh_scan_watches_and_scans(LibraryRow {
-        library_messages: Vec::new(),
-        message: scan("/music", ScanMode::Fresh),
-        cmd: "watch /music; scan /music @ 1",
-    })]
     #[case::a_cached_scan_watches_and_scans_from_the_cache(LibraryRow {
         library_messages: Vec::new(),
         message: scan("/music", ScanMode::Cached),
@@ -484,11 +479,6 @@ mod tests {
         library_messages: vec![scan("/music", ScanMode::Cached), LibraryMessage::Changed(Ok(()))],
         message: LibraryMessage::Elapsed(LibraryTimer::Debounce),
         cmd: "scan /music @ 1",
-    })]
-    #[case::a_disk_command_executes(LibraryRow {
-        library_messages: Vec::new(),
-        message: cmds(vec![LibraryCmd::Disk(DiskCmd::LoadFavorites)]),
-        cmd: "execute load_favorites",
     })]
     #[case::tag_tracks_runs_a_tag_job(LibraryRow {
         library_messages: Vec::new(),

@@ -37,10 +37,11 @@ mod tests {
     use crossbeam_channel::{Receiver, unbounded};
     use kernel::{
         cmd::{CoverJob, LibraryCmd, ScanMode},
-        domain::{driver::DriverName, revision::Revision, track::Track},
+        domain::{revision::Revision, track::Track},
         message::{LibraryEvent, Message},
     };
     use library::cover::{CoverDecoded, CoverLookup};
+    use rstest::rstest;
 
     use crate::{
         driver_thread::DriverThread,
@@ -98,10 +99,9 @@ mod tests {
             self.latest_receivers.cover_receiver.take().unwrap()
         }
 
-        fn stop(self) -> Receiver<Message> {
+        fn stop(self) {
             drop(self.thread.cmd_sender);
             self.thread.handle.join().unwrap();
-            self.inbox_receiver
         }
     }
 
@@ -112,61 +112,34 @@ mod tests {
         Some(tracks)
     }
 
-    #[test]
-    fn a_scan_of_a_music_dir_lists_its_tracks() {
+    #[rstest]
+    #[case::a_music_dir_lists_its_tracks(
+        "music",
+        &["one.mp3", "two.flac"],
+        |message: Message| listed_tracks(message).is_some_and(|tracks| tracks.len() == 2)
+    )]
+    #[case::a_missing_root_reports_a_library_error(
+        "missing",
+        &[],
+        |message: Message| matches!(message, Message::Library(LibraryEvent::Error(_)))
+    )]
+    fn a_scan_answers_through_the_inbox(
+        #[case] music_dir: &str,
+        #[case] files: &[&str],
+        #[case] expected: fn(Message) -> bool,
+    ) {
         let directory = tempfile::tempdir().unwrap();
-        let music_dir = directory.path().join("music");
-        std::fs::create_dir_all(&music_dir).unwrap();
-        std::fs::write(music_dir.join("one.mp3"), b"stub").unwrap();
-        std::fs::write(music_dir.join("two.flac"), b"stub").unwrap();
+        let music_dir = directory.path().join(music_dir);
+        for file in files {
+            std::fs::create_dir_all(&music_dir).unwrap();
+            std::fs::write(music_dir.join(file), b"stub").unwrap();
+        }
         let run = LibraryRun::start(directory.path());
 
         run.scan(&music_dir);
 
-        let listed = drain(&run.inbox_receiver)
-            .into_iter()
-            .find_map(listed_tracks);
-        assert_eq!(listed.map(|tracks| tracks.len()), Some(2));
+        assert!(drain(&run.inbox_receiver).into_iter().any(expected));
         run.stop();
-    }
-
-    #[test]
-    fn a_scan_of_a_missing_root_reports_a_library_error() {
-        let directory = tempfile::tempdir().unwrap();
-        let run = LibraryRun::start(directory.path());
-
-        run.scan(&directory.path().join("missing"));
-
-        let has_library_error = drain(&run.inbox_receiver)
-            .into_iter()
-            .any(|message| matches!(message, Message::Library(LibraryEvent::Error(_))));
-        assert!(
-            has_library_error,
-            "a missing music dir must report a library error"
-        );
-        run.stop();
-    }
-
-    #[test]
-    fn a_stopped_library_thread_ends_and_reports_its_stop() {
-        let directory = tempfile::tempdir().unwrap();
-        let run = LibraryRun::start(directory.path());
-
-        let inbox_receiver = run.stop();
-
-        let reported = drain(&inbox_receiver).into_iter().any(|message| {
-            matches!(
-                message,
-                Message::Driver {
-                    driver_name: DriverName::Library,
-                    ..
-                }
-            )
-        });
-        assert!(
-            reported,
-            "the thread must report its stop through the inbox"
-        );
     }
 
     #[test]

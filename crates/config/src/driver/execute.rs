@@ -221,30 +221,26 @@ mod tests {
         );
     }
 
-    #[rstest]
-    fn listing_names_only_the_toml_files_by_stem(mut disk: Disk) {
-        let themes = disk.directory.path().to_path_buf();
-        std::fs::write(themes.join("noir.toml"), "").unwrap();
-        std::fs::write(themes.join("notes.txt"), "").unwrap();
-
-        let listed = disk
-            .driver
-            .execute(ConfigEffect::Watch(ConfigWatchEffect::List(themes)));
-
-        assert_eq!(
-            listed,
-            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed {
-                theme_names: vec![ThemeName::from_static("noir")],
-                refused: Vec::new()
-            }))
-        );
+    struct ListRow {
+        files: &'static [&'static str],
+        theme_names: &'static [&'static str],
+        refused: &'static [&'static str],
     }
 
     #[rstest]
-    fn a_theme_list_reports_a_file_with_a_refused_name(mut disk: Disk) {
-        let themes = disk.directory.path().to_path_buf();
-        std::fs::write(themes.join("noir.toml"), "").unwrap();
-        std::fs::write(themes.join("solar..dark.toml"), "").unwrap();
+    #[case::by_stem(ListRow { files: &["noir.toml", "notes.txt"], theme_names: &["noir"], refused: &[] })]
+    #[case::refused_name(ListRow { files: &["solar..dark.toml"], theme_names: &[], refused: &["solar..dark"] })]
+    #[case::reserved_name(ListRow { files: &["auto.toml"], theme_names: &[], refused: &["auto"] })]
+    #[case::valid_beside_refused(ListRow { files: &["noir.toml", "solar..dark.toml"], theme_names: &["noir"], refused: &["solar..dark"] })]
+    fn listing_names_the_toml_files_by_stem_and_refuses_invalid_names(
+        #[case] list_row: ListRow,
+        mut disk: Disk,
+    ) {
+        let themes = disk.paths.themes_dir.clone();
+        std::fs::create_dir_all(&themes).unwrap();
+        for file in list_row.files {
+            std::fs::write(themes.join(file), "").unwrap();
+        }
 
         let listed = disk
             .driver
@@ -253,8 +249,13 @@ mod tests {
         assert_eq!(
             listed,
             Some(ConfigMessage::Watch(ConfigWatchMessage::Listed {
-                theme_names: vec![ThemeName::from_static("noir")],
-                refused: vec!["solar..dark".to_string()]
+                theme_names: list_row
+                    .theme_names
+                    .iter()
+                    .copied()
+                    .map(ThemeName::from_static)
+                    .collect(),
+                refused: list_row.refused.iter().map(ToString::to_string).collect()
             }))
         );
     }
@@ -402,25 +403,6 @@ mod tests {
             std::fs::read_to_string(&disk.paths.config_path).unwrap(),
             text,
             "a failed save must leave the file untouched"
-        );
-    }
-
-    #[rstest]
-    fn a_theme_list_reports_a_reserved_name_as_refused(mut disk: Disk) {
-        let themes = disk.paths.themes_dir.clone();
-        std::fs::create_dir_all(&themes).unwrap();
-        std::fs::write(themes.join("auto.toml"), "").unwrap();
-
-        let listed = disk
-            .driver
-            .execute(ConfigEffect::Watch(ConfigWatchEffect::List(themes)));
-
-        assert_eq!(
-            listed,
-            Some(ConfigMessage::Watch(ConfigWatchMessage::Listed {
-                theme_names: Vec::new(),
-                refused: vec!["auto".to_string()]
-            }))
         );
     }
 

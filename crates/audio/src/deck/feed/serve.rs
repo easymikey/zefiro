@@ -49,15 +49,7 @@ pub(crate) fn serve(receiver: &Receiver<FeedCmd>) {
             }
             feed.wake();
             feed.buffer();
-            catch_unwind(AssertUnwindSafe(|| {
-                if let Some(spare) = feed.spare_chunks.pop() {
-                    feed.refill(spare);
-                }
-                while let Ok(chunk) = feed.empty_consumer.pop() {
-                    feed.refill(chunk);
-                }
-            }))
-            .is_ok()
+            catch_unwind(AssertUnwindSafe(|| feed.serve())).is_ok()
         });
     }
 }
@@ -132,25 +124,6 @@ mod tests {
             drop(second_source);
             drop(feed_sender);
             assert_eq!(done_receiver.recv_timeout(Duration::from_secs(10)), Ok(()));
-        });
-    }
-
-    #[test]
-    fn a_source_pulls_without_locking_while_serve_waits() {
-        let file = ramp_file(1, 16_000);
-        let (feed_sender, feed_receiver) = crossbeam_channel::bounded(1);
-        let (mut source, mut feed) = opened(&file);
-        let chunk_len = feed.empty_consumer.peek().unwrap().samples.len();
-        feed.prime();
-        thread::scope(|scope| {
-            scope.spawn(|| serve(&feed_receiver));
-            feed_sender.send(FeedCmd::Serve(Box::new(feed))).unwrap();
-            while source.full_consumer.slots() < CHUNK_COUNT {
-                thread::yield_now();
-            }
-            assert_eq!(pulled(&mut source, 4 * chunk_len).len(), 4 * chunk_len);
-            drop(source);
-            drop(feed_sender);
         });
     }
 

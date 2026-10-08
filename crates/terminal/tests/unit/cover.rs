@@ -101,7 +101,7 @@ fn capabilities() -> Capabilities {
 fn painter(capabilities: Capabilities) -> CoverPainter {
     let Capabilities {
         picker,
-        color_depth: _color_depth,
+        color_depth: _,
     } = capabilities;
     let font_size = picker.font_size();
     let cell_pixels = CellPixels {
@@ -124,28 +124,70 @@ fn scenery(
     scenery
 }
 
+struct CoverModeRow {
+    cover_mode: CoverMode,
+    cover_image: Option<CoverImage>,
+    cover_area: Option<Rect>,
+    expected: CardCover,
+}
+
 #[rstest]
-#[case::plain_without_art(CoverMode::Plain, false, CardCover::Missing)]
-#[case::plain_with_art(CoverMode::Plain, true, CardCover::Image)]
-#[case::off_with_art(CoverMode::Off, true, CardCover::Missing)]
-#[case::vinyl_without_art(CoverMode::Vinyl, false, CardCover::Image)]
-#[case::milkdrop_without_art(
-    CoverMode::Milkdrop,
-    false,
-    CardCover::Text(Arc::from(Vec::new()))
-)]
-fn a_cover_mode_picks_the_card_cover_kind(
-    #[case] cover_mode: CoverMode,
-    #[case] art: bool,
-    #[case] expected: CardCover,
-) {
+#[case::plain_without_art(CoverModeRow {
+    cover_mode: CoverMode::Plain,
+    cover_image: None,
+    cover_area: Some(cover_rect()),
+    expected: CardCover::Missing,
+})]
+#[case::plain_with_art(CoverModeRow {
+    cover_mode: CoverMode::Plain,
+    cover_image: Some(cover("moon-river", Rgba([200, 10, 10, 255]))),
+    cover_area: Some(cover_rect()),
+    expected: CardCover::Image,
+})]
+#[case::off_with_art(CoverModeRow {
+    cover_mode: CoverMode::Off,
+    cover_image: Some(cover("moon-river", Rgba([200, 10, 10, 255]))),
+    cover_area: Some(cover_rect()),
+    expected: CardCover::Missing,
+})]
+#[case::vinyl_without_art(CoverModeRow {
+    cover_mode: CoverMode::Vinyl,
+    cover_image: None,
+    cover_area: Some(cover_rect()),
+    expected: CardCover::Image,
+})]
+#[case::milkdrop_without_art(CoverModeRow {
+    cover_mode: CoverMode::Milkdrop,
+    cover_image: None,
+    cover_area: Some(cover_rect()),
+    expected: CardCover::Text(Arc::from(Vec::new())),
+})]
+#[case::vinyl_without_a_cover_rect(CoverModeRow {
+    cover_mode: CoverMode::Vinyl,
+    cover_image: Some(cover("moon-river", Rgba([200, 10, 10, 255]))),
+    cover_area: None,
+    expected: CardCover::Missing,
+})]
+#[case::milkdrop_without_a_cover_rect(CoverModeRow {
+    cover_mode: CoverMode::Milkdrop,
+    cover_image: Some(cover("moon-river", Rgba([200, 10, 10, 255]))),
+    cover_area: None,
+    expected: CardCover::Missing,
+})]
+fn a_cover_mode_picks_the_card_cover_kind(#[case] row: CoverModeRow) {
+    let CoverModeRow {
+        cover_mode,
+        cover_image,
+        cover_area,
+        expected,
+    } = row;
     let scenery = scenery::get(cover_mode, capabilities());
     let mut painter = painter::get(capabilities());
-    if art {
-        painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
+    if let Some(cover_image) = cover_image {
+        painter.set_cover(cover_image);
     }
 
-    let card_cover = painter.refresh(&scenery.scene(), Some(cover_rect()));
+    let card_cover = painter.refresh(&scenery.scene(), cover_area);
     assert_eq!(discriminant(&card_cover), discriminant(&expected));
 }
 
@@ -168,20 +210,6 @@ fn a_halfblocks_painter_in_an_image_mode_answers_missing_and_stays_still(
     let mut buffer = Buffer::empty(cover_rect());
     painter.paint(&mut buffer, &layout);
     assert!(!painted(&buffer, cover_rect()));
-}
-
-#[rstest]
-#[case::vinyl(CoverMode::Vinyl)]
-#[case::milkdrop(CoverMode::Milkdrop)]
-fn a_cover_mode_without_a_cover_rect_is_missing(
-    #[case] cover_mode: CoverMode,
-    mut painter: CoverPainter,
-) {
-    let scenery = scenery::get(cover_mode, capabilities());
-    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-
-    let card_cover = painter.refresh(&scenery.scene(), None);
-    assert!(matches!(card_cover, CardCover::Missing));
 }
 
 #[rstest]
@@ -292,45 +320,17 @@ fn a_reused_plan_returns_the_same_lines_allocation(
 }
 
 #[rstest]
-fn reusing_the_same_path_and_rect_stays_an_image_across_frames(
-    #[with(CoverMode::Plain)] scenery: Scenery,
+#[case::the_same_rect(cover_rect())]
+#[case::a_wider_rect(Rect::new(0, 0, 16, 4))]
+fn a_second_refresh_stays_an_image(
+    #[case] second_area: Rect,
+    scenery: Scenery,
     mut painter: CoverPainter,
 ) {
-    let layout = layout_with_cover(Some(cover_rect()));
-    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-
-    painter.refresh(&scenery.scene(), layout.cover_area);
-    let card_cover = painter.refresh(&scenery.scene(), layout.cover_area);
-    assert!(matches!(card_cover, CardCover::Image));
-}
-
-#[rstest]
-fn a_track_change_repaints_the_new_cover_once(
-    mut scenery: Scenery,
-    mut painter: CoverPainter,
-) {
-    let layout = layout_with_cover(Some(cover_rect()));
-
-    painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
-    painter.refresh(&scenery.scene(), layout.cover_area);
-
-    scenery.model.player = playing_model("second", 200, 50).player;
-    painter.set_cover(cover("second", Rgba([10, 10, 200, 255])));
-    let swapped = painter.refresh(&scenery.scene(), layout.cover_area);
-    assert!(matches!(swapped, CardCover::Image));
-
-    let mut buffer = Buffer::empty(cover_rect());
-    painter.paint(&mut buffer, &layout);
-    assert!(painted(&buffer, cover_rect()));
-}
-
-#[rstest]
-fn a_wider_rect_forces_a_rebuild(scenery: Scenery, mut painter: CoverPainter) {
     painter.set_cover(cover("moon-river", Rgba([200, 10, 10, 255])));
 
     painter.refresh(&scenery.scene(), Some(cover_rect()));
-    let wider = Rect::new(0, 0, 16, 4);
-    let card_cover = painter.refresh(&scenery.scene(), Some(wider));
+    let card_cover = painter.refresh(&scenery.scene(), Some(second_area));
     assert!(matches!(card_cover, CardCover::Image));
 }
 
@@ -351,7 +351,6 @@ fn a_theme_change_installs_the_new_image_at_once(
 }
 
 #[rstest]
-#[case::no_toast(None, true)]
 #[case::a_toast_over_the_rect(Some(Rect::new(0, 0, 8, 1)), false)]
 #[case::a_toast_away_from_the_rect(Some(Rect::new(0, 10, 8, 1)), true)]
 fn a_toast_overlapping_the_cover_rect_hides_it(

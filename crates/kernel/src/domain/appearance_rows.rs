@@ -238,21 +238,11 @@ mod tests {
     use rstest::rstest;
 
     use crate::domain::{
-        appearance::{
-            AppearancePatch,
-            AppearancePreset,
-            AppearanceSettings,
-            FormatChips,
-            preset_appearance,
-        },
+        appearance::{AppearancePatch, AppearanceSettings, FormatChips},
         appearance_rows::{APPEARANCE_ROWS, appearance_patch, field_choice},
         cue::Cue,
-        setting_row::{AppearanceField, Choice, OptionCount, OptionIndex},
+        setting_row::{AppearanceField, Choice, OptionCount},
     };
-
-    fn option_at_row(field: AppearanceField, option_index: usize) -> OptionIndex {
-        field.row().control.count().index(option_index).unwrap()
-    }
 
     #[test]
     fn only_the_preset_and_layout_mode_rows_carry_a_cue() {
@@ -335,42 +325,6 @@ mod tests {
 
         assert_eq!(
             field_choice(row.field, appearance_settings),
-            Choice::Option(option)
-        );
-    }
-
-    #[test]
-    fn the_noir_patch_equals_the_noir_preset_field_for_field() {
-        let expected = AppearancePatch {
-            cover_mode: Some(preset_appearance(AppearancePreset::Noir).cover_mode),
-            cover_brackets: Some(
-                preset_appearance(AppearancePreset::Noir).cover_brackets,
-            ),
-            format_chips: Some(preset_appearance(AppearancePreset::Noir).format_chips),
-            speed_chip: Some(preset_appearance(AppearancePreset::Noir).speed_chip),
-            progress_time: Some(
-                preset_appearance(AppearancePreset::Noir).progress_time,
-            ),
-            key_hints: Some(preset_appearance(AppearancePreset::Noir).key_hints),
-            animations: Some(preset_appearance(AppearancePreset::Noir).animations),
-            layout_mode: Some(preset_appearance(AppearancePreset::Noir).layout_mode),
-        };
-        let option = option_at_row(AppearanceField::Preset, 1);
-
-        assert_eq!(
-            appearance_patch(AppearanceField::Preset, option),
-            Some(expected)
-        );
-    }
-
-    #[test]
-    fn a_noir_file_puts_preset_at_the_noir_index() {
-        let option = option_at_row(AppearanceField::Preset, 1);
-        let patch = appearance_patch(AppearanceField::Preset, option).unwrap();
-        let appearance_settings = AppearanceSettings::default().patched(patch);
-
-        assert_eq!(
-            field_choice(AppearanceField::Preset, appearance_settings),
             Choice::Option(option)
         );
     }

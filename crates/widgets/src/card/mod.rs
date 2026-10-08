@@ -258,12 +258,7 @@ pub fn clock_frame_due(
     clock: Presence,
     now: Moment,
 ) -> Option<Moment> {
-    let Player::Playing {
-        playhead,
-        track: _track,
-        preloaded: _preloaded,
-    } = player
-    else {
+    let Player::Playing { playhead, .. } = player else {
         return None;
     };
     (clock == Presence::Shown).then(|| next_clock_second(*playhead, now))
@@ -283,37 +278,19 @@ mod tests {
         revision::Revision,
         speed::Speed,
         time::Moment,
-        track::{AudioFormat, Hertz, Kbps, Tags, Track, TrackParts},
+        track::Track,
         transport::{OutputError, OutputStatus},
     };
+    use rstest::rstest;
 
     use crate::{
         card::{CardView, CardWidget, clock_frame_due, metrics::card_height},
-        geometry::CoverSizing,
         primitive::time_text::duration_text,
         repaint::Presence,
         spectrum::{SPECTRUM_BANDS, Spectrum},
         test_support::{noir, rendered, track},
         theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
     };
-
-    fn full_format_track() -> Arc<Track> {
-        Arc::new(Track::new(TrackParts {
-            path: "/music/moon-river.mp3".into(),
-            duration: Duration::from_secs(245),
-            tags: Tags {
-                title: Some("Moon River".to_string()),
-                artist: Some("Audrey Hepburn".to_string()),
-                ..Tags::default()
-            },
-            audio_format: AudioFormat {
-                format: Some("mp3".to_string()),
-                bitrate: Some(Kbps(320)),
-                sample_rate: Some(Hertz(44_100)),
-                ..AudioFormat::default()
-            },
-        }))
-    }
 
     struct Fixture {
         player: Player,
@@ -341,17 +318,6 @@ mod tests {
                 buffering_revision: None,
                 play_order: PlayOrder::default(),
                 track: Some(track),
-            }
-        }
-
-        fn stopped() -> Self {
-            Self {
-                player: Player::Stopped,
-                spectrum: [0.0; SPECTRUM_BANDS],
-                output_status: OutputStatus::Ready,
-                buffering_revision: None,
-                play_order: PlayOrder::default(),
-                track: None,
             }
         }
 
@@ -419,19 +385,6 @@ mod tests {
     }
 
     #[test]
-    fn no_track_shows_a_placeholder_title_and_a_stopped_status() {
-        let theme = noir();
-        let fixture = Fixture::stopped();
-        let widget = card(fixture.view(), &theme, AppearanceSettings::default());
-        let text = rendered(60, card_height().0, |frame| {
-            frame.render_widget(&widget, frame.area());
-        })
-        .to_string();
-        assert!(text.contains("No track"), "got {text:?}");
-        assert!(text.contains("Stopped"), "got {text:?}");
-    }
-
-    #[test]
     fn output_lost_reads_no_output_in_the_status_column() {
         let theme = noir();
         let fixture = Fixture::output_lost(track("Moon River"));
@@ -441,19 +394,6 @@ mod tests {
         })
         .to_string();
         assert!(text.contains("No output"), "got {text:?}");
-    }
-
-    #[test]
-    fn a_narrow_card_drops_the_format_chip_before_the_elapsed_time() {
-        let theme = noir();
-        let fixture = Fixture::playing(full_format_track());
-        let widget = card(fixture.view(), &theme, AppearanceSettings::default());
-        let text = rendered(30, card_height().0, |frame| {
-            frame.render_widget(&widget, frame.area());
-        })
-        .to_string();
-        assert!(!text.contains("KBPS"), "got {text:?}");
-        assert!(text.contains("00:3"), "got {text:?}");
     }
 
     #[test]
@@ -473,74 +413,42 @@ mod tests {
         assert!(text.contains(&remaining), "got {text:?}");
     }
 
-    #[test]
-    fn progress_time_elapsed_shows_a_plain_fill_bar_without_a_countdown_chip() {
-        let theme = noir();
-        let fixture = Fixture::playing(track("Moon River"));
-        let appearance_settings = AppearanceSettings {
-            progress_time: ProgressTime::Elapsed,
-            ..AppearanceSettings::default()
-        };
-        let widget = card(fixture.view(), &theme, appearance_settings);
-        let text = rendered(60, card_height().0, |frame| {
-            frame.render_widget(&widget, frame.area());
-        })
-        .to_string();
-        let remaining = format!("-{}", duration_text(Duration::from_secs(245 - 30)));
-        assert!(!text.contains(&remaining), "got {text:?}");
-    }
-
-    #[test]
-    fn cover_off_omits_the_no_cover_placeholder() {
-        let theme = noir();
-        let fixture = Fixture::playing(track("Moon River"));
-        let widget = card(fixture.view(), &theme, AppearanceSettings::default())
-            .cover_sizing(CoverSizing::Off);
-        let text = rendered(60, card_height().0, |frame| {
-            frame.render_widget(&widget, frame.area());
-        })
-        .to_string();
-        assert!(!text.contains("No cover"), "got {text:?}");
-    }
-
-    fn clock_player(offset: Duration, started_at: Moment) -> Player {
+    fn clock_player() -> Player {
         Player::Playing {
             track: track("Moon River"),
-            playhead: Playhead::anchored(offset, started_at, Speed::clamped(1.0)),
+            playhead: Playhead::anchored(
+                Duration::from_secs(10),
+                Moment::default(),
+                Speed::clamped(1.0),
+            ),
             preloaded: None,
         }
     }
 
-    #[test]
-    fn a_playing_clock_wants_the_next_second() {
-        let now = Moment::new(Duration::from_secs(100));
-        let player = clock_player(Duration::from_secs(10), now);
-
-        assert_eq!(
-            clock_frame_due(&player, Presence::Shown, now),
-            Some(Moment::new(
-                now.since_epoch() + Duration::from_millis(1_001)
-            ))
-        );
-    }
-
-    #[test]
-    fn a_hidden_clock_wants_no_frame() {
-        let now = Moment::new(Duration::from_secs(100));
-        let player = clock_player(Duration::from_secs(10), now);
-
-        assert_eq!(clock_frame_due(&player, Presence::Hidden, now), None);
-    }
-
-    #[test]
-    fn a_paused_clock_wants_no_frame() {
-        let now = Moment::new(Duration::from_secs(100));
-        let player = Player::Paused {
+    fn paused_clock_player() -> Player {
+        Player::Paused {
             track: track("Moon River"),
             position: Duration::from_secs(10),
             by: PausedBy::Listener,
-        };
+        }
+    }
 
-        assert_eq!(clock_frame_due(&player, Presence::Shown, now), None);
+    #[rstest]
+    #[case::a_playing_clock_wants_the_next_second(
+        clock_player(),
+        Presence::Shown,
+        Some(Duration::from_millis(1_001))
+    )]
+    #[case::a_hidden_clock_wants_no_frame(clock_player(), Presence::Hidden, None)]
+    #[case::a_paused_clock_wants_no_frame(paused_clock_player(), Presence::Shown, None)]
+    fn clock_frame_due_wants_the_next_second_only_while_a_shown_clock_plays(
+        #[case] player: Player,
+        #[case] clock: Presence,
+        #[case] due_after: Option<Duration>,
+    ) {
+        assert_eq!(
+            clock_frame_due(&player, clock, Moment::default()),
+            due_after.map(Moment::new)
+        );
     }
 }

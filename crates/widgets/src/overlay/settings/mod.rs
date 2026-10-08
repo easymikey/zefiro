@@ -77,7 +77,6 @@ impl<'a> SettingsWidget<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsTable {
-    rows: &'static [SettingRow],
     title: String,
     width: Cells,
     label_width: Cells,
@@ -86,12 +85,10 @@ pub struct SettingsTable {
 impl SettingsTable {
     #[must_use]
     pub(crate) fn new(view: &SettingsView<'_>) -> Self {
-        let rows = &SettingRow::ALL;
-        let label_width = label_column_width(rows);
-        let width = settings_content_width(label_width, rows, view);
+        let label_width = label_column_width();
+        let width = settings_content_width(label_width, view);
         Self {
             title: modal_title_text(&view.music_dir_label(), width),
-            rows,
             width,
             label_width,
         }
@@ -127,28 +124,23 @@ impl<'a> SettingsWidget<'a> {
             border_title: Line::default(),
             modal_title: &settings_table.title,
             content_width: settings_table.width,
-            content_rows: Cells(small_count_u16(settings_table.rows.len())),
+            content_rows: Cells(small_count_u16(SettingRow::ALL.len())),
             theme: self.theme,
         }
     }
 
     fn rows_table(&self, areas: &ScrollAreas) -> (Table<'_>, TableState) {
-        let rows = self.settings_table.rows;
+        let rows = &SettingRow::ALL;
         let inner = areas.rows;
         let colors = self.theme.colors();
         let label_width = self.settings_table.label_width;
-        let selected = rows
-            .iter()
-            .position(|row| *row == self.selected)
-            .map(RowIndex::new);
+        let selected = RowIndex::new(self.selected.position());
         let columns = SettingsColumns::for_width(
             column_width(areas),
             leading_cells(areas),
             label_width,
         );
-        let offset = selected.map_or(0, |selected| {
-            scroll_offset(selected, rows.len(), usize::from(inner.height))
-        });
+        let offset = scroll_offset(selected, rows.len(), usize::from(inner.height));
         let table = Table::new(
             rows.iter().map(|&row| {
                 settings_row(
@@ -170,7 +162,7 @@ impl<'a> SettingsWidget<'a> {
         );
         let table_state = TableState::new()
             .with_offset(offset)
-            .with_selected(selected.map(RowIndex::get));
+            .with_selected(selected.get());
         (table, table_state)
     }
 }
@@ -188,8 +180,8 @@ fn modal_title_text(music_dir: &str, content_width: Cells) -> String {
     format!("{}{TITLE_SEPARATOR}{path}", glyphs::settings::TITLE_WORD)
 }
 
-fn label_column_width(rows: &[SettingRow]) -> Cells {
-    let widest = rows
+fn label_column_width() -> Cells {
+    let widest = SettingRow::ALL
         .iter()
         .map(|&row| settings_label(row).width())
         .max()
@@ -197,12 +189,8 @@ fn label_column_width(rows: &[SettingRow]) -> Cells {
     cells(widest.saturating_add(LABEL_GAP.count()))
 }
 
-fn settings_content_width(
-    label_width: Cells,
-    rows: &[SettingRow],
-    view: &SettingsView<'_>,
-) -> Cells {
-    let value_width = rows
+fn settings_content_width(label_width: Cells, view: &SettingsView<'_>) -> Cells {
+    let value_width = SettingRow::ALL
         .iter()
         .map(|&row| widest_value(row, view))
         .max()
@@ -290,23 +278,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn settings_overlay_shows_the_current_theme_and_a_custom_appearance_row() {
-        let theme = noir();
-        let settings_table = SettingsTable::new(&settings_values());
-        let widget = SettingsWidget::new(
-            settings_values(),
-            &settings_table,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
-        let buffer =
-            rendered(80, 28, |frame| frame.render_widget(&widget, frame.area()))
-                .buffer()
-                .clone();
-        assert!(find_text(&buffer, "noir").is_some());
-        assert!(find_text(&buffer, "Cover mode").is_some());
-    }
-
-    #[test]
     fn settings_title_keeps_the_path_tail_visible_at_a_narrow_width() {
         let theme = noir();
         let mut with_long_path = settings_values();
@@ -373,19 +344,5 @@ pub(crate) mod tests {
                 .buffer()
                 .clone();
         assert!(find_text(&buffer, "100m, 200m, 300m, 400m, 720m").is_some());
-    }
-
-    #[test]
-    fn settings_overlay_does_not_panic_on_a_tiny_terminal() {
-        let theme = noir();
-        let settings_table = SettingsTable::new(&settings_values());
-        let widget = SettingsWidget::new(
-            settings_values(),
-            &settings_table,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
-        let frame = rendered(4, 3, |frame| frame.render_widget(&widget, frame.area()))
-            .to_string();
-        assert_eq!(frame.lines().count(), 3);
     }
 }

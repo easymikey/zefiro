@@ -3,7 +3,7 @@ use kernel::domain::geometry::Pixels;
 use tiny_skia::{ColorU8, FillRule, Mask, Path, Pixmap, PixmapPaint, Transform};
 
 use crate::pixels::{
-    numeric::{dimension_f32, floor},
+    numeric::{dimension_f32, round},
     resample::cover_crop_resize,
     vinyl::geometry::{
         Disc,
@@ -19,11 +19,11 @@ use crate::pixels::{
 pub(crate) fn sleeve_inset_side(canvas_side: Pixels) -> u32 {
     let size = dimension_f32(canvas_side.0.max(1));
     let pad = VINYL_LAYOUT.sleeve_padding * size;
-    floor::<u32>((size - pad * 2.0).round()).max(1)
+    round::<u32>(size - pad * 2.0).max(1)
 }
 
 fn label_diameter(canvas_side: Pixels) -> u32 {
-    floor::<u32>((VinylGeometry::new(canvas_side).label_radius * 2.0).round()).max(1)
+    round::<u32>(VinylGeometry::new(canvas_side).label_radius * 2.0).max(1)
 }
 
 #[derive(Debug)]
@@ -65,7 +65,7 @@ impl ArtClip {
     }
 
     pub(crate) fn circle(disc: Disc) -> Option<Self> {
-        let diameter = dimension_f32(floor::<u32>((disc.radius * 2.0).round()).max(1));
+        let diameter = dimension_f32(round::<u32>(disc.radius * 2.0).max(1));
         Some(Self {
             path: circle_path(disc)?,
             x: disc.center_x - diameter / 2.0,
@@ -91,74 +91,47 @@ pub(crate) fn paint_art_clipped(pixmap: &mut Pixmap, art: &Pixmap, clip: &ArtCli
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
-
     use kernel::domain::geometry::Pixels;
+    use rstest::rstest;
 
-    use crate::pixels::{
-        cover::CoverImage,
-        numeric::{dimension_f32, floor},
-        vinyl::{
-            VinylCache,
-            Wanted,
-            art::{label_diameter, prepare_art, sleeve_inset_side},
-            geometry::{VINYL_LAYOUT, shadow_horizontal_reach_fraction},
-            tests::{noir_vinyl_style, synthetic_art},
-        },
+    use crate::pixels::vinyl::{
+        art::{ArtClip, prepare_art},
+        geometry::Disc,
+        tests::synthetic_art,
     };
 
-    fn expected_peek(canvas_side: Pixels) -> u32 {
-        let size = dimension_f32(canvas_side.0);
-        let disc_diameter = VINYL_LAYOUT.disc_fraction * size;
-        let peek = VINYL_LAYOUT.slide_fraction * disc_diameter;
-        let shadow_margin =
-            VINYL_LAYOUT.shadow_offset * size * shadow_horizontal_reach_fraction();
-        floor::<u32>((peek + shadow_margin).ceil())
-    }
-
-    #[test]
-    fn prepared_art_matches_the_sleeve_and_label_sides() {
-        let art = synthetic_art(400);
-        let canvas_side = Pixels(272);
-        let prepared = prepare_art(&art, canvas_side);
-        let sleeve_side = sleeve_inset_side(canvas_side);
-        let label_side = label_diameter(canvas_side);
+    #[rstest]
+    #[case::small_canvas(Pixels(272), 261, 88)]
+    #[case::large_canvas(Pixels(1000), 958, 322)]
+    #[case::empty_canvas(Pixels(0), 1, 1)]
+    fn prepared_art_has_the_sleeve_inset_and_label_diameter_sides(
+        #[case] canvas_side: Pixels,
+        #[case] sleeve_side: u32,
+        #[case] label_side: u32,
+    ) {
+        let prepared = prepare_art(&synthetic_art(400), canvas_side);
         assert_eq!(
-            prepared
-                .as_ref()
-                .map(|prepared| (prepared.sleeve.width(), prepared.sleeve.height())),
-            Some((sleeve_side, sleeve_side))
-        );
-        assert_eq!(
-            prepared
-                .as_ref()
-                .map(|prepared| (prepared.label.width(), prepared.label.height())),
-            Some((label_side, label_side))
+            prepared.as_ref().map(|prepared| (
+                prepared.sleeve.width(),
+                prepared.sleeve.height(),
+                prepared.label.width(),
+                prepared.label.height()
+            )),
+            Some((sleeve_side, sleeve_side, label_side, label_side))
         );
     }
 
-    #[test]
-    fn art_of_the_wrong_size_is_resized_to_fit() {
-        let art = synthetic_art(8);
-        let canvas_side = Pixels(96);
-        let cover_image = CoverImage {
-            path: PathBuf::from("/music/small.flac"),
-            image: Arc::new(art),
-        };
-        let wanted = Wanted {
-            cover_image: Some(&cover_image),
-            side: canvas_side,
-            vinyl_style: noir_vinyl_style(),
-        };
-        let mut cache = VinylCache::default();
-
-        let image = cache.compose(&wanted);
-        let peek = expected_peek(canvas_side);
-        assert_eq!(image.dimensions(), (canvas_side.0 + peek, canvas_side.0));
-        let center = (canvas_side.0 / 2, canvas_side.0 / 2);
-        assert_ne!(
-            *image.get_pixel(center.0, center.1),
-            image::Rgba([0, 0, 0, 0])
+    #[rstest]
+    #[case::odd_diameter(Disc { center_x: 100.0, center_y: 50.0, radius: 10.3 }, 89.5, 39.5)]
+    #[case::even_diameter(Disc { center_x: 100.0, center_y: 50.0, radius: 8.0 }, 92.0, 42.0)]
+    fn a_circle_clip_places_the_art_at_the_rounded_diameter_corner(
+        #[case] disc: Disc,
+        #[case] x: f32,
+        #[case] y: f32,
+    ) {
+        assert_eq!(
+            ArtClip::circle(disc).map(|clip| (clip.x, clip.y)),
+            Some((x, y))
         );
     }
 }

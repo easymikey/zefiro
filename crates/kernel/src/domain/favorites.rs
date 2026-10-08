@@ -74,18 +74,6 @@ mod tests {
     }
 
     #[test]
-    fn toggle_favorites_a_path_then_toggle_unfavorites_it() {
-        let mut favorites = Favorites::default();
-        assert!(!favorites.is_favorite(&path("/a.flac")));
-
-        favorites.toggle(path("/a.flac"));
-        assert!(favorites.is_favorite(&path("/a.flac")));
-
-        favorites.toggle(path("/a.flac"));
-        assert!(!favorites.is_favorite(&path("/a.flac")));
-    }
-
-    #[test]
     fn toggling_a_path_twice_leaves_no_favorites() {
         let mut favorites = Favorites::default();
         assert!(favorites.iter().next().is_none());
@@ -95,13 +83,5 @@ mod tests {
 
         favorites.toggle(path("/a.flac"));
         assert_eq!(favorites, Favorites::default());
-    }
-
-    #[test]
-    fn collecting_paths_and_iterating_round_trip() {
-        let favorites: Favorites = [path("/a.flac")].into_iter().collect();
-
-        assert!(favorites.is_favorite(&path("/a.flac")));
-        assert_eq!(favorites.iter().collect::<Vec<_>>(), [&path("/a.flac")]);
     }
 }

@@ -99,7 +99,8 @@ pub(crate) fn paint(
     let status_line = truncate_line(
         line([
             text(status.glyph()).fg(status_color),
-            text(format!(" {}", status.word())).fg(status_color),
+            text(" ").fg(status_color),
+            text(status.word()).fg(status_color),
         ]),
         usize::from(metrics.status_row.width),
     );
@@ -118,4 +119,52 @@ pub(crate) fn paint(
         .fg(colors.muted_foreground)
         .into();
     Paragraph::new(artist_span).render(metrics.artist_row, buffer);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use kernel::domain::{
+        player::{PausedBy, Player},
+        revision::Revision,
+        transport::OutputStatus,
+    };
+    use rstest::rstest;
+
+    use crate::{card::headings::CardStatus, test_support::track};
+
+    fn loading() -> Player {
+        Player::Loading(track("Song"))
+    }
+
+    fn paused() -> Player {
+        Player::Paused {
+            track: track("Song"),
+            position: Duration::from_secs(10),
+            by: PausedBy::Listener,
+        }
+    }
+
+    #[rstest]
+    #[case::loading_while_stalled(
+        loading(),
+        Some(Revision::default()),
+        (CardStatus::Buffering, "\u{25cc}", "Buffering")
+    )]
+    #[case::loading_otherwise(loading(), None, (CardStatus::Playing, "\u{25b6}", "Playing"))]
+    #[case::paused_while_stalled(
+        paused(),
+        Some(Revision::default()),
+        (CardStatus::Paused, "\u{23f8}", "Paused")
+    )]
+    #[case::paused(paused(), None, (CardStatus::Paused, "\u{23f8}", "Paused"))]
+    fn a_loading_track_reads_buffering_while_stalled_and_playing_otherwise(
+        #[case] player: Player,
+        #[case] buffering_revision: Option<Revision>,
+        #[case] expected: (CardStatus, &str, &str),
+    ) {
+        let status = CardStatus::new(OutputStatus::Ready, buffering_revision, &player);
+        assert_eq!((status, status.glyph(), status.word()), expected);
+    }
 }

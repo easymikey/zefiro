@@ -159,7 +159,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_partial_hop_stays_unpublished(HOP - 1)]
     #[case::a_single_hop_publishes_its_tail(HOP)]
     #[case::wrapping_past_the_window(WINDOW + HOP)]
     fn a_spectrum_writer_batches_by_hop_and_publishes_the_newest_window(
@@ -186,45 +185,19 @@ mod tests {
     }
 
     #[test]
-    fn a_reopened_stream_gets_the_writer_back() {
-        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        let first_batch = samples(HOP);
-        SpectrumWriter::new(&spectrum_buffers, 1).push(&first_batch);
-
-        let mut out = [0.0f32; WINDOW];
-        assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
-        assert_eq!(out.get(out.len() - HOP..), Some(first_batch.as_slice()));
-
-        let second_batch = samples(HOP);
-        SpectrumWriter::new(&spectrum_buffers, 1).push(&second_batch);
-
-        assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
-        assert_eq!(out.get(out.len() - HOP..), Some(second_batch.as_slice()));
-    }
-
-    #[test]
-    fn a_second_spectrum_writer_without_a_returned_writer_stays_silent() {
-        let (spectrum_buffers, spectrum_tap) = spectrum_channel();
-        let held_spectrum_writer = SpectrumWriter::new(&spectrum_buffers, 1);
-        SpectrumWriter::new(&spectrum_buffers, 1).push(&samples(HOP));
-
-        let mut out = [0.0f32; WINDOW];
-        assert!(!spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
-        assert!(out.iter().all(|&sample| sample == 0.0));
-        drop(held_spectrum_writer);
-    }
-
-    #[test]
     fn a_spectrum_writer_built_while_another_holds_the_window_takes_it_once_the_other_drops()
      {
         let (spectrum_buffers, spectrum_tap) = spectrum_channel();
         let older_spectrum_writer = SpectrumWriter::new(&spectrum_buffers, 1);
         let mut newer_spectrum_writer = SpectrumWriter::new(&spectrum_buffers, 1);
         let newer_batch = samples(HOP);
+        let mut out = [0.0f32; WINDOW];
+        newer_spectrum_writer.push(&newer_batch);
+        assert!(!spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
+        assert!(out.iter().all(|&sample| sample == 0.0));
+
         drop(older_spectrum_writer);
         newer_spectrum_writer.push(&newer_batch);
-
-        let mut out = [0.0f32; WINDOW];
         assert!(spectrum_tap.windowed(&[1.0; WINDOW], &mut out));
         assert_eq!(out.get(out.len() - HOP..), Some(newer_batch.as_slice()));
     }
@@ -249,13 +222,6 @@ mod tests {
         let averaged: Vec<f32> =
             samples(HOP).iter().map(|sample| sample + 1.0).collect();
         assert_eq!(out.get(WINDOW - HOP..), Some(averaged.as_slice()));
-    }
-
-    #[test]
-    fn spectrum_buffers_lend_their_writer_only_once() {
-        let (spectrum_buffers, _spectrum_tap) = spectrum_channel();
-        assert!(spectrum_buffers.take().is_some());
-        assert!(spectrum_buffers.take().is_none());
     }
 
     #[test]

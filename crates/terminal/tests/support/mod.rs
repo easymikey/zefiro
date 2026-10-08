@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{env, io, path::PathBuf, process::Command, sync::Arc, time::Duration};
 
 use kernel::domain::{
     appearance::{Appearance, Rgb},
@@ -21,6 +21,44 @@ use widgets::{
         rgb::ColorDepth,
     },
 };
+
+const CHILD: &str = "SIFR_TERMINAL_TEST_CHILD";
+
+const TERMINAL_VARIABLES: [&str; 6] = [
+    "TERM_PROGRAM",
+    "KITTY_WINDOW_ID",
+    "GHOSTTY_RESOURCES_DIR",
+    "WEZTERM_EXECUTABLE",
+    "ITERM_SESSION_ID",
+    "TERM",
+];
+
+pub(crate) fn in_child() -> bool {
+    env::var_os(CHILD).is_some()
+}
+
+pub(crate) fn child_stdout(
+    test: &str,
+    variables: &[(&str, &str)],
+) -> Result<String, io::Error> {
+    let output = TERMINAL_VARIABLES
+        .iter()
+        .fold(Command::new(env::current_exe()?), |mut command, name| {
+            command.env_remove(name);
+            command
+        })
+        .args([test, "--exact", "--nocapture", "--test-threads=1"])
+        .env(CHILD, "1")
+        .envs(variables.iter().copied())
+        .output()?;
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    } else {
+        Err(io::Error::other(
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+        ))
+    }
+}
 
 pub(crate) fn noir_theme() -> Theme {
     Theme {

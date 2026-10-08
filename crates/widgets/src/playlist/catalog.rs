@@ -323,3 +323,266 @@ fn album_row(
     ]);
     truncate_line(Line::from_iter(pieces).style(row_style), row_width.count())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{sync::Arc, time::Duration};
+
+    use kernel::domain::{
+        appearance::Rgb,
+        catalog::{BrowseLevel, Catalog, Paging},
+        cursor::Cursor,
+        favorites::Favorites,
+        geometry::Cells,
+        server::{
+            Account,
+            AlbumId,
+            Endpoint,
+            Listing,
+            RemoteError,
+            Server,
+            ServerAlbum,
+            ServerName,
+            ServerStatus,
+            ServerTrackId,
+            Session,
+            UserName,
+        },
+        track::{CatalogRow, Tags, Track, TrackSource},
+    };
+    use ratatui::{
+        buffer::Buffer,
+        layout::Rect,
+        style::{Color, Style},
+    };
+    use rstest::rstest;
+
+    use crate::{
+        playlist::{
+            catalog::{CatalogWidget, album_row, title_line},
+            view::CatalogView,
+        },
+        primitive::{canvas::tests::find_text, marker::MARKERS_WIDTH},
+        test_support::noir,
+        theme::{active_theme::ActiveTheme, colors::Colors, rgb::ColorDepth},
+    };
+
+    fn album(album_id: &str, title: &str) -> ServerAlbum {
+        ServerAlbum {
+            album_id: AlbumId::new(album_id),
+            title: Arc::from(title),
+            artist: Arc::from("Miles Davis"),
+            year: Some(1959),
+            track_count: 5,
+            duration: Duration::from_secs(2_744),
+        }
+    }
+
+    fn server_track(title: &str) -> Arc<Track> {
+        let source = TrackSource::Server {
+            server_name: ServerName::new("home"),
+            server_track_id: ServerTrackId::new(title),
+        };
+        let tags = Tags {
+            title: Some(title.to_owned()),
+            ..Tags::default()
+        };
+        Arc::new(Track::tagged(source, Duration::from_secs(545), tags))
+    }
+
+    fn albums(count: usize, cursor_index: usize) -> Catalog {
+        let mut catalog = Catalog::new(ServerName::new("home"));
+        let level = &mut catalog.albums_level;
+        level.catalog_rows = (0..count)
+            .map(|index| {
+                CatalogRow::Album(album(
+                    &format!("a-{index}"),
+                    &format!("Album {index:02}"),
+                ))
+            })
+            .collect();
+        level.cursor = Cursor::at(count, cursor_index);
+        level.paging = Paging::Complete;
+        catalog
+    }
+
+    fn open_album(album_id: &str) -> Catalog {
+        Catalog {
+            album_level: Some(BrowseLevel {
+                listing: Listing::Album(AlbumId::new(album_id)),
+                catalog_rows: vec![
+                    CatalogRow::Track(server_track("So What")),
+                    CatalogRow::Track(server_track("Blue in Green")),
+                ],
+                cursor: Cursor::at(2, 0),
+                paging: Paging::Complete,
+            }),
+            ..albums(2, 0)
+        }
+    }
+
+    fn endpoint() -> Endpoint {
+        Endpoint::parse("https://music.example.com").unwrap()
+    }
+
+    fn online() -> ServerStatus {
+        ServerStatus::Online(Session::new(endpoint(), "u=mikey"))
+    }
+
+    fn offline() -> ServerStatus {
+        ServerStatus::Offline(RemoteError::Moved {
+            server_name: ServerName::new("home"),
+        })
+    }
+
+    fn server(server_status: ServerStatus) -> Server {
+        Server {
+            account: Account {
+                server_name: ServerName::new("home"),
+                endpoint: endpoint(),
+                user_name: UserName::new("mikey").unwrap(),
+            },
+            server_status,
+        }
+    }
+
+    fn painted(
+        catalog_view: CatalogView<'_>,
+        active_theme: ActiveTheme<'_>,
+        pane: Rect,
+    ) -> Buffer {
+        let widget = CatalogWidget::new(catalog_view, active_theme);
+        let areas = widget.areas(pane);
+        let mut buffer = Buffer::empty(pane);
+        widget.paint(&areas, &mut buffer);
+        buffer
+    }
+
+    #[rstest]
+    #[case::online(online(), Rect::new(2, 1, 35, 0), Rect::new(2, 1, 35, 8))]
+    #[case::offline(offline(), Rect::new(2, 1, 35, 1), Rect::new(2, 2, 35, 7))]
+    fn the_listed_rows_start_under_the_banner(
+        #[case] server_status: ServerStatus,
+        #[case] banner: Rect,
+        #[case] content: Rect,
+    ) {
+        let catalog = albums(3, 0);
+        let server = server(server_status);
+        let favorites = Favorites::default();
+        let theme = noir();
+        let widget = CatalogWidget::new(
+            CatalogView {
+                catalog: &catalog,
+                server: &server,
+                favorites: &favorites,
+                playing_track_source: None,
+            },
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
+        let areas = widget.areas(Rect::new(0, 0, 40, 10));
+        assert_eq!(
+            (areas.banner, areas.scroll_areas.content),
+            (banner, content)
+        );
+    }
+
+    #[rstest]
+    #[case::the_cursor_album(albums(3, 1), "Album 01", |colors: &Colors<Color>| {
+        colors.selection_foreground
+    })]
+    #[case::another_album(albums(3, 1), "Album 00", |colors: &Colors<Color>| {
+        colors.foreground
+    })]
+    #[case::the_playing_track(open_album("a-0"), "Blue in Green", |colors: &Colors<Color>| {
+        colors.highlight
+    })]
+    #[case::the_cursor_track(open_album("a-0"), "So What", |colors: &Colors<Color>| {
+        colors.selection_foreground
+    })]
+    fn a_catalog_row_wears_the_colour_of_its_state(
+        #[case] catalog: Catalog,
+        #[case] title: &str,
+        #[case] colour: fn(&Colors<Color>) -> Color,
+    ) {
+        let server = server(online());
+        let favorites = Favorites::default();
+        let playing = server_track("Blue in Green");
+        let mut theme = noir();
+        theme.colors.selection_foreground = Rgb([0xff, 0xff, 0xff]);
+        let buffer = painted(
+            CatalogView {
+                catalog: &catalog,
+                server: &server,
+                favorites: &favorites,
+                playing_track_source: Some(playing.source()),
+            },
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            Rect::new(0, 0, 60, 10),
+        );
+        let (x, y) = find_text(&buffer, title).expect("the row is painted");
+        let colors = ActiveTheme::new(&theme, ColorDepth::TrueColor).colors();
+        assert_eq!(buffer[(x, y)].style().fg, Some(colour(&colors)));
+    }
+
+    #[test]
+    fn a_pane_too_narrow_for_rows_paints_the_same_border_with_rows_or_without() {
+        let server = server(online());
+        let favorites = Favorites::default();
+        let theme = noir();
+        let pane = Rect::new(0, 0, 2, 10);
+        let listed = albums(20, 0);
+        let empty = albums(0, 0);
+        let buffers = [&listed, &empty].map(|catalog| {
+            painted(
+                CatalogView {
+                    catalog,
+                    server: &server,
+                    favorites: &favorites,
+                    playing_track_source: None,
+                },
+                ActiveTheme::new(&theme, ColorDepth::TrueColor),
+                pane,
+            )
+        });
+        assert_eq!(buffers[0], buffers[1]);
+    }
+
+    #[rstest]
+    #[case::the_cursor_album_is_open("a-0", "home · Albums: newest › Album 00")]
+    #[case::another_album_is_open("a-9", "home · Albums: newest")]
+    fn the_title_names_the_open_album_only_under_the_cursor(
+        #[case] album_id: &str,
+        #[case] expected: &str,
+    ) {
+        let catalog = open_album(album_id);
+        let server = server(online());
+        let favorites = Favorites::default();
+        let theme = noir();
+        let title = title_line(
+            Rect::new(0, 0, 80, 10),
+            CatalogView {
+                catalog: &catalog,
+                server: &server,
+                favorites: &favorites,
+                playing_track_source: None,
+            },
+            &ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
+        let text: String = title
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn a_truncated_album_title_keeps_one_blank_before_its_details() {
+        let details = "1959 · 5 tracks · 45:44";
+        let server_album = album("a-0", "Kind of Blue");
+        let row = album_row(&server_album, Cells(MARKERS_WIDTH + 34), Style::default());
+        let text: String = row.spans.iter().map(|span| span.content.as_ref()).collect();
+        assert!(text.ends_with(&format!(" {details}")), "got {text:?}");
+        assert!(!text.ends_with(&format!("  {details}")), "got {text:?}");
+    }
+}

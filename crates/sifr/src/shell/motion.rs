@@ -32,24 +32,21 @@ impl PaintClock {
                 first: now,
                 last: now,
             },
-            Self::Painted { first, last: _last } => Self::Painted { first, last: now },
+            Self::Painted { first, .. } => Self::Painted { first, last: now },
         }
     }
 
     pub(in crate::shell) fn elapsed(self, now: Moment) -> Duration {
         match self {
             Self::NotPainted => Duration::ZERO,
-            Self::Painted { first, last: _last } => now.elapsed_since(first),
+            Self::Painted { first, .. } => now.elapsed_since(first),
         }
     }
 
     fn last(self) -> Moment {
         match self {
             Self::NotPainted => Moment::default(),
-            Self::Painted {
-                last,
-                first: _first,
-            } => last,
+            Self::Painted { last, .. } => last,
         }
     }
 }

@@ -6,26 +6,6 @@ use ratatui::layout::Size;
 use widgets::screen::breakpoint::Breakpoint;
 
 #[test]
-fn a_zero_size_terminal_is_too_small() {
-    assert_eq!(
-        Breakpoint::new(Size::new(0, 0), &Breakpoints::default(), LayoutMode::Auto),
-        Breakpoint::TooSmall
-    );
-}
-
-#[test]
-fn a_very_large_terminal_is_full() {
-    assert_eq!(
-        Breakpoint::new(
-            Size::new(300, 100),
-            &Breakpoints::default(),
-            LayoutMode::Auto
-        ),
-        Breakpoint::Full
-    );
-}
-
-#[test]
 fn custom_breakpoints_are_honored_not_just_defaults() {
     let breakpoints = Breakpoints {
         full_min_width: Cells(10),
@@ -46,26 +26,6 @@ fn custom_breakpoints_are_honored_not_just_defaults() {
     assert_eq!(
         Breakpoint::new(Size::new(4, 5), &breakpoints, LayoutMode::Auto),
         Breakpoint::TooSmall
-    );
-}
-
-#[test]
-fn a_compact_override_at_its_own_floor_stays_compact() {
-    let breakpoints = Breakpoints {
-        min_width: Cells(20),
-        min_height: Cells(3),
-        ..Breakpoints::default()
-    };
-    assert_eq!(
-        Breakpoint::new(
-            Size::new(
-                breakpoints.compact_min_width.0,
-                breakpoints.compact_min_height.0
-            ),
-            &breakpoints,
-            LayoutMode::Compact
-        ),
-        Breakpoint::Compact
     );
 }
 

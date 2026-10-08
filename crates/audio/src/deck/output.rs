@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use crossbeam_channel::Sender;
 use kernel::{
     cmd::Playback,
     domain::{revision::Revision, speed::Speed},
@@ -9,14 +10,23 @@ use kernel::{
 use crate::{
     deck::{
         envelope::EnvelopeControl,
+        feed::{FeedCmd, feed_channel, play},
         mixer::{MixerControl, MixerOrder, RetiredVoices},
+        source::DecodedTrack,
         varispeed::{OutputFormat, Varispeed},
+        voice::Voice,
     },
-    engine::message::SinkRole,
+    engine::message::{AudioMessage, SinkRole},
 };
 
 pub(crate) struct Fader {
     pub(crate) control: EnvelopeControl,
+}
+
+pub(crate) struct Feeding<'a> {
+    pub(crate) speed: Speed,
+    pub(crate) callback_sender: &'a Sender<AudioMessage>,
+    pub(crate) feed_sender: &'a Sender<FeedCmd>,
 }
 
 pub(crate) struct Output {
@@ -48,12 +58,23 @@ impl Output {
         }
     }
 
-    pub(crate) fn varispeed(
+    pub(crate) fn voice(
         &self,
-        rate: u32,
-        speed: Speed,
-    ) -> Result<Varispeed, DecodeError> {
-        Varispeed::new(rate, self.format, speed).or(Err(DecodeError::Unsupported))
+        decoded_track: DecodedTrack,
+        feeding: &Feeding<'_>,
+    ) -> Result<(Box<Voice>, EnvelopeControl), DecodeError> {
+        let Feeding {
+            speed,
+            callback_sender,
+            feed_sender,
+        } = *feeding;
+        let varispeed =
+            Varispeed::new(decoded_track.decoder.sample_rate(), self.format, speed)
+                .or(Err(DecodeError::Unsupported))?;
+        let (source, feed) =
+            feed_channel(decoded_track, self.format.channels, callback_sender.clone());
+        let (envelope, control) = play(&source, feed, feed_sender);
+        Ok((Box::new(Voice::new(source, envelope, varispeed)), control))
     }
 
     pub(crate) fn swap_current(&mut self, speed: Speed) {

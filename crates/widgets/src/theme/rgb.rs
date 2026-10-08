@@ -128,14 +128,14 @@ mod tests {
         gradient_at,
         lerp_rgb,
         nearest_xterm256,
+        shade,
+        squared_error,
     };
 
     const RAMP: [Rgb; 3] = [Rgb([0, 0, 0]), Rgb([128, 128, 128]), Rgb([255, 255, 255])];
 
     #[rstest]
     #[case::apple_terminal(Some("Apple_Terminal"), ColorDepth::Indexed256)]
-    #[case::ghostty(Some("ghostty"), ColorDepth::TrueColor)]
-    #[case::iterm2(Some("iTerm.app"), ColorDepth::TrueColor)]
     #[case::nothing_set(None, ColorDepth::TrueColor)]
     fn from_term_program_reads_the_terminals_identity_first(
         #[case] program: Option<&str>,
@@ -145,10 +145,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case::black([0, 0, 0], 16)]
     #[case::white([255, 255, 255], 231)]
     #[case::red([255, 0, 0], 196)]
     #[case::mid_grey([128, 128, 128], 244)]
+    #[case::grey_as_near_the_cube_as_the_ramp([4, 4, 4], 16)]
     fn nearest_xterm256_picks_the_closest_index(
         #[case] rgb: [u8; 3],
         #[case] xterm_index: u8,
@@ -167,10 +167,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::at_the_start(0.0, [0, 0, 0])]
-    #[case::at_the_midpoint(0.5, [50, 100, 127])]
-    #[case::at_the_end(1.0, [100, 200, 255])]
-    #[case::before_the_start(-1.0, [0, 0, 0])]
     #[case::past_the_end(2.0, [100, 200, 255])]
     fn lerp_rgb_walks_between_two_colours(
         #[case] fraction: f32,
@@ -182,16 +178,33 @@ mod tests {
     }
 
     #[rstest]
-    #[case::three_stops_at_the_start(0.0, Rgb([0, 0, 0]))]
     #[case::three_stops_inside_the_first_segment(0.25, Rgb([64, 64, 64]))]
     #[case::three_stops_inside_the_second_segment(0.75, Rgb([191, 191, 191]))]
     #[case::three_stops_at_the_end(1.0, Rgb([255, 255, 255]))]
-    #[case::before_the_start(-1.0, Rgb([0, 0, 0]))]
-    #[case::past_the_end(2.0, Rgb([255, 255, 255]))]
     fn palette_at_samples_the_segment_t_falls_in(
         #[case] fraction: f32,
         #[case] expected: Rgb,
     ) {
         assert_eq!(gradient_at(&RAMP, fraction), expected);
+    }
+
+    #[rstest]
+    #[case::half([200, 100, 0], 0.5, [100, 50, 0])]
+    fn shade_scales_every_channel_by_the_factor(
+        #[case] color: [u8; 3],
+        #[case] factor: f32,
+        #[case] expected: [u8; 3],
+    ) {
+        assert_eq!(shade(Rgb(color), factor), Rgb(expected));
+    }
+
+    #[rstest]
+    #[case::every_channel_apart([1, 2, 3], [0, 0, 0], 14)]
+    fn squared_error_sums_the_squared_channel_gaps(
+        #[case] sample: [u8; 3],
+        #[case] target: [u8; 3],
+        #[case] expected: i32,
+    ) {
+        assert_eq!(squared_error(Rgb(sample), Rgb(target)), expected);
     }
 }

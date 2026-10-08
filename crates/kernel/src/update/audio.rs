@@ -87,20 +87,38 @@ pub(crate) fn update(
             playback_parts.transport.buffering_revision = None;
             Ok(Cmd::none())
         }
-        AudioEvent::PreloadCancelled => preload_cancelled(playback_parts),
-        AudioEvent::PreloadKept => playback_parts
-            .player
-            .preloaded()
+        AudioEvent::PreloadCancelled(revision) => {
+            preload_cancelled(playback_parts, revision)
+        }
+        AudioEvent::PreloadKept(revision) => preloaded(playback_parts, revision)
             .map(|_track| Cmd::none())
             .ok_or(Unhandled),
     }
 }
 
-fn preload_cancelled(playback_parts: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
+fn preloaded<'a>(
+    playback_parts: &'a PlaybackParts<'_>,
+    revision: Revision,
+) -> Option<&'a Arc<Track>> {
+    playback_parts.player.preloaded().filter(|track| {
+        playback_parts.downloads.iter().any(|download| {
+            download.media_fetch.revision == revision
+                && track.holds(&download.media_fetch)
+        })
+    })
+}
+
+fn preload_cancelled(
+    playback_parts: &mut PlaybackParts<'_>,
+    revision: Revision,
+) -> Result<Cmd, Unhandled> {
+    if preloaded(playback_parts, revision).is_none() {
+        return Err(Unhandled);
+    }
     let Player::Playing {
         track,
-        playhead: _playhead,
         preloaded: preloaded @ Some(_),
+        ..
     } = &mut *playback_parts.player
     else {
         return Err(Unhandled);
@@ -369,9 +387,7 @@ fn move_onto(
             move_onto_preloaded(playlist, queue, &committed);
         }
         Successor::Queued {
-            queue_index,
-            index,
-            track: _track,
+            queue_index, index, ..
         } => {
             queue.drain(..=queue_index);
             playlist.point_at(index);

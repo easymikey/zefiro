@@ -274,7 +274,6 @@ mod tests {
             loss_code,
             open_output,
             pick_config,
-            readable,
         },
         engine::message::AudioMessage,
         error::DeviceError,
@@ -301,6 +300,13 @@ mod tests {
         vec![range(2, 8_000..=96_000, cpal::SampleFormat::F32)],
         vec![
             (2, 96_000, cpal::SampleFormat::F32),
+            (2, 44_100, cpal::SampleFormat::F32),
+            (2, 8_000, cpal::SampleFormat::F32),
+        ]
+    )]
+    #[case::a_range_topping_at_the_cd_rate_tries_it_once(
+        vec![range(2, 8_000..=44_100, cpal::SampleFormat::F32)],
+        vec![
             (2, 44_100, cpal::SampleFormat::F32),
             (2, 8_000, cpal::SampleFormat::F32),
         ]
@@ -387,28 +393,18 @@ mod tests {
     }
 
     #[rstest]
-    #[case::device_gone(OutputError::DeviceGone)]
-    #[case::backend(OutputError::Backend)]
-    fn a_latched_loss_code_reads_back_as_its_output_error(#[case] error: OutputError) {
-        assert_eq!(latched(loss_code(error)), Some(error));
-    }
-
-    #[rstest]
-    #[case::clear(0)]
-    #[case::unknown(7)]
-    fn an_unlatched_code_reads_back_as_nothing(#[case] code: u8) {
-        assert_eq!(latched(code), None);
-    }
-
-    #[rstest]
-    #[case::a_plain_name(Ok("Speakers".to_owned()), Some(name("Speakers")))]
-    #[case::an_empty_name(Ok(String::new()), None)]
-    #[case::an_unreadable_name(unreadable(), None)]
-    fn readable_keeps_only_valid_names(
-        #[case] text: Result<String, cpal::DeviceNameError>,
-        #[case] expected: Option<DeviceName>,
+    #[case::device_gone(
+        loss_code(OutputError::DeviceGone),
+        Some(OutputError::DeviceGone)
+    )]
+    #[case::backend(loss_code(OutputError::Backend), Some(OutputError::Backend))]
+    #[case::clear(0, None)]
+    #[case::unknown(7, None)]
+    fn a_latched_loss_code_reads_back_as_its_output_error(
+        #[case] code: u8,
+        #[case] expected: Option<OutputError>,
     ) {
-        assert_eq!(readable(text), expected);
+        assert_eq!(latched(code), expected);
     }
 
     #[test]

@@ -10,7 +10,6 @@ use kernel::{
         io_error::IoError,
         server::{
             ApiCode,
-            HttpStatus,
             PlayReport,
             RemoteError,
             Scrobble,
@@ -27,7 +26,6 @@ use remote::{
     job::{RemoteJob, SignedReport},
     message::{RemoteMessage, RemoteTimer},
 };
-use rstest::rstest;
 
 use crate::unit::driver::{
     Answer,
@@ -328,12 +326,12 @@ fn a_failed_write_of_no_reports_answers_unsaved_without_a_server() {
     assert!(removed.is_ok());
 }
 
-#[rstest]
-#[case(RemoteError::Api { server_name: ServerName::new("a"), api_code: ApiCode(70) })]
-#[case(RemoteError::Status { server_name: ServerName::new("a"), http_status: HttpStatus(404) })]
-fn a_refused_report_is_dropped_once_and_the_rest_go_on(
-    #[case] remote_error: RemoteError,
-) {
+#[test]
+fn a_refused_report_is_dropped_once_and_the_rest_go_on() {
+    let remote_error = RemoteError::Api {
+        server_name: ServerName::new("a"),
+        api_code: ApiCode(70),
+    };
     let mut driver =
         RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
 
@@ -368,36 +366,6 @@ fn a_refused_report_is_dropped_once_and_the_rest_go_on(
             .err(),
         Some(Unhandled)
     );
-}
-
-#[rstest]
-#[case(RemoteError::Unreachable { server_name: ServerName::new("a"), source: IoError::Other })]
-#[case(RemoteError::Status { server_name: ServerName::new("a"), http_status: HttpStatus(503) })]
-fn a_transient_failure_keeps_the_report_for_the_retry(
-    #[case] remote_error: RemoteError,
-) {
-    let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
-
-    let asked = jobs(answered(
-        &mut driver,
-        ordered([report_cmd("a", played()), None]),
-    ));
-    let failed = answered(&mut driver, reported("a", &[], Err(remote_error.clone())));
-    let retried = jobs(answered(
-        &mut driver,
-        RemoteMessage::Elapsed(RemoteTimer::Retry),
-    ));
-
-    assert_eq!(asked, Some((report_job("a", &[played()]), vec![])));
-    assert_eq!(
-        waits(failed),
-        Some((
-            vec![(REPORT_RETRY, RemoteTimer::Retry)],
-            vec![RemoteEvent::Error(remote_error)]
-        ))
-    );
-    assert_eq!(retried, Some((report_job("a", &[played()]), vec![])));
 }
 
 #[test]

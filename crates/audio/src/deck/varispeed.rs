@@ -291,6 +291,7 @@ mod tests {
         domain::{bounded::Bounded, revision::Revision, speed::Speed},
     };
     use num_traits::ToPrimitive;
+    use rstest::rstest;
     use rubato::Resampler;
 
     use crate::{
@@ -340,12 +341,16 @@ mod tests {
         input: &[f32],
         frames: usize,
     ) -> (Vec<f32>, usize) {
-        let mut out = vec![0.0; frames * 2];
+        let channels = varispeed.channels;
+        let mut out = vec![0.0; frames * channels];
         let (mut read, mut written) = (0, 0);
         while written < frames {
             let block = (written + 256).min(frames);
             let (taken, given) = varispeed
-                .fill(&input[read * 2..], &mut out[written * 2..block * 2])
+                .fill(
+                    &input[read * channels..],
+                    &mut out[written * channels..block * channels],
+                )
                 .unwrap();
             if taken == 0 && given == 0 {
                 break;
@@ -404,22 +409,6 @@ mod tests {
     }
 
     #[test]
-    fn speed_two_consumes_twice_the_frames() {
-        let input = sine(440.0, 48_000.0, 20_000);
-        let mut varispeed =
-            Varispeed::new(48_000, STEREO_48K, Speed::clamped(2.0)).unwrap();
-
-        let (_, read) = run(&mut varispeed, &input, 4_800);
-
-        let delayed = delay(&varispeed);
-        let played = read - delayed;
-        assert!(
-            played.abs_diff(9_600) <= 3,
-            "{read} read, {delayed} delayed"
-        );
-    }
-
-    #[test]
     fn a_speed_step_continues_without_a_jump() {
         let input = sine(100.0, 48_000.0, 30_000);
         let mut varispeed =
@@ -433,6 +422,80 @@ mod tests {
         let own = largest_step(&samples[..4_700]);
         let across = largest_step(&samples[4_700..]);
         assert!(across < 1.5 * own, "step {across} against {own}");
+    }
+
+    #[test]
+    fn a_stereo_speed_step_plays_each_channel_as_a_mono_voice_does() {
+        let stereo_input = sine(440.0, 48_000.0, 6_000);
+        let mono_input = left(&stereo_input);
+        let mono_format = OutputFormat {
+            channels: 1,
+            rate: 48_000,
+        };
+        let mut stereo = Varispeed::new(48_000, STEREO_48K, Speed::default()).unwrap();
+        let mut mono = Varispeed::new(48_000, mono_format, Speed::default()).unwrap();
+
+        let (_, stereo_read) = run(&mut stereo, &stereo_input, 300);
+        let (_, mono_read) = run(&mut mono, &mono_input, 300);
+        stereo.set_speed(Speed::clamped(1.3));
+        mono.set_speed(Speed::clamped(1.3));
+        let (stereo_after, _) =
+            run(&mut stereo, &stereo_input[stereo_read * 2..], 2_000);
+        let (mono_after, _) = run(&mut mono, &mono_input[mono_read..], 2_000);
+
+        assert_eq!(left(&stereo_after), mono_after);
+    }
+
+    #[test]
+    fn a_partly_staged_block_asks_only_for_its_missing_frames() {
+        let input = sine(1_000.0, 44_100.0, 40);
+        let mut varispeed =
+            Varispeed::new(44_100, STEREO_48K, Speed::default()).unwrap();
+        let needed = varispeed.input_frames_next();
+
+        let filled = varispeed.fill(&input, &mut [0.0; 128]).unwrap();
+
+        assert_eq!(filled, (40, 0));
+        assert_eq!(varispeed.input_frames_next(), needed - 40);
+    }
+
+    #[rstest]
+    #[case::before_the_filter_delay_passes(10, 64, 64)]
+    #[case::after_a_partly_delivered_block(1_000, 650, 512)]
+    #[case::into_short_buffers(1_000, 650, 4)]
+    fn a_flush_renders_the_tail_silence_renders_and_ends_on_the_scaled_length(
+        #[case] frames: u16,
+        #[case] before: usize,
+        #[case] piece: usize,
+    ) {
+        let input = sine(1_000.0, 44_100.0, frames);
+        let mut flushed = Varispeed::new(44_100, STEREO_48K, Speed::default()).unwrap();
+        let mut silenced =
+            Varispeed::new(44_100, STEREO_48K, Speed::default()).unwrap();
+        let (read, written) = flushed.fill(&input, &mut vec![0.0; before * 2]).unwrap();
+        silenced.fill(&input, &mut vec![0.0; before * 2]).unwrap();
+
+        let mut tail = Vec::new();
+        loop {
+            let mut out = vec![0.0_f32; piece * 2];
+            let given = flushed.flush(&mut out).unwrap();
+            tail.extend_from_slice(&out[..given * 2]);
+            if given < piece {
+                break;
+            }
+        }
+        let mut silent = vec![0.0_f32; tail.len()];
+        let (_, given) = silenced.fill(&[0.0; 4_096], &mut silent).unwrap();
+
+        assert_eq!(given * 2, tail.len());
+        assert_eq!(tail, silent);
+        let played = written + tail.len() / 2;
+        let scaled = read * 48_000 / 44_100;
+        assert!(
+            played.abs_diff(scaled) <= 3,
+            "{read} read, {written} written, {} flushed",
+            tail.len() / 2
+        );
     }
 
     #[test]
@@ -493,22 +556,25 @@ mod tests {
         assert!(gap < 1e-6, "{gap} off, starting {:?}", &sought[..4]);
     }
 
-    #[test]
-    fn a_speed_at_each_end_of_the_range_consumes_four_times_and_a_quarter_of_the_frames()
-     {
+    #[rstest]
+    #[case::two(Speed::clamped(2.0), 9_600, 3)]
+    #[case::four(Speed::clamped(4.0), 19_200, 4)]
+    #[case::a_quarter(Speed::clamped(0.25), 1_200, 4)]
+    fn a_speed_consumes_its_multiple_of_the_frames(
+        #[case] speed: Speed,
+        #[case] expected: usize,
+        #[case] tolerance: usize,
+    ) {
         let input = sine(440.0, 48_000.0, 30_000);
-        for (speed, expected) in [(4.0, 19_200), (0.25, 1_200)] {
-            let mut varispeed =
-                Varispeed::new(48_000, STEREO_48K, Speed::clamped(speed)).unwrap();
+        let mut varispeed = Varispeed::new(48_000, STEREO_48K, speed).unwrap();
 
-            let (_, read) = run(&mut varispeed, &input, 4_800);
+        let (_, read) = run(&mut varispeed, &input, 4_800);
 
-            let delayed = delay(&varispeed);
-            let played = read - delayed;
-            assert!(
-                played.abs_diff(expected) <= 4,
-                "speed {speed}: {read} read, {delayed} delayed"
-            );
-        }
+        let delayed = delay(&varispeed);
+        let played = read - delayed;
+        assert!(
+            played.abs_diff(expected) <= tolerance,
+            "speed {speed:?}: {read} read, {delayed} delayed"
+        );
     }
 }

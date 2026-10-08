@@ -269,34 +269,6 @@ mod tests {
         });
     }
 
-    fn volume_text(fraction: f32, bar_width: u16) -> String {
-        painted(&BarFill::volume(fraction, Cells(bar_width)))
-            .spans
-            .iter()
-            .map(|s| s.content.to_string())
-            .collect()
-    }
-
-    #[rstest]
-    #[case::silent(0.0)]
-    #[case::half(0.5)]
-    #[case::full(1.0)]
-    fn the_volume_bar_is_solid_blocks_filling_every_row(#[case] fraction: f32) {
-        let row = volume_text(fraction, 16);
-
-        assert_eq!(row.chars().count(), 16, "the row fills the bar's width");
-        assert_eq!(
-            row.matches(glyphs::progress_line::FULL).count(),
-            0,
-            "the volume bar must not borrow the progress line's glyphs"
-        );
-        assert_ne!(row, progress_text(fraction, 16));
-        assert!(row.contains(glyphs::VOLUME_BLOCK));
-        insta::with_settings!({ snapshot_suffix => format!("{fraction}") }, {
-            insta::assert_snapshot!(row);
-        });
-    }
-
     #[rstest]
     #[case::silent(0.0, 0)]
     #[case::half(0.5, 8)]
@@ -325,5 +297,12 @@ mod tests {
             filled,
             "the fill colour reaches exactly the level"
         );
+        let text: String = cells.iter().map(|&(glyph, _)| glyph).collect();
+        assert_eq!(
+            text.matches(glyphs::progress_line::FULL).count(),
+            0,
+            "the volume bar must not borrow the progress line's glyphs"
+        );
+        assert_ne!(text, progress_text(fraction, 16));
     }
 }

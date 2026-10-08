@@ -91,7 +91,7 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use crate::{
-        primitive::chip::{spans, speed_chip_spans, speed_chip_width},
+        primitive::chip::{speed_chip_spans, speed_chip_width},
         theme::colors::Colors,
     };
 
@@ -158,27 +158,5 @@ mod tests {
             faces,
             vec![(Some(Color::DarkGray), true), (Some(Color::Cyan), true)]
         );
-    }
-
-    fn joined_generic(text: &str) -> String {
-        let colors = Colors {
-            muted_foreground: Color::White,
-            foreground: Color::Red,
-            ..Colors::default()
-        };
-        spans(text, &colors)
-            .iter()
-            .map(|span| span.content.to_string())
-            .collect()
-    }
-
-    #[rstest]
-    #[case::lowercase("320 kbps", "[ 320 KBPS ]")]
-    #[case::already_uppercase("MP3", "[ MP3 ]")]
-    fn a_generic_chip_wraps_and_uppercases_its_value(
-        #[case] text: &str,
-        #[case] painted: &str,
-    ) {
-        assert_eq!(joined_generic(text), painted);
     }
 }

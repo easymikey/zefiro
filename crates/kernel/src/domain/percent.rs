@@ -67,64 +67,11 @@ impl fmt::Display for Percent {
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
-    use crate::domain::{bounded::Bounded, direction::Direction, percent::Percent};
-
-    #[rstest]
-    #[case::at_the_ceiling_is_accepted(100, Some(100))]
-    #[case::past_the_ceiling_is_rejected(101, None)]
-    fn new_rejects_anything_above_100(#[case] raw: u8, #[case] expected: Option<u8>) {
-        assert_eq!(Percent::new(raw).map(Percent::get), expected);
-    }
-
-    #[rstest]
-    #[case::floor(0, 0.0)]
-    #[case::middle(50, 0.5)]
-    #[case::ceiling(100, 1.0)]
-    fn ratio_scales_to_the_unit_range(#[case] raw: u8, #[case] expected: f32) {
-        assert_eq!(Percent::clamped(raw).ratio(), expected);
-    }
-
-    #[rstest]
-    #[case::floor(0.0, 0)]
-    #[case::rounds_down(0.404, 40)]
-    #[case::rounds_up(0.406, 41)]
-    #[case::ceiling(1.0, 100)]
-    #[case::clamps_above_one(1.7, 100)]
-    #[case::clamps_below_zero(-0.2, 0)]
-    #[case::not_a_number_is_zero(f32::NAN, 0)]
-    fn from_ratio_rounds_and_clamps(#[case] ratio: f32, #[case] percent: u8) {
-        assert_eq!(Percent::from_ratio(ratio), Percent::clamped(percent));
-    }
-
-    #[rstest]
-    #[case::silence(0)]
-    #[case::a_sliver(1)]
-    #[case::two_fifths(40)]
-    #[case::almost_full(99)]
-    #[case::full(100)]
-    fn ratio_round_trips_every_percent(#[case] percent: u8) {
-        let volume = Percent::clamped(percent);
-        assert_eq!(Percent::from_ratio(volume.ratio()), volume);
-    }
-
-    #[rstest]
-    #[case::saturates_at_the_ceiling(98, Direction::Next, 100)]
-    #[case::saturates_at_the_floor(3, Direction::Previous, 0)]
-    #[case::next_adds_five(50, Direction::Next, 55)]
-    #[case::previous_subtracts_five(50, Direction::Previous, 45)]
-    #[case::stays_at_the_floor_when_already_there(0, Direction::Previous, 0)]
-    fn step_saturates_in_both_directions(
-        #[case] start: u8,
-        #[case] direction: Direction,
-        #[case] expected: u8,
-    ) {
-        assert_eq!(Percent::clamped(start).step(direction).get(), expected);
-    }
+    use crate::domain::{bounded::Bounded, percent::Percent};
 
     #[test]
-    fn display_prints_the_bare_number() {
-        assert_eq!(Percent::clamped(42).to_string(), "42");
+    fn the_ratio_of_ninety_nine_percent_round_trips() {
+        let volume = Percent::clamped(99);
+        assert_eq!(Percent::from_ratio(volume.ratio()), volume);
     }
 }

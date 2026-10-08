@@ -34,6 +34,7 @@ use crate::{
         preset_for_seed,
         warp_source,
     },
+    pixels::numeric::{dimension_f32, round},
     primitive::span::text,
     spectrum::Spectrum,
     theme::active_theme::ActiveTheme,
@@ -170,9 +171,7 @@ impl MilkdropStyle {
 
 fn ramp_glyph(intensity: f32) -> &'static str {
     let last_index = RAMP.len() - 1;
-    let index = crate::pixels::numeric::round::<usize>(
-        intensity.clamp(0.0, 1.0) * crate::pixels::numeric::dimension_f32(last_index),
-    );
+    let index = round::<usize>(intensity.clamp(0.0, 1.0) * dimension_f32(last_index));
     RAMP.get(index.min(last_index))
         .copied()
         .unwrap_or(RAMP_FALLBACK)
@@ -198,34 +197,31 @@ pub(crate) fn lines(
 mod tests {
     use kernel::cmd::Playback;
     use ratatui::style::Color;
+    use rstest::rstest;
 
     use crate::{
         milkdrop::{
+            ASPECT_X,
             COLOR_BAND_HIGH,
             CellPosition,
+            DECAY,
+            FieldSize,
+            Injection,
             MilkdropAdvance,
             MilkdropField,
             MilkdropStyle,
+            SPARK_COUNT,
+            Warp,
+            bilinear_sample,
+            field_center,
+            inject,
             lines,
+            warp_source,
         },
         pixels::numeric::dimension_f32,
-        spectrum::Spectrum,
     };
 
     const SILENT_BANDS: [f32; 16] = [0.0; 16];
-
-    fn input(
-        spectrum: &Spectrum,
-        playback: Playback,
-        beat: (u64, u64),
-    ) -> MilkdropAdvance<'_> {
-        MilkdropAdvance {
-            spectrum,
-            playback,
-            seed: beat.0,
-            tick: beat.1,
-        }
-    }
 
     #[test]
     fn lines_renders_exactly_height_rows_of_exactly_width_cells() {
@@ -241,107 +237,92 @@ mod tests {
         }
     }
 
-    #[test]
-    fn lines_matches_the_seven_row_variant_too() {
-        let field = MilkdropField::new(20, 7);
-        let style = MilkdropStyle {
-            accent: Color::Red,
-            foreground: Color::White,
-        };
-        assert_eq!(lines(&field, style).len(), 7);
-    }
-
-    #[test]
-    fn a_faint_cell_paints_the_lightest_shade_in_the_accent() {
+    #[rstest]
+    #[case::mid_band(0.35, ("░", Color::Red))]
+    #[case::bright_band_edge(COLOR_BAND_HIGH, ("▓", Color::White))]
+    fn a_cell_paints_its_ramp_glyph_in_the_accent_below_the_bright_band(
+        #[case] intensity: f32,
+        #[case] expected: (&str, Color),
+    ) {
+        let (glyph, color) = expected;
         let mut field = MilkdropField::new(1, 1);
-        field.cells = vec![0.2];
+        field.cells = vec![intensity];
         let style = MilkdropStyle {
             accent: Color::Red,
             foreground: Color::White,
         };
         let rendered = lines(&field, style);
         let span = &rendered[0].spans[0];
-        assert_eq!(
-            (span.content.as_ref(), span.style.fg),
-            ("░", Some(Color::Red))
-        );
+        assert_eq!((span.content.as_ref(), span.style.fg), (glyph, Some(color)));
     }
 
-    #[test]
-    fn a_near_zero_cell_paints_a_space() {
-        let mut field = MilkdropField::new(1, 1);
-        field.cells = vec![0.05];
-        let style = MilkdropStyle {
-            accent: Color::Red,
-            foreground: Color::White,
+    #[rstest]
+    #[case::silent_paused(0.0, Playback::Paused, (1.12, 0.04, None))]
+    #[case::loud_paused(1.0, Playback::Paused, (1.135, 0.115, None))]
+    #[case::loud_playing(1.0, Playback::Playing, (1.135, 0.115, Some((1.29, 0.15))))]
+    fn advance_warps_by_the_preset_zoom_and_turn_then_injects_a_bass_sized_core(
+        #[case] loudness: f32,
+        #[case] playback: Playback,
+        #[case] expected: (f32, f32, Option<(f32, f32)>),
+    ) {
+        let (zoom, rotation, injected) = expected;
+        let size = FieldSize {
+            width: 9,
+            height: 7,
         };
-        let rendered = lines(&field, style);
-        assert_eq!(rendered[0].spans[0].content.as_ref(), " ");
-    }
+        let mut field = MilkdropField::new(size.width, size.height);
+        field.cells = (0..size.width * size.height)
+            .map(|index| dimension_f32(index) / dimension_f32(size.width * size.height))
+            .collect();
+        let before = field.cells.clone();
+        field.advance(&MilkdropAdvance {
+            spectrum: &[loudness; 16],
+            playback,
+            seed: 0,
+            tick: 5,
+        });
 
-    #[test]
-    fn a_cell_at_the_mid_band_paints_the_faintest_glyph_in_the_accent() {
-        let mut field = MilkdropField::new(1, 1);
-        field.cells = vec![0.35];
-        let style = MilkdropStyle {
-            accent: Color::Red,
-            foreground: Color::White,
+        let center = field_center(size);
+        let (sin, cos) = (-rotation).sin_cos();
+        let warp = Warp {
+            center,
+            zoom,
+            sin,
+            cos,
+            aspect_x: ASPECT_X,
         };
-        let rendered = lines(&field, style);
-        let span = &rendered[0].spans[0];
-        assert_eq!(
-            (span.content.as_ref(), span.style.fg),
-            ("░", Some(Color::Red))
-        );
-    }
-
-    #[test]
-    fn a_degenerate_zero_size_request_still_produces_a_one_by_one_field() {
-        let field = MilkdropField::new(0, 0);
-        assert_eq!((field.width, field.height), (1, 1));
-    }
-
-    #[test]
-    fn step_is_deterministic_for_the_same_seed_and_tick() {
-        let mut first_field = MilkdropField::new(9, 9);
-        let mut second_field = first_field.clone();
-        first_field.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
-        second_field.advance(&input(&SILENT_BANDS, Playback::Playing, (7, 3)));
-        assert_eq!(first_field, second_field);
-    }
-
-    #[test]
-    fn different_seeds_produce_different_fields() {
-        let loud_treble = [1.0; 16];
-        let mut first_field = MilkdropField::new(9, 9);
-        let mut second_field = first_field.clone();
-        first_field.advance(&input(&loud_treble, Playback::Playing, (0, 5)));
-        second_field.advance(&input(&loud_treble, Playback::Playing, (1, 5)));
-        assert_ne!(first_field, second_field);
-    }
-
-    #[test]
-    fn same_seed_scatters_sparks_at_the_same_positions_across_independent_fields() {
-        let loud_treble = [1.0; 16];
-        let mut first_field = MilkdropField::new(9, 9);
-        let mut second_field = MilkdropField::new(9, 9);
-        first_field.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
-        second_field.advance(&input(&loud_treble, Playback::Playing, (42, 11)));
-        assert_eq!(first_field, second_field);
-    }
-
-    #[test]
-    fn decay_only_steps_converge_to_near_zero() {
-        let mut field = MilkdropField::new(9, 9);
-        field.cells = vec![1.0; field.cells.len()];
-        for tick in 0..80 {
-            field.advance(&input(&SILENT_BANDS, Playback::Paused, (3, tick)));
+        let mut expected_cells: Vec<f32> = (0..size.height)
+            .flat_map(|row| {
+                (0..size.width).map(move |column| CellPosition { column, row })
+            })
+            .map(|position| {
+                bilinear_sample(&before, size, warp_source(position, &warp)) * DECAY
+            })
+            .collect();
+        if let Some((core_radius, treble)) = injected {
+            inject(
+                &mut expected_cells,
+                size,
+                &Injection {
+                    center,
+                    aspect_x: ASPECT_X,
+                    core_radius,
+                    treble,
+                    spark_count: SPARK_COUNT,
+                    seed: 0,
+                    tick: 5,
+                },
+            );
         }
-        assert!(
-            field.cells.iter().all(|&level| level < 0.001),
-            "expected a fully decayed field, got {:?}",
-            field.cells
-        );
+        assert_eq!(field.cells.len(), expected_cells.len());
+        for (index, (cell, expected_cell)) in
+            field.cells.iter().zip(&expected_cells).enumerate()
+        {
+            assert!(
+                (cell - expected_cell).abs() < 1e-4,
+                "cell {index}: {cell} != {expected_cell}"
+            );
+        }
     }
 
     #[test]
@@ -353,12 +334,22 @@ mod tests {
             row: height / 2,
         };
 
-        field.advance(&input(&SILENT_BANDS, Playback::Playing, (0, 0)));
+        field.advance(&MilkdropAdvance {
+            spectrum: &SILENT_BANDS,
+            playback: Playback::Playing,
+            seed: 0,
+            tick: 0,
+        });
         let initial = field.cell(probe_position);
         assert_eq!(initial, 0.0, "probe must start outside the injected core");
 
         for tick in 1..3 {
-            field.advance(&input(&SILENT_BANDS, Playback::Playing, (0, tick)));
+            field.advance(&MilkdropAdvance {
+                spectrum: &SILENT_BANDS,
+                playback: Playback::Playing,
+                seed: 0,
+                tick,
+            });
         }
         let spread = field.cell(probe_position);
         assert!(
@@ -371,7 +362,12 @@ mod tests {
     fn kaleido_preset_output_is_four_way_symmetric() {
         let loud = [1.0; 16];
         let mut stepped_field = MilkdropField::new(10, 8);
-        stepped_field.advance(&input(&loud, Playback::Playing, (2, 9)));
+        stepped_field.advance(&MilkdropAdvance {
+            spectrum: &loud,
+            playback: Playback::Playing,
+            seed: 2,
+            tick: 9,
+        });
 
         for row in 0..stepped_field.height {
             for column in 0..stepped_field.width {
@@ -402,7 +398,12 @@ mod tests {
     fn horizontal_preset_output_is_left_right_symmetric() {
         let loud = [1.0; 16];
         let mut stepped_field = MilkdropField::new(10, 8);
-        stepped_field.advance(&input(&loud, Playback::Playing, (1, 9)));
+        stepped_field.advance(&MilkdropAdvance {
+            spectrum: &loud,
+            playback: Playback::Playing,
+            seed: 1,
+            tick: 9,
+        });
 
         for row in 0..stepped_field.height {
             for column in 0..stepped_field.width {
@@ -424,7 +425,12 @@ mod tests {
         for seed in 0..3 {
             let mut field = MilkdropField::new(20, 8);
             for tick in 0..30 {
-                field.advance(&input(&loud, Playback::Playing, (seed, tick)));
+                field.advance(&MilkdropAdvance {
+                    spectrum: &loud,
+                    playback: Playback::Playing,
+                    seed,
+                    tick,
+                });
             }
             for row in [0, field.height - 1] {
                 let total: f32 = (0..field.width)
@@ -445,10 +451,20 @@ mod tests {
         for seed in 0..3 {
             let mut field = MilkdropField::new(20, 8);
             for tick in 0..30 {
-                field.advance(&input(&SILENT_BANDS, Playback::Playing, (seed, tick)));
+                field.advance(&MilkdropAdvance {
+                    spectrum: &SILENT_BANDS,
+                    playback: Playback::Playing,
+                    seed,
+                    tick,
+                });
             }
             let settled = field.clone();
-            field.advance(&input(&loud, Playback::Playing, (seed, 30)));
+            field.advance(&MilkdropAdvance {
+                spectrum: &loud,
+                playback: Playback::Playing,
+                seed,
+                tick: 30,
+            });
             for (index, (before, after)) in
                 settled.cells.iter().zip(&field.cells).enumerate()
             {

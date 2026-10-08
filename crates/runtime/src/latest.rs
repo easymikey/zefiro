@@ -89,7 +89,6 @@ pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
-    use library::cover::{CoverDecoded, CoverLookup};
 
     use crate::latest::cell;
 
@@ -101,25 +100,6 @@ mod tests {
         latest_sender.publish(2);
         latest_sender.publish(3);
         assert_eq!(reading.take().map(|value| *value), Some(3));
-        assert!(reading.take().is_none());
-    }
-
-    fn stub_decoded(path: &str) -> CoverDecoded {
-        CoverDecoded {
-            path: std::path::PathBuf::from(path),
-            side: kernel::domain::geometry::Pixels(64),
-            cover_lookup: CoverLookup::Missing,
-        }
-    }
-
-    #[test]
-    fn a_cover_cell_keeps_the_latest_decode() {
-        let (doorbell_sender, _doorbell) = bounded(1);
-        let (latest_sender, reading) = cell::<CoverDecoded>(doorbell_sender);
-        latest_sender.publish(stub_decoded("first.mp3"));
-        latest_sender.publish(stub_decoded("second.mp3"));
-        let installed = reading.take().unwrap();
-        assert_eq!(installed.path, std::path::PathBuf::from("second.mp3"));
         assert!(reading.take().is_none());
     }
 

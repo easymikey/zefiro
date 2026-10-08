@@ -1,7 +1,7 @@
 use kernel::domain::geometry::Pixels;
 use tiny_skia::{Path, PathBuilder};
 
-use crate::pixels::numeric::{dimension_f32, floor};
+use crate::pixels::numeric::{ceil, dimension_f32};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct VinylLayout {
@@ -10,7 +10,6 @@ pub(crate) struct VinylLayout {
     pub(crate) groove_count: u32,
     pub(crate) groove_spacing: f32,
     pub(crate) label_radius_fraction: f32,
-    pub(crate) spindle_radius_fraction: f32,
     pub(crate) border_width: f32,
     pub(crate) label_border_width: f32,
     pub(crate) sleeve_padding: f32,
@@ -26,7 +25,6 @@ pub(crate) const VINYL_LAYOUT: VinylLayout = VinylLayout {
     groove_count: 8,
     groove_spacing: 0.0140,
     label_radius_fraction: 0.46,
-    spindle_radius_fraction: 0.0083,
     border_width: 0.0042,
     label_border_width: 0.0063,
     sleeve_padding: 0.0208,
@@ -94,9 +92,7 @@ impl VinylGeometry {
         let shadow_margin =
             VINYL_LAYOUT.shadow_offset * size * shadow_horizontal_reach_fraction();
         Self {
-            width: Pixels(
-                height.saturating_add(floor::<u32>((peek + shadow_margin).ceil())),
-            ),
+            width: Pixels(height.saturating_add(ceil::<u32>(peek + shadow_margin))),
             height: Pixels(height),
             record_radius,
             label_radius: record_radius * VINYL_LAYOUT.label_radius_fraction,
@@ -162,15 +158,37 @@ pub(crate) fn circle_path(disc: Disc) -> Option<Path> {
 #[cfg(test)]
 mod tests {
     use kernel::domain::geometry::Pixels;
+    use rstest::rstest;
 
     use crate::pixels::{
         numeric::dimension_f32,
         vinyl::geometry::{
+            RoundedRect,
             VINYL_LAYOUT,
             VinylGeometry,
+            rounded_rect_path,
             shadow_horizontal_reach_fraction,
         },
     };
+
+    #[rstest]
+    #[case::zero_width(RoundedRect { x: 0.0, y: 0.0, width: 0.0, height: 10.0, radius: 2.0 })]
+    #[case::zero_height(RoundedRect { x: 0.0, y: 0.0, width: 10.0, height: 0.0, radius: 2.0 })]
+    #[case::negative_width(RoundedRect { x: 0.0, y: 0.0, width: -4.0, height: 10.0, radius: 2.0 })]
+    #[case::negative_height(RoundedRect { x: 0.0, y: 0.0, width: 10.0, height: -4.0, radius: 2.0 })]
+    fn a_rect_without_area_has_no_path(#[case] rect: RoundedRect) {
+        assert!(rounded_rect_path(rect).is_none());
+    }
+
+    #[rstest]
+    #[case::tall(RoundedRect { x: 0.0, y: 0.0, width: 10.0, height: 40.0, radius: 100.0 })]
+    #[case::wide(RoundedRect { x: 0.0, y: 0.0, width: 40.0, height: 10.0, radius: 100.0 })]
+    fn the_corner_radius_stays_within_half_the_shorter_side(#[case] rect: RoundedRect) {
+        assert_eq!(
+            rounded_rect_path(rect).map(|path| path.bounds()),
+            tiny_skia::Rect::from_xywh(rect.x, rect.y, rect.width, rect.height)
+        );
+    }
 
     #[test]
     fn disc_and_shadow_fit_inside_the_canvas() {

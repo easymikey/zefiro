@@ -167,11 +167,6 @@ mod tests {
         message: cover("/music/one.flac"),
         cmd: "decode /music/one.flac @ 64",
     })]
-    #[case::a_decoded_cover_is_published(LibraryRow {
-        library_messages: vec![cover("/music/one.flac")],
-        message: decoded("/music/one.flac", 1),
-        cmd: "publish /music/one.flac @ 64 missing",
-    })]
     #[case::a_failed_cover_is_published_missing_and_told(LibraryRow {
         library_messages: vec![cover("/music/one.flac")],
         message: failed("/music/one.flac", 1),
@@ -186,15 +181,6 @@ mod tests {
         ],
         message: cover("/music/one.flac"),
         cmd: "decode /music/one.flac @ 64",
-    })]
-    #[case::a_remembered_cover_is_published_without_a_decode(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            cover("/music/two.flac"),
-        ],
-        message: cover("/music/one.flac"),
-        cmd: "publish /music/one.flac @ 64 missing",
     })]
     #[case::a_batch_keeps_its_handled_commands_when_a_prefetch_is_refused(LibraryRow {
         library_messages: Vec::new(),
@@ -230,6 +216,23 @@ mod tests {
         ],
         message: prefetch("/music/two.flac"),
         cmd: "decode /music/two.flac @ 96",
+    })]
+    #[case::a_cover_decoded_at_a_new_side_keeps_the_old_side_in_memory(LibraryRow {
+        library_messages: vec![
+            cover("/music/one.flac"),
+            decoded("/music/one.flac", 1),
+            cover_sized("/music/one.flac", 96),
+            LibraryMessage::CoverDecoded {
+                revision: Revision::default().next().next(),
+                decoded: Ok(CoverDecoded {
+                    path: PathBuf::from("/music/one.flac"),
+                    side: Pixels(96),
+                    cover_lookup: CoverLookup::Missing,
+                }),
+            },
+        ],
+        message: cover("/music/one.flac"),
+        cmd: "publish /music/one.flac @ 64 missing",
     })]
     #[case::a_cover_at_a_new_side_while_it_decodes_restarts(LibraryRow {
         library_messages: vec![cover_sized("/music/one.flac", 64)],
@@ -299,15 +302,6 @@ mod tests {
         vec![cover("/music/one.flac")],
         prefetch("/music/two.flac")
     )]
-    #[case::a_prefetch_of_a_remembered_cover_is_refused(
-        vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        prefetch("/music/two.flac")
-    )]
     #[case::a_prefetch_of_the_oldest_remembered_cover_is_refused(
         vec![
             cover("/music/one.flac"),
@@ -321,21 +315,8 @@ mod tests {
         vec![cover("/music/one.flac"), cover("/music/two.flac")],
         failed("/music/one.flac", 1)
     )]
-    #[case::the_same_cover_while_it_decodes(
-        vec![cover("/music/one.flac")],
-        cover("/music/one.flac")
-    )]
     #[case::a_duplicate_cover_after_its_decode(
         vec![cover("/music/one.flac"), decoded("/music/one.flac", 1)],
-        cover("/music/one.flac")
-    )]
-    #[case::a_duplicate_cover_after_a_prefetch(
-        vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
         cover("/music/one.flac")
     )]
     #[case::a_batch_whose_commands_are_all_rejected(

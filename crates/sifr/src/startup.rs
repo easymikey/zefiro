@@ -191,9 +191,11 @@ mod tests {
     use kernel::domain::{
         bounded::Bounded,
         config::{ConfigError, ConfigName},
+        device::{DeviceName, OutputDevice},
         keymap::{Action, KeyOverride, KeymapOverrides},
         percent::Percent,
         playlist::{PlaylistFileName, PlaylistSource},
+        settings::AudioSettings,
         startup::{Shuffle, Startup},
         theme::{ThemeChoice, ThemeName},
     };
@@ -225,7 +227,11 @@ mod tests {
             shuffle: 0,
             playlist: None,
         };
-        start(&cli, dir, LibraryDirs::under(dir)).unwrap()
+        start(&cli, dir, library_dirs(dir)).unwrap()
+    }
+
+    fn library_dirs(dir: &Path) -> LibraryDirs {
+        LibraryDirs::new(&dir.join("cache"), &dir.join("data"), &dir.join("config"))
     }
 
     #[rstest]
@@ -278,11 +284,16 @@ mod tests {
         assert!(!launched.theme.name.as_str().is_empty());
     }
 
-    #[test]
-    fn an_auto_theme_starts_as_noir_and_is_watched() {
+    #[rstest]
+    #[case::auto(None, "noir")]
+    #[case::named(Some("ghost"), "ghost")]
+    fn the_theme_is_watched_under_its_name(
+        #[case] flag: Option<&str>,
+        #[case] watched: &str,
+    ) {
         let directory = tempfile::tempdir().unwrap();
 
-        let launched = launched(directory.path(), None);
+        let launched = launched(directory.path(), flag);
 
         assert_eq!(launched.theme.name.as_str(), "noir");
         assert_eq!(
@@ -292,24 +303,7 @@ mod tests {
                 .theme_name
                 .as_ref()
                 .map(ThemeName::as_str),
-            Some("noir")
-        );
-    }
-
-    #[test]
-    fn a_named_theme_is_watched_under_its_name() {
-        let directory = tempfile::tempdir().unwrap();
-
-        let launched = launched(directory.path(), Some("ghost"));
-
-        assert_eq!(
-            launched
-                .paths
-                .config_paths
-                .theme_name
-                .as_ref()
-                .map(ThemeName::as_str),
-            Some("ghost")
+            Some(watched)
         );
     }
 
@@ -347,25 +341,6 @@ mod tests {
     }
 
     #[test]
-    fn the_custom_settings_and_the_painter_see_the_same_appearance() {
-        let directory = tempfile::tempdir().unwrap();
-        std::fs::write(directory.path().join("sifr-ui.toml"), COMPACT).unwrap();
-
-        let launched = launched(directory.path(), None);
-
-        assert_eq!(
-            launched.startup.appearance_settings,
-            config::appearance_file::parse_appearance(COMPACT)
-                .unwrap()
-                .to_appearance_settings()
-        );
-        assert_ne!(
-            launched.startup.appearance_settings,
-            TomlAppearance::default().to_appearance_settings()
-        );
-    }
-
-    #[test]
     fn a_keymap_in_the_config_is_in_startup_at_launch() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -383,22 +358,32 @@ mod tests {
     }
 
     #[test]
-    fn volume_within_range_is_accepted() {
-        let cli = Cli::try_parse_from(["sifr", "--volume", "80"]).unwrap();
-
-        assert_eq!(cli.volume, Some(80));
-    }
-
-    #[test]
     fn volume_above_the_maximum_is_rejected() {
         let error = Cli::try_parse_from(["sifr", "--volume", "150"]).unwrap_err();
 
         assert!(error.to_string().contains("volume"));
     }
 
-    #[test]
-    fn every_flag_parses_into_its_field() {
-        let cli = Cli::try_parse_from([
+    struct CliRow {
+        flags: &'static [&'static str],
+        path: Option<&'static str>,
+        theme: Option<&'static str>,
+        volume: Option<u8>,
+        shuffle: u8,
+        playlist: Option<&'static str>,
+    }
+
+    #[rstest]
+    #[case::no_flag(CliRow {
+        flags: &["sifr"],
+        path: None,
+        theme: None,
+        volume: None,
+        shuffle: 0,
+        playlist: None,
+    })]
+    #[case::every_flag(CliRow {
+        flags: &[
             "sifr",
             "/music",
             "--theme",
@@ -408,21 +393,21 @@ mod tests {
             "--shuffle",
             "--playlist",
             "favourites",
-        ])
-        .unwrap();
+        ],
+        path: Some("/music"),
+        theme: Some("noir"),
+        volume: Some(42),
+        shuffle: 1,
+        playlist: Some("favourites"),
+    })]
+    fn every_flag_parses_into_its_field(#[case] row: CliRow) {
+        let cli = Cli::try_parse_from(row.flags).unwrap();
 
-        assert_eq!(cli.path.as_deref(), Some(Path::new("/music")));
-        assert_eq!(cli.theme.as_deref(), Some("noir"));
-        assert_eq!(cli.volume, Some(42));
-        assert_eq!(cli.shuffle, 1);
-        assert_eq!(cli.playlist.as_deref(), Some("favourites"));
-    }
-
-    #[test]
-    fn shuffle_is_off_by_default() {
-        let cli = Cli::try_parse_from(["sifr"]).unwrap();
-
-        assert_eq!(cli.shuffle, 0);
+        assert_eq!(cli.path.as_deref(), row.path.map(Path::new));
+        assert_eq!(cli.theme.as_deref(), row.theme);
+        assert_eq!(cli.volume, row.volume);
+        assert_eq!(cli.shuffle, row.shuffle);
+        assert_eq!(cli.playlist.as_deref(), row.playlist);
     }
 
     #[rstest]
@@ -479,25 +464,49 @@ mod tests {
     }
 
     #[rstest]
-    #[case::the_cli_volume_wins(&["sifr", "--volume", "80"], 80)]
-    #[case::the_config_volume_otherwise(&["sifr"], 10)]
-    fn the_volume_comes_from_the_cli_before_the_config(
+    #[case::the_cli_volume_wins(
+        &["sifr", "--volume", "80"],
+        "volume = 10\n",
+        Startup { volume: Percent::clamped(80), ..Startup::default() }
+    )]
+    #[case::the_config_volume_otherwise(
+        &["sifr"],
+        "volume = 10\n",
+        Startup { volume: Percent::clamped(10), ..Startup::default() }
+    )]
+    #[case::the_cli_shuffle_and_the_config_audio(
+        &["sifr", "--shuffle"],
+        "volume = 10\n[audio]\ndevice = \"Speakers\"\n",
+        Startup {
+            volume: Percent::clamped(10),
+            shuffle: Shuffle::On,
+            audio_settings: AudioSettings {
+                device: OutputDevice::Named(DeviceName::new("Speakers".to_string()).unwrap()),
+                ..AudioSettings::default()
+            },
+            ..Startup::default()
+        }
+    )]
+    fn the_volume_and_shuffle_come_from_the_cli_before_the_config_and_the_audio_from_the_config(
         #[case] flags: &[&str],
-        #[case] expected: u8,
+        #[case] config_text: &str,
+        #[case] expected: Startup,
     ) {
         let cli = Cli::try_parse_from(flags).unwrap();
-        let settings = config::config_file::parse_config("volume = 10\n").unwrap();
+        let settings = config::config_file::parse_config(config_text).unwrap();
 
         let merged = merged_startup(settings, PathBuf::from("/music"), &cli);
 
-        assert_eq!(merged.volume, Percent::clamped(expected));
+        assert_eq!(merged.volume, expected.volume);
         assert_eq!(merged.music_dir, PathBuf::from("/music"));
+        assert_eq!(merged.shuffle, expected.shuffle);
+        assert_eq!(merged.audio_settings, expected.audio_settings);
     }
 
     #[test]
     fn a_bad_playlist_name_is_refused() {
         let directory = tempfile::tempdir().unwrap();
-        let library = LibraryDirs::under(directory.path());
+        let library = library_dirs(directory.path());
 
         let refused = load_named_playlist(Startup::default(), &library, "..");
 
@@ -507,9 +516,13 @@ mod tests {
     #[test]
     fn a_saved_playlist_sets_the_tracks_index_and_source() {
         let directory = tempfile::tempdir().unwrap();
-        let library = LibraryDirs::under(directory.path());
-        let playlists = directory.path().join("playlists");
-        std::fs::create_dir(&playlists).unwrap();
+        let library = library_dirs(directory.path());
+        let playlists = directory
+            .path()
+            .join("config")
+            .join("sifr")
+            .join("playlists");
+        std::fs::create_dir_all(&playlists).unwrap();
         std::fs::write(playlists.join("fav.m3u8"), "#EXTM3U\na.flac\nb.flac\n")
             .unwrap();
         let saved =

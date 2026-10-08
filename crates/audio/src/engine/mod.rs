@@ -131,15 +131,6 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn error() -> AudioError {
-        AudioError::OpenDevice {
-            requested_device: OutputDevice::SystemDefault,
-            diagnostic: kernel::domain::config::Diagnostic::from_error(
-                &std::io::Error::other("no output device available"),
-            ),
-        }
-    }
-
     pub(crate) fn decode_error() -> AudioError {
         AudioError::Decode {
             path: "/a".into(),

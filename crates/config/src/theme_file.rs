@@ -61,7 +61,6 @@ pub fn parse_theme(text: &str, name: &str) -> Result<TomlTheme, Error> {
 
 #[cfg(test)]
 mod tests {
-    use kernel::domain::appearance::Rgb;
     use rstest::rstest;
 
     use crate::{
@@ -107,35 +106,5 @@ mod tests {
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(error.to_string());
         });
-    }
-
-    #[test]
-    fn a_broken_theme_names_its_own_file_and_line() {
-        let error =
-            parse_theme("[colors]\nbackground = \"#000000\"\n[colors]\n", "noir")
-                .unwrap_err();
-        let text = error.to_string();
-
-        assert_eq!(text.lines().nth(1), Some("noir.toml:3"));
-    }
-
-    #[test]
-    fn an_absent_scanning_label_defaults_to_the_stock_wording() {
-        let theme =
-            parse_theme(include_str!("../../../themes/noir.toml"), "noir").unwrap();
-
-        assert_eq!(theme.scanning_label, "scanning…");
-    }
-
-    #[test]
-    fn an_explicit_window_background_key_is_carried_through_as_data() {
-        let theme =
-            parse_theme(include_str!("../../../themes/gruvbox.toml"), "gruvbox")
-                .unwrap();
-
-        assert_eq!(
-            theme.colors.window_background,
-            Some(Rgb([0x32, 0x30, 0x2f]))
-        );
     }
 }

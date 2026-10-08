@@ -24,7 +24,6 @@ use kernel::{
         toast::ToastLevel,
     },
     message::{DriverEvent, Message},
-    update::machine::Unhandled,
 };
 
 use crate::support::{
@@ -42,45 +41,65 @@ fn died(driver_name: DriverName) -> Message {
     }
 }
 
-#[test]
-fn a_driver_death_is_recorded_and_told_as_an_error() {
-    let mut model = playing_model(3);
-
-    let cmd = update(&mut model, died(DriverName::Config), Moment::default()).unwrap();
-
-    assert_eq!(
-        cmd,
-        Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()])
-    );
-
-    assert_eq!(
-        model.drivers.status(DriverName::Config),
-        &DriverStatus::Dead(DriverError::Panicked)
-    );
-    assert_eq!(
-        model.workspace.toasts.first().map(|toast| (
-            toast.level,
-            toast.title.as_str(),
-            toast.text.as_deref()
-        )),
-        Some((
-            ToastLevel::Error,
-            "The config driver stopped",
-            Some("panicked")
-        ))
-    );
+struct ToastRow {
+    driver_name: DriverName,
+    event: DriverEvent,
+    status: DriverStatus,
+    toast: (ToastLevel, &'static str, Option<&'static str>),
 }
 
-#[test]
-fn a_driver_death_while_stopped_is_refused() {
+#[rstest::rstest]
+#[case::a_death_is_recorded_and_told_as_an_error(ToastRow {
+    driver_name: DriverName::Config,
+    event: DriverEvent::Died(DriverError::Panicked),
+    status: DriverStatus::Dead(DriverError::Panicked),
+    toast: (ToastLevel::Error, "The config driver stopped", Some("panicked")),
+})]
+#[case::congestion_names_the_driver(ToastRow {
+    driver_name: DriverName::Library,
+    event: DriverEvent::Full,
+    status: DriverStatus::Running,
+    toast: (ToastLevel::Info, "The library driver is falling behind", None),
+})]
+fn a_driver_report_raises_one_toast(#[case] row: ToastRow) {
+    let ToastRow {
+        driver_name,
+        event,
+        status,
+        toast,
+    } = row;
     let mut model = playing_model(3);
-    model.drivers.record_mut(DriverName::Audio).status = DriverStatus::Stopped;
-    let before = model.drivers.clone();
 
-    let answer = update(&mut model, died(DriverName::Audio), Moment::default());
+    let cmd = update(
+        &mut model,
+        Message::Driver { driver_name, event },
+        Moment::default(),
+    );
 
-    assert_eq!(answer, Err(Unhandled));
-    assert_eq!(model.drivers, before);
+    assert_eq!(
+        (
+            cmd,
+            model.drivers.status(driver_name),
+            model
+                .workspace
+                .toasts
+                .iter()
+                .map(|raised| (
+                    raised.level,
+                    raised.title.as_str(),
+                    raised.text.as_deref()
+                ))
+                .collect::<Vec<_>>()
+        ),
+        (
+            Ok(Cmd::from_iter([
+                Effect::Animate(Cue::ToastRaised),
+                first_toast_expiry()
+            ])),
+            &status,
+            vec![toast]
+        )
+    );
 }
 
 struct StrategyRow {
@@ -225,38 +244,6 @@ fn a_remote_restart_shows_every_server_connecting_and_connects_each_once() {
                 credential: Credential::Stored,
             })))
             .collect::<Vec<_>>()
-    );
-}
-
-#[test]
-fn congestion_raises_one_toast_naming_the_driver() {
-    let mut model = Model::default();
-
-    let cmd = update(
-        &mut model,
-        Message::Driver {
-            driver_name: DriverName::Library,
-            event: DriverEvent::Full,
-        },
-        Moment::default(),
-    )
-    .unwrap();
-
-    assert_eq!(
-        cmd,
-        Cmd::from_iter([Effect::Animate(Cue::ToastRaised), first_toast_expiry()])
-    );
-    assert_eq!(
-        model
-            .workspace
-            .toasts
-            .first()
-            .map(|toast| (toast.level, toast.title.as_str())),
-        Some((ToastLevel::Info, "The library driver is falling behind"))
-    );
-    assert_eq!(
-        model.drivers.status(DriverName::Library),
-        &DriverStatus::Running
     );
 }
 

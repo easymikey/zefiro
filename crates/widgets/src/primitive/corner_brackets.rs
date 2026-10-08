@@ -49,13 +49,11 @@ pub(crate) fn corner_positions(area: Rect) -> [(u16, u16, char); 4] {
 #[cfg(test)]
 mod tests {
     use ratatui::{buffer::Buffer, layout::Rect, style::Color, widgets::Widget};
+    use rstest::rstest;
 
-    use crate::{
-        primitive::{
-            corner_brackets::{CornerBracketsWidget, corner_positions, expand},
-            glyphs,
-        },
-        test_support::rendered,
+    use crate::primitive::{
+        corner_brackets::{CornerBracketsWidget, corner_positions, expand},
+        glyphs::corner::{BOTTOM_LEFT, BOTTOM_RIGHT, TOP_LEFT, TOP_RIGHT},
     };
 
     fn symbols(buffer: &Buffer) -> String {
@@ -91,56 +89,35 @@ mod tests {
         assert_eq!(symbols(&buffer), "      ⌜ ");
     }
 
-    #[test]
-    fn corner_brackets_widget_snapshot() {
-        let rendered = rendered(8, 4, |frame| {
-            frame.render_widget(&CornerBracketsWidget::new(Color::White), frame.area());
-        })
-        .to_string();
-        insta::assert_snapshot!("corner_brackets_frame_an_8x4_area", rendered);
+    #[rstest]
+    #[case::one_cell_margin(Rect::new(5, 5, 10, 4), 1, Rect::new(4, 4, 12, 6))]
+    #[case::no_margin(Rect::new(5, 5, 10, 4), 0, Rect::new(5, 5, 10, 4))]
+    #[case::saturates_at_the_origin(Rect::new(0, 0, 3, 3), 1, Rect::new(0, 0, 5, 5))]
+    fn expand_grows_the_rect_by_margin_on_every_side(
+        #[case] area: Rect,
+        #[case] margin: u16,
+        #[case] expected: Rect,
+    ) {
+        assert_eq!(expand(area, margin), expected);
     }
 
-    #[test]
-    fn expand_grows_the_rect_by_margin_on_every_side() {
-        let area = Rect::new(5, 5, 10, 4);
-        assert_eq!(expand(area, 1), Rect::new(4, 4, 12, 6));
-        assert_eq!(expand(area, 0), area);
-    }
-
-    #[test]
-    fn expand_saturates_instead_of_underflowing_at_the_origin() {
-        let area = Rect::new(0, 0, 3, 3);
-        assert_eq!(expand(area, 1), Rect::new(0, 0, 5, 5));
-    }
-
-    #[test]
-    fn positions_land_on_the_four_corners() {
-        let area = Rect::new(2, 3, 10, 4);
-        assert_eq!(
-            corner_positions(area),
-            [
-                (2, 3, glyphs::corner::TOP_LEFT),
-                (11, 3, glyphs::corner::TOP_RIGHT),
-                (2, 6, glyphs::corner::BOTTOM_LEFT),
-                (11, 6, glyphs::corner::BOTTOM_RIGHT),
-            ]
-        );
-    }
-
-    #[test]
-    fn single_cell_area_collapses_all_corners_to_it() {
-        let area = Rect::new(5, 5, 1, 1);
-        for (x, y, _) in corner_positions(area) {
-            assert_eq!((x, y), (5, 5));
-        }
-        assert_eq!(corner_positions(area)[3].2, glyphs::corner::BOTTOM_RIGHT);
-    }
-
-    #[test]
-    fn zero_size_area_still_returns_four_positions_at_its_origin() {
-        let area = Rect::new(7, 7, 0, 0);
-        for (x, y, _) in corner_positions(area) {
-            assert_eq!((x, y), (7, 7));
-        }
+    #[rstest]
+    #[case::a_wide_area(
+        Rect::new(2, 3, 10, 4),
+        [(2, 3, TOP_LEFT), (11, 3, TOP_RIGHT), (2, 6, BOTTOM_LEFT), (11, 6, BOTTOM_RIGHT)]
+    )]
+    #[case::a_single_cell(
+        Rect::new(5, 5, 1, 1),
+        [(5, 5, TOP_LEFT), (5, 5, TOP_RIGHT), (5, 5, BOTTOM_LEFT), (5, 5, BOTTOM_RIGHT)]
+    )]
+    #[case::a_zero_size_area(
+        Rect::new(7, 7, 0, 0),
+        [(7, 7, TOP_LEFT), (7, 7, TOP_RIGHT), (7, 7, BOTTOM_LEFT), (7, 7, BOTTOM_RIGHT)]
+    )]
+    fn positions_land_on_the_four_corners(
+        #[case] area: Rect,
+        #[case] expected: [(u16, u16, char); 4],
+    ) {
+        assert_eq!(corner_positions(area), expected);
     }
 }

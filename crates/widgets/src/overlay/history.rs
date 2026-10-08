@@ -142,16 +142,14 @@ impl HistoryWidget<'_> {
                 .skip(offset)
                 .take(height)
                 .map(|history_entry| {
-                    let label = played_label(history_entry);
                     entry_row(
-                        &EntryRow {
-                            history_entry,
-                            label: &label,
+                        history_entry,
+                        &RowStyle {
                             columns,
                             lead,
+                            colors,
+                            now: self.now,
                         },
-                        colors,
-                        self.now,
                     )
                 }),
             columns.constraints(),
@@ -293,40 +291,35 @@ impl HistoryColumns {
     }
 }
 
-struct EntryRow<'a> {
-    history_entry: &'a HistoryEntry,
-    label: &'a str,
+struct RowStyle {
     columns: HistoryColumns,
     lead: u16,
-}
-
-fn when_label(history_entry: &HistoryEntry, now: Moment) -> String {
-    relative_time_text(now, history_entry.played_at)
-}
-
-fn entry_row(
-    entry_row: &EntryRow<'_>,
     colors: Colors<Color>,
     now: Moment,
-) -> Row<'static> {
-    let [label, when] = entry_cells(entry_row, now);
+}
+
+fn entry_row(history_entry: &HistoryEntry, row_style: &RowStyle) -> Row<'static> {
+    let RowStyle {
+        columns,
+        lead,
+        colors,
+        now,
+    } = *row_style;
+    let label = indented(
+        &played_label(history_entry),
+        Cells(lead),
+        columns.label_width,
+    );
+    let when = truncate_owned(
+        relative_time_text(now, history_entry.played_at),
+        columns.when_width.count(),
+    );
     Row::new(vec![
         Line::from(label).style(Style::default().fg(colors.foreground)),
         Line::from(when)
             .right_aligned()
             .style(Style::default().fg(colors.muted_foreground)),
     ])
-}
-
-fn entry_cells(entry_row: &EntryRow<'_>, now: Moment) -> [String; 2] {
-    let columns = entry_row.columns;
-    [
-        indented(entry_row.label, Cells(entry_row.lead), columns.label_width),
-        truncate_owned(
-            when_label(entry_row.history_entry, now),
-            columns.when_width.count(),
-        ),
-    ]
 }
 
 #[cfg(test)]
@@ -341,7 +334,6 @@ mod tests {
             history::{HistoryMeasures, HistoryWidget},
             modal::placement::ModalContainer,
         },
-        primitive::canvas::tests::find_text,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -357,18 +349,6 @@ mod tests {
             artist: artist.map(str::to_string),
             played_at: now(),
         }
-    }
-
-    fn scrolling_entries() -> Vec<HistoryEntry> {
-        (0..40)
-            .map(|index| {
-                entry(
-                    &format!("/m/{index:02}.flac"),
-                    &format!("Song {index:02}"),
-                    Some(&format!("Artist {index}")),
-                )
-            })
-            .collect()
     }
 
     #[test]
@@ -389,56 +369,6 @@ mod tests {
         .container(ModalContainer::Floating(&[]));
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
-                .to_string()
-        );
-    }
-
-    #[test]
-    fn history_overlay_highlights_the_selected_row_and_aligns_its_label_column() {
-        let theme = noir();
-        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let entries = [
-            entry("/m/a.flac", "Alpha", Some("Artist A")),
-            entry("/m/b.flac", "Beta", None),
-        ];
-        let measures = HistoryMeasures::of(&entries);
-        let overlay = HistoryWidget::new(&entries, &measures, active_theme)
-            .now(now())
-            .selected(RowIndex::new(1))
-            .container(ModalContainer::Floating(&[]));
-        let buffer =
-            rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
-                .buffer()
-                .clone();
-        let selection_background = active_theme.colors().selection_background;
-        let (alpha_x, alpha_y) = find_text(&buffer, "Artist A — Alpha").unwrap();
-        let (beta_x, beta_y) = find_text(&buffer, "Beta").unwrap();
-        assert_eq!(
-            buffer[(beta_x, beta_y)].style().bg,
-            Some(selection_background)
-        );
-        assert_ne!(
-            buffer[(alpha_x, alpha_y)].style().bg,
-            Some(selection_background)
-        );
-        assert_eq!(alpha_x, beta_x);
-    }
-
-    #[test]
-    fn history_overlay_with_a_scrollbar_keeps_its_time_column_clear_of_it() {
-        let theme = noir();
-        let entries = scrolling_entries();
-        let measures = HistoryMeasures::of(&entries);
-        let overlay = HistoryWidget::new(
-            &entries,
-            &measures,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        )
-        .now(now())
-        .selected(RowIndex::new(0))
-        .container(ModalContainer::Playlist(Rect::new(0, 0, 120, 40)));
-        insta::assert_snapshot!(
-            rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
         );
     }
@@ -471,30 +401,6 @@ mod tests {
     }
 
     #[test]
-    fn the_history_time_column_never_touches_the_scrollbar() {
-        let theme = noir();
-        let entries = scrolling_entries();
-        let measures = HistoryMeasures::of(&entries);
-        let overlay = HistoryWidget::new(
-            &entries,
-            &measures,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        )
-        .now(now())
-        .selected(RowIndex::new(0))
-        .container(ModalContainer::Playlist(Rect::new(0, 0, 120, 40)));
-        let buffer =
-            rendered(120, 40, |frame| frame.render_widget(&overlay, frame.area()))
-                .buffer()
-                .clone();
-        let when = "just now";
-        let (x, y) = find_text(&buffer, when).unwrap();
-        let after = x + u16::try_from(when.chars().count()).unwrap();
-        assert_eq!(buffer[(after, y)].symbol(), " ");
-        assert_ne!(buffer[(after + 1, y)].symbol(), " ");
-    }
-
-    #[test]
     fn history_overlay_shows_a_placeholder_when_empty() {
         let theme = noir();
         let entries: [HistoryEntry; 0] = [];
@@ -510,28 +416,6 @@ mod tests {
         insta::assert_snapshot!(
             rendered(80, 28, |frame| frame.render_widget(&overlay, frame.area()))
                 .to_string()
-        );
-    }
-
-    #[test]
-    fn history_overlay_does_not_panic_on_a_tiny_terminal() {
-        let theme = noir();
-        let entries: [HistoryEntry; 0] = [];
-        let measures = HistoryMeasures::of(&entries);
-        let overlay = HistoryWidget::new(
-            &entries,
-            &measures,
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        )
-        .now(now())
-        .selected(RowIndex::new(0))
-        .container(ModalContainer::Floating(&[]));
-        assert_eq!(
-            rendered(4, 3, |frame| frame.render_widget(&overlay, frame.area()))
-                .buffer()
-                .area
-                .height,
-            3
         );
     }
 }

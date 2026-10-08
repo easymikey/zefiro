@@ -14,17 +14,16 @@ use crossbeam_channel::{SendError, Sender};
 use kernel::{
     cmd::Playback,
     domain::{device::OutputDevice, revision::Revision, speed::Speed},
-    message::{AudioError, DecodeError},
+    message::AudioError,
 };
 
 use crate::{
     deck::{
         envelope::{EnvelopeControl, Ramp},
-        feed::{FeedCmd, feed_channel, play},
+        feed::FeedCmd,
         mixer::MixerOrder,
-        output::{Fader, Output},
+        output::{Fader, Feeding, Output},
         source::{DecodedTrack, PreloadMode},
-        voice::Voice,
     },
     device::{OpenedOutput, Opening, OutputLoss, open_output},
     engine::message::{AudioMessage, DeviceOpened, EngineMessage, SinkRole},
@@ -80,7 +79,15 @@ impl Deck {
             PreloadMode::Gapless => Speed::default(),
             PreloadMode::Crossfade(speed) => speed,
         };
-        let (voice, mut control) = match self.voice(decoded_track, speed)? {
+        let output = self.output.as_mut()?;
+        let (voice, mut control) = match output.voice(
+            decoded_track,
+            &Feeding {
+                speed,
+                callback_sender: &self.callback_sender,
+                feed_sender: &self.feed_sender,
+            },
+        ) {
             Ok(played) => played,
             Err(error) => {
                 return Some(
@@ -88,7 +95,6 @@ impl Deck {
                 );
             }
         };
-        let output = self.output.as_mut()?;
         match preload_mode {
             PreloadMode::Gapless => {
                 if let Some(current_gain) =
@@ -228,12 +234,17 @@ impl Deck {
     }
 
     pub(crate) fn append_staged(&mut self) -> Option<AudioMessage> {
-        let staged_track = self
-            .output
-            .as_ref()
-            .and_then(|_| self.staged_track.take())?;
+        let output = self.output.as_mut()?;
+        let staged_track = self.staged_track.take()?;
         let path = staged_track.decoder.path.to_path_buf();
-        let (voice, control) = match self.voice(staged_track, Speed::default())? {
+        let (voice, control) = match output.voice(
+            staged_track,
+            &Feeding {
+                speed: Speed::default(),
+                callback_sender: &self.callback_sender,
+                feed_sender: &self.feed_sender,
+            },
+        ) {
             Ok(played) => played,
             Err(error) => {
                 return Some(
@@ -241,7 +252,6 @@ impl Deck {
                 );
             }
         };
-        let output = self.output.as_mut()?;
         output.mixer_control.order(MixerOrder::Attach {
             role: SinkRole::Current,
             voice,
@@ -250,27 +260,6 @@ impl Deck {
         let (_, playback) = output.position();
         self.pace(playback);
         None
-    }
-
-    fn voice(
-        &self,
-        decoded_track: DecodedTrack,
-        speed: Speed,
-    ) -> Option<Result<(Box<Voice>, EnvelopeControl), DecodeError>> {
-        let output = self.output.as_ref()?;
-        Some(
-            output
-                .varispeed(decoded_track.decoder.sample_rate(), speed)
-                .map(|varispeed| {
-                    let (source, feed) = feed_channel(
-                        decoded_track,
-                        output.format.channels,
-                        self.callback_sender.clone(),
-                    );
-                    let (envelope, control) = play(&source, feed, &self.feed_sender);
-                    (Box::new(Voice::new(source, envelope, varispeed)), control)
-                }),
-        )
     }
 
     pub(crate) fn promote(&mut self) {
@@ -395,6 +384,7 @@ fn fade(
 pub(crate) mod tests {
     use std::{io::Write, path::PathBuf, thread, time::Duration};
 
+    use crossbeam_channel::Receiver;
     use kernel::{
         domain::{device::OutputDevice, revision::Revision, speed::Speed},
         message::{AudioError, DecodeError},
@@ -616,13 +606,40 @@ pub(crate) mod tests {
         assert_eq!(slots(&deck), expected);
     }
 
-    pub(crate) fn deck_with_detached_output() -> Deck {
+    #[rstest]
+    #[case(|deck: &mut Deck, decoded_track| deck.attach(decoded_track, PreloadMode::Gapless))]
+    #[case(
+        |deck: &mut Deck, decoded_track| {
+            deck.attach(decoded_track, PreloadMode::Crossfade(Speed::default()))
+        }
+    )]
+    #[case(
+        |deck: &mut Deck, decoded_track| {
+            deck.stage(decoded_track);
+            deck.append_staged()
+        }
+    )]
+    fn a_resample_the_output_refuses_sends_no_feed_and_primes_no_chunks(
+        #[case] operation: fn(&mut Deck, DecodedTrack) -> Option<AudioMessage>,
+    ) {
+        let (mut deck, callback_receiver, feed_receiver) = deck_with_receivers();
+        output(&mut deck).format.rate = 0;
+        assert!(operation(&mut deck, track(Revision::default())).is_some());
+        assert!(feed_receiver.is_empty());
+        assert!(callback_receiver.is_empty());
+    }
+
+    fn deck_with_receivers() -> (Deck, Receiver<AudioMessage>, Receiver<FeedCmd>) {
         let (spectrum_buffers, _spectrum_tap) = tap::spectrum_channel();
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
-        let (feed_sender, _feed_receiver) = crossbeam_channel::bounded(4);
+        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(64);
+        let (feed_sender, feed_receiver) = crossbeam_channel::bounded(4);
         let mut deck = Deck::new(spectrum_buffers, callback_sender, feed_sender);
         deck.output = Some(detached_output());
-        deck
+        (deck, callback_receiver, feed_receiver)
+    }
+
+    pub(crate) fn deck_with_detached_output() -> Deck {
+        deck_with_receivers().0
     }
 
     pub(crate) fn played(
@@ -723,12 +740,6 @@ pub(crate) mod tests {
             Some(AudioMessage::SignalsTaken { role: SinkRole::Current, signals })
                 if signals.contains(Signals::FINISHED)
         ));
-    }
-
-    #[test]
-    fn taking_signals_for_an_unknown_revision_answers_nothing() {
-        let deck = deck_with_detached_output();
-        assert!(deck.take_signals(Revision::default()).is_none());
     }
 
     #[test]

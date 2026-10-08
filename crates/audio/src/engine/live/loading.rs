@@ -200,7 +200,7 @@ mod tests {
     use std::time::Duration;
 
     use kernel::{
-        cmd::{AudioCmd, Cmd, Media, Playback},
+        cmd::{Cmd, Media, Playback},
         domain::{settings::AudioSettings, speed::Speed},
         message::AudioEvent,
         update::machine::{LoopEffect, Unhandled},
@@ -221,13 +221,11 @@ mod tests {
                 TRACK_B_DURATION,
                 assert_cell,
                 assert_fallback,
-                assert_same,
                 closed,
-                cmd,
                 crossfade,
                 decode_error,
                 decoding,
-                error,
+                device_error,
                 first,
                 handed_over_to_b,
                 handing_over,
@@ -257,7 +255,7 @@ mod tests {
     )]
     #[case::open_failure_mutes_the_engine(
         EngineState::Live(playing()),
-        EngineMessage::Error(error()),
+        EngineMessage::Error(device_error()),
         EngineRow {
             next: EngineState::Closed(Closed {
                 settings: settings(),
@@ -265,7 +263,7 @@ mod tests {
                 speed: Speed::default(),
             }),
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Silence))
-                .then(Cmd::message(AudioEvent::Error(error())))),
+                .then(Cmd::message(AudioEvent::Error(device_error())))),
         }
     )]
     #[case::reopened_resumes_the_current_track(
@@ -280,11 +278,6 @@ mod tests {
             next: EngineState::Live(Live { settings: settings_on("usb"), ..loading() }),
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(crate::gain::Gain::UNITY)))),
         }
-    )]
-    #[case::reopened_with_nothing_loaded(
-        EngineState::Live(live()),
-        opened(settings().device, Duration::ZERO, Playback::Playing),
-        EngineRow { next: EngineState::Live(live()), effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::SetGain(crate::gain::Gain::UNITY))))}
     )]
     #[case::decoded_starts_the_track(
         EngineState::Live(loading()),
@@ -363,6 +356,21 @@ mod tests {
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(Speed::default()))).then(Cmd::message(AudioEvent::Error(decode_error())))),
         }
     )]
+    #[case::a_decode_after_stop_has_nothing_to_install(
+        EngineState::Live(live()),
+        EngineMessage::Decoded(Some(TRACK_A_DURATION)),
+        EngineRow { next: EngineState::Live(live()), effect: Err(Unhandled) }
+    )]
+    #[case::a_failed_decode_after_stop_is_not_reported(
+        EngineState::Live(live()),
+        EngineMessage::Error(decode_error()),
+        EngineRow { next: EngineState::Live(live()), effect: Err(Unhandled) }
+    )]
+    #[case::a_decode_after_the_skip_landed_has_nothing_to_install(
+        EngineState::Live(handed_over_to_b()),
+        EngineMessage::Decoded(Some(TRACK_A_DURATION)),
+        EngineRow { next: EngineState::Live(handed_over_to_b()), effect: Err(Unhandled) }
+    )]
     fn a_cell_moves_the_engine_and_names_its_io(
         #[case] engine_state: EngineState,
         #[case] message: EngineMessage,
@@ -426,47 +434,6 @@ mod tests {
             effect,
             LoopEffect::Run(AudioJob::Preload { media_path, download: None, .. }) if media_path.as_path() == std::path::Path::new("/b")
         )));
-    }
-
-    #[rstest]
-    #[case::a_decode_after_stop_has_nothing_to_install(
-        EngineState::Live(live()),
-        EngineMessage::Decoded(Some(TRACK_A_DURATION))
-    )]
-    #[case::a_failed_decode_after_stop_is_not_reported(
-        EngineState::Live(live()),
-        EngineMessage::Error(decode_error())
-    )]
-    #[case::a_decode_after_the_skip_landed_has_nothing_to_install(
-        EngineState::Live(handed_over_to_b()),
-        EngineMessage::Decoded(Some(TRACK_A_DURATION))
-    )]
-    fn a_stale_decode_leaves_the_engine_alone(
-        #[case] engine_state: EngineState,
-        #[case] message: EngineMessage,
-    ) {
-        let mut state = engine_state.clone();
-        assert_eq!(step(&mut state, message).err(), Some(Unhandled));
-        assert_eq!(state, engine_state);
-    }
-
-    #[test]
-    fn a_stop_then_a_landed_decode_sends_nothing() {
-        let mut engine_state = EngineState::Live(loading());
-        assert_same(
-            step(&mut engine_state, cmd(AudioCmd::Stop)),
-            Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(
-                Speed::default(),
-            )))),
-        );
-        assert_eq!(
-            step(
-                &mut engine_state,
-                EngineMessage::Decoded(Some(TRACK_A_DURATION)),
-            )
-            .err(),
-            Some(Unhandled)
-        );
     }
 
     #[rstest]

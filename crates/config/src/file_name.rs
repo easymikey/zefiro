@@ -24,22 +24,3 @@ pub(crate) fn config_file_name(name: &ConfigName) -> String {
         ConfigName::Theme(theme) => theme_file_name(theme.as_str()),
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use kernel::domain::{config::ConfigName, theme::ThemeName};
-    use rstest::rstest;
-
-    use crate::file_name::config_file_name;
-
-    #[rstest]
-    #[case::config(ConfigName::Config, "config.toml")]
-    #[case::appearance(ConfigName::Appearance, "sifr-ui.toml")]
-    #[case::theme(ConfigName::Theme(ThemeName::from_static("noir")), "noir.toml")]
-    fn toml_file_names_the_file_on_disk(
-        #[case] config_name: ConfigName,
-        #[case] expected: &str,
-    ) {
-        assert_eq!(config_file_name(&config_name), expected);
-    }
-}

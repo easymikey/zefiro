@@ -45,12 +45,12 @@ pub(crate) fn server_request(
 ) -> Result<Cmd, Unhandled> {
     let OverlayParts {
         workspace,
-        playlist: _playlist,
-        player: _player,
-        history: _history,
-        music_dir: _music_dir,
+        playlist: _,
+        player: _,
+        history: _,
+        music_dir: _,
         servers,
-        catalog_name: _catalog_name,
+        catalog_name: _,
         revisions,
     } = parts;
     let Some(Overlay::ServerSearch(server_query)) = workspace.overlay.as_mut() else {
@@ -301,10 +301,7 @@ mod tests {
             .iter()
             .filter_map(|effect| {
                 if let Effect::Remote(RemoteCmd::Search {
-                    server_name: _server_name,
-                    session: _session,
-                    input,
-                    revision,
+                    input, revision, ..
                 }) = effect
                 {
                     Some((input.clone(), *revision))
@@ -339,15 +336,6 @@ mod tests {
             );
         };
         server_query
-    }
-
-    #[test]
-    fn slash_in_the_local_tab_opens_the_local_search() {
-        let mut model = model_with(vec![online_home()], None);
-
-        press(&mut model, KeyCode::Char('/')).unwrap();
-
-        assert!(matches!(model.workspace.overlay, Some(Overlay::Search(_))));
     }
 
     #[test]

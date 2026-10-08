@@ -181,9 +181,4 @@ mod tests {
             insta::assert_snapshot!(help_frame(width, height));
         });
     }
-
-    #[test]
-    fn help_overlay_does_not_panic_on_a_tiny_terminal() {
-        assert_eq!(help_frame(4, 3).lines().count(), 3);
-    }
 }

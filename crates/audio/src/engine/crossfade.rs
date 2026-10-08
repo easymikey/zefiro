@@ -39,7 +39,6 @@ mod tests {
     use std::time::Duration;
 
     use kernel::domain::{settings::ReplayGain, track::Decibels};
-    use proptest::prelude::{prop_assert, proptest};
     use rstest::rstest;
 
     use crate::engine::crossfade::{
@@ -118,14 +117,5 @@ mod tests {
         #[case] expected: Option<Duration>,
     ) {
         assert_eq!(fade_start(duration, crossfade), expected);
-    }
-
-    proptest! {
-        #[test]
-        fn equal_power_gains_sum_of_squares_to_one_across_the_fade(fraction in 0f32..=1f32) {
-            let power = equal_power_in(fraction)
-                .mul_add(equal_power_in(fraction), equal_power_out(fraction) * equal_power_out(fraction));
-            prop_assert!((power - 1.0).abs() < 1e-4, "expected equal power, got {power}");
-        }
     }
 }

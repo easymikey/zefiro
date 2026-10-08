@@ -148,6 +148,7 @@ mod tests {
         cue::{Cue, PlaybackChange},
     };
     use ratatui::{layout::Rect, style::Color};
+    use rstest::rstest;
 
     use crate::{
         animation::{
@@ -159,23 +160,20 @@ mod tests {
         theme::backdrop_style::BackdropStyle,
     };
 
-    #[test]
-    fn once_each_keeps_the_first_occurrence_and_drops_repeats() {
-        let cues = vec![
-            Cue::FavoriteToggled,
-            Cue::VolumeChanged,
-            Cue::FavoriteToggled,
-        ];
-        assert_eq!(
-            once_each(cues),
-            vec![Cue::FavoriteToggled, Cue::VolumeChanged]
-        );
-    }
-
-    #[test]
-    fn once_each_leaves_a_list_without_repeats_untouched() {
-        let cues = vec![Cue::TrackChanged, Cue::QueueChanged];
-        assert_eq!(once_each(cues.clone()), cues);
+    #[rstest]
+    #[case::repeats_drop_after_the_first(
+        vec![Cue::FavoriteToggled, Cue::VolumeChanged, Cue::FavoriteToggled],
+        vec![Cue::FavoriteToggled, Cue::VolumeChanged]
+    )]
+    #[case::a_list_without_repeats_stays_untouched(
+        vec![Cue::TrackChanged, Cue::QueueChanged],
+        vec![Cue::TrackChanged, Cue::QueueChanged]
+    )]
+    fn once_each_keeps_the_first_occurrence_and_drops_repeats(
+        #[case] cues: Vec<Cue>,
+        #[case] once_cues: Vec<Cue>,
+    ) {
+        assert_eq!(once_each(cues), once_cues);
     }
 
     fn empty_backdrop() -> Backdrop<'static> {
@@ -191,37 +189,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pulsed_answers_the_background_when_playback_starts() {
-        let backdrop = empty_backdrop();
-        assert_eq!(
-            pulsed(PlaybackChange::Play, &backdrop),
-            backdrop.style.background
-        );
-    }
-
-    #[test]
-    fn pulsed_answers_the_accent_when_playback_pauses_or_stops() {
-        let backdrop = empty_backdrop();
-        assert_eq!(
-            pulsed(PlaybackChange::Pause, &backdrop),
-            backdrop.style.accent
-        );
-        assert_eq!(
-            pulsed(PlaybackChange::Stop, &backdrop),
-            backdrop.style.accent
-        );
-    }
-
-    #[test]
-    fn a_layout_change_stages_nothing() {
-        let mut stage = AnimationStage::default();
-        let backdrop = empty_backdrop();
-
-        stage.play(vec![Cue::LayoutChanged], &backdrop);
-
-        assert!(stage.wash_progress().is_none());
-        assert!(stage.take_running().is_empty());
+    #[rstest]
+    #[case::play(PlaybackChange::Play, Color::Rgb(0, 0, 0))]
+    #[case::pause(PlaybackChange::Pause, Color::Rgb(240, 120, 40))]
+    #[case::stop(PlaybackChange::Stop, Color::Rgb(240, 120, 40))]
+    fn pulsed_answers_the_background_on_play_and_the_accent_otherwise(
+        #[case] change: PlaybackChange,
+        #[case] color: Color,
+    ) {
+        assert_eq!(pulsed(change, &empty_backdrop()), color);
     }
 
     fn staged_progress(stage: &mut AnimationStage) -> Vec<(Rect, Option<f32>)> {

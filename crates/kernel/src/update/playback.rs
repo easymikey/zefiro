@@ -222,8 +222,7 @@ fn release(
         playback_parts.player,
         Player::Paused {
             by: PausedBy::Overlay,
-            track: _track,
-            position: _position
+            ..
         }
     );
     if lost(playback_parts) && held {
@@ -331,47 +330,60 @@ mod tests {
         }
     }
 
-    struct SeekTenthsRow {
+    struct SeekRow {
         duration: Option<Duration>,
         position: Duration,
-        tenths: u8,
+        request: PlaybackRequest,
         expected: Option<Duration>,
     }
 
     #[rstest]
-    #[case::digit_five_seeks_to_fifty_percent(SeekTenthsRow {
+    #[case::digit_five_seeks_to_fifty_percent(SeekRow {
         duration: Some(Duration::from_secs(200)),
         position: Duration::ZERO,
-        tenths: 5,
+        request: PlaybackRequest::SeekTenths(SeekTenths::clamped(5)),
         expected: Some(Duration::from_secs(100)),
     })]
-    #[case::digit_zero_seeks_to_the_start(SeekTenthsRow {
+    #[case::digit_zero_seeks_to_the_start(SeekRow {
         duration: Some(Duration::from_secs(200)),
         position: Duration::from_secs(150),
-        tenths: 0,
+        request: PlaybackRequest::SeekTenths(SeekTenths::clamped(0)),
         expected: Some(Duration::ZERO),
     })]
-    #[case::unknown_duration_is_refused(SeekTenthsRow {
+    #[case::tenths_of_an_unknown_duration_are_refused(SeekRow {
         duration: None,
         position: Duration::ZERO,
-        tenths: 7,
+        request: PlaybackRequest::SeekTenths(SeekTenths::clamped(7)),
         expected: None,
     })]
-    fn seek_tenths_seeks_by_tenths(#[case] seek_tenths_row: SeekTenthsRow) {
-        let mut model =
-            playing_track_at(seek_tenths_row.duration, seek_tenths_row.position);
-        let tenths = SeekTenths::clamped(seek_tenths_row.tenths);
-        let result = update(
-            &mut playback_parts(&mut model),
-            PlaybackRequest::SeekTenths(tenths),
-            Moment::default(),
-        );
-        let Some(target) = seek_tenths_row.expected else {
+    #[case::a_time_in_an_unknown_duration_is_refused(SeekRow {
+        duration: None,
+        position: Duration::from_secs(30),
+        request: PlaybackRequest::SeekTo(Duration::from_secs(90)),
+        expected: None,
+    })]
+    #[case::forward_in_an_unknown_duration_moves_past_the_position(SeekRow {
+        duration: None,
+        position: Duration::from_secs(30),
+        request: PlaybackRequest::SeekBy {
+            direction: Direction::Next,
+            by: SEEK_MEDIUM,
+        },
+        expected: Some(Duration::from_secs(30) + SEEK_MEDIUM),
+    })]
+    fn a_seek_lands_on_its_target_or_is_refused(#[case] seek_row: SeekRow) {
+        let SeekRow {
+            duration,
+            position,
+            request,
+            expected,
+        } = seek_row;
+        let mut model = playing_track_at(duration, position);
+        let result =
+            update(&mut playback_parts(&mut model), request, Moment::default());
+        let Some(target) = expected else {
             assert_eq!(result, Err(Unhandled));
-            assert_eq!(
-                model.player.position_at(Moment::default()),
-                seek_tenths_row.position
-            );
+            assert_eq!(model.player.position_at(Moment::default()), position);
             return;
         };
         assert!(seeks_to(&result.unwrap(), target));
@@ -379,50 +391,14 @@ mod tests {
     }
 
     #[test]
-    fn seeking_to_a_time_with_an_unknown_duration_is_refused() {
-        let duration = Duration::from_secs(30);
-        let mut model = playing_track_at(None, duration);
+    fn a_request_for_the_current_state_is_refused() {
+        let mut model = paused();
 
         let result = update(
             &mut playback_parts(&mut model),
-            PlaybackRequest::SeekTo(Duration::from_secs(90)),
+            PlaybackRequest::Pause,
             Moment::default(),
         );
-
-        assert_eq!(result, Err(Unhandled));
-        assert_eq!(model.player.position_at(Moment::default()), duration);
-    }
-
-    #[test]
-    fn seeking_forward_with_an_unknown_duration_moves_past_the_position() {
-        let position = Duration::from_secs(30);
-        let mut model = playing_track_at(None, position);
-
-        let cmd = update(
-            &mut playback_parts(&mut model),
-            PlaybackRequest::SeekBy {
-                direction: Direction::Next,
-                by: SEEK_MEDIUM,
-            },
-            Moment::default(),
-        )
-        .unwrap();
-
-        assert!(seeks_to(&cmd, position + SEEK_MEDIUM));
-    }
-
-    #[rstest]
-    #[case::play_while_playing(
-        playing_track_at(None, Duration::ZERO),
-        PlaybackRequest::Play
-    )]
-    #[case::pause_while_paused(paused(), PlaybackRequest::Pause)]
-    fn a_request_for_the_current_state_is_refused(
-        #[case] mut model: Model,
-        #[case] request: PlaybackRequest,
-    ) {
-        let result =
-            update(&mut playback_parts(&mut model), request, Moment::default());
 
         assert_eq!(result, Err(Unhandled));
     }

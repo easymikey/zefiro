@@ -1,5 +1,3 @@
-use std::ops::Deref;
-
 use kernel::domain::appearance::{ProgressBar, Rgb};
 use ratatui::style::Color;
 
@@ -74,17 +72,11 @@ impl<'a> ActiveTheme<'a> {
     }
 }
 
-impl<'a> Deref for ActiveTheme<'a> {
-    type Target = Theme;
-    fn deref(&self) -> &Theme {
-        self.theme
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use kernel::domain::appearance::{ProgressBar, Rgb};
     use ratatui::style::Color;
+    use rstest::rstest;
 
     use crate::{
         test_support::noir,
@@ -99,7 +91,7 @@ mod tests {
     fn theme_color_resolves_at_its_own_depth() {
         let theme: Theme = noir();
         let active_theme = ActiveTheme::new(&theme, ColorDepth::Indexed256);
-        let accent = active_theme.colors.accent;
+        let accent = theme.colors.accent;
         assert_eq!(
             active_theme.color(accent),
             color_at_depth(accent, ColorDepth::Indexed256)
@@ -107,39 +99,32 @@ mod tests {
         assert!(matches!(active_theme.color(accent), Color::Indexed(_)));
     }
 
-    #[test]
-    fn theme_derefs_to_theme_fields() {
-        let theme: Theme = noir();
-        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        assert_eq!(active_theme.name, active_theme.name);
-        assert_eq!(
-            active_theme.colors.muted_foreground,
-            active_theme.theme.colors.muted_foreground
-        );
-    }
-
-    #[test]
-    fn an_unset_progress_bar_config_is_the_themes_accent_and_groove() {
-        let theme = noir();
-        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
-        let colors = active_theme.colors();
-        assert_eq!(
-            (active_theme.progress_fill(), active_theme.progress_groove()),
-            (colors.accent, colors.bar_groove)
-        );
-    }
-
-    #[test]
-    fn a_set_progress_bar_config_wins_over_the_theme() {
-        let theme = noir();
-        let bar = ProgressBar {
+    #[rstest]
+    #[case::unset_is_the_themes_accent_and_groove(
+        ProgressBar::default(),
+        (
+            color_at_depth(noir().colors.accent, ColorDepth::TrueColor),
+            color_at_depth(noir().colors.bar_groove, ColorDepth::TrueColor),
+        )
+    )]
+    #[case::set_wins_over_the_theme(
+        ProgressBar {
             fill: Some(Rgb([255, 0, 0])),
             groove: Some(Rgb([0, 255, 0])),
             ..ProgressBar::default()
-        };
+        },
+        (Color::Rgb(255, 0, 0), Color::Rgb(0, 255, 0))
+    )]
+    fn a_progress_bar_config_wins_over_the_theme_only_when_set(
+        #[case] bar: ProgressBar,
+        #[case] expected: (Color, Color),
+    ) {
+        let theme = noir();
         let active_theme =
             ActiveTheme::new(&theme, ColorDepth::TrueColor).with_progress_bar(bar);
-        assert_eq!(active_theme.progress_fill(), Color::Rgb(255, 0, 0));
-        assert_eq!(active_theme.progress_groove(), Color::Rgb(0, 255, 0));
+        assert_eq!(
+            (active_theme.progress_fill(), active_theme.progress_groove()),
+            expected
+        );
     }
 }

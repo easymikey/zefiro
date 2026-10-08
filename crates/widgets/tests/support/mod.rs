@@ -254,12 +254,6 @@ pub(crate) fn overlay_backdrop(overlay: Option<Rect>) -> Backdrop<'static> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ToastPresence {
-    Shown,
-    Hidden,
-}
-
 const TOAST_CARD_SCREEN: Rect = Rect {
     x: 12,
     y: 0,
@@ -282,9 +276,6 @@ fn toast_sources(toast: Toast, full_min: Cells) -> SceneSources {
     sources
 }
 
-static TOAST_LINE_SOURCES: LazyLock<SceneSources> =
-    LazyLock::new(|| toast_sources(Toast::info("Queued"), Cells(u16::MAX)));
-
 static TOAST_CARD_SOURCES: LazyLock<SceneSources> = LazyLock::new(|| {
     toast_sources(Toast::info("Saved").with_text("one two"), Cells(0))
 });
@@ -294,17 +285,6 @@ fn toast_layout(sources: &'static SceneSources, screen: Rect) -> FrameLayout<'st
         toast_placement: FrameLayout::from_scene(&sources.scene(), screen)
             .toast_placement,
         ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
-    }
-}
-
-pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop<'static> {
-    let layout = match presence {
-        ToastPresence::Shown => toast_layout(&TOAST_LINE_SOURCES, AREA),
-        ToastPresence::Hidden => FrameLayout::empty(Rect::default(), Breakpoint::Full),
-    };
-    Backdrop {
-        layout,
-        ..quiet_backdrop()
     }
 }
 

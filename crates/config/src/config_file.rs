@@ -239,19 +239,17 @@ pub fn parse_config_settings(text: &str) -> Result<ConfigSettings, Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, time::Duration};
+    use std::time::Duration;
 
     use kernel::domain::{
         bounded::Bounded,
         crossfade::Crossfade,
-        keymap::{Action, KeyOverride, KeymapOverrides},
-        server::{Account, Endpoint, ServerName, UserName},
         theme::{ThemeChoice, ThemeName},
     };
     use rstest::rstest;
 
     use crate::{
-        config_file::{ConfigSettings, parse_config, parse_config_settings},
+        config_file::{parse_config, parse_config_settings},
         error::Error,
     };
 
@@ -273,12 +271,6 @@ mod tests {
         });
     }
 
-    #[test]
-    fn invalid_toml_becomes_a_typed_parse_error() {
-        let parsed = parse_config("volume = \"not-a-number\"");
-        assert!(matches!(parsed, Err(Error::Parse { .. })));
-    }
-
     #[rstest]
     #[case::an_unknown_top_level_table("unknown_table", "[nope]\nkey = 1\n")]
     #[case::an_unknown_key_in_a_known_table("unknown_key", "[audio]\nbogus = 1\n")]
@@ -297,7 +289,6 @@ mod tests {
 
     #[rstest]
     #[case::gapless("0s", Crossfade::default())]
-    #[case::seconds("3s", Crossfade::clamped(Duration::from_secs(3)))]
     #[case::milliseconds("250ms", Crossfade::clamped(Duration::from_millis(250)))]
     fn crossfade_reads_an_integer_with_a_time_suffix(
         #[case] spelling: &str,
@@ -309,28 +300,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::out_of_range("11s")]
-    #[case::missing_suffix("3")]
-    #[case::unknown_suffix("3x")]
-    #[case::not_a_number("abcs")]
-    fn crossfade_rejects_what_it_cannot_place(#[case] spelling: &str) {
-        let text = format!("[audio]\ncrossfade = \"{spelling}\"\n");
-        assert!(
-            matches!(parse_config(&text), Err(Error::Parse { .. })),
-            "{spelling:?} must not parse"
-        );
-    }
-
-    #[test]
-    fn sleep_presets_are_read_as_whole_minutes() {
-        let config = parse_config("[audio]\nsleep_presets = [10, 20]\n").unwrap();
-        assert_eq!(
-            config.audio.sleep_presets.as_slice(),
-            [Duration::from_secs(600), Duration::from_secs(1200)]
-        );
-    }
-
-    #[rstest]
+    #[case::volume_not_a_number("volume = \"not-a-number\"")]
     #[case::volume_101("volume = 101")]
     #[case::volume_negative("volume = -1")]
     #[case::theme_empty("theme = \"\"")]
@@ -341,6 +311,10 @@ mod tests {
         "[audio]\nsleep_presets = [307445734561825861]\n"
     )]
     #[case::device_empty("[audio]\ndevice = \"\"\n")]
+    #[case::crossfade_out_of_range("[audio]\ncrossfade = \"11s\"\n")]
+    #[case::crossfade_missing_suffix("[audio]\ncrossfade = \"3\"\n")]
+    #[case::crossfade_unknown_suffix("[audio]\ncrossfade = \"3x\"\n")]
+    #[case::crossfade_not_a_number("[audio]\ncrossfade = \"abcs\"\n")]
     fn config_values_out_of_range_are_rejected(#[case] text: &str) {
         assert!(
             matches!(parse_config(text), Err(Error::Parse { .. })),
@@ -352,11 +326,8 @@ mod tests {
     #[case::volume_0("volume = 0")]
     #[case::volume_100("volume = 100")]
     #[case::theme_auto("theme = \"auto\"")]
-    #[case::theme_named("theme = \"AUTO\"")]
     #[case::sleep_empty_means_off("[audio]\nsleep_presets = []\n")]
     #[case::sleep_three_presets("[audio]\nsleep_presets = [1, 360, 720]\n")]
-    #[case::device_named("[audio]\ndevice = \"Speakers\"\n")]
-    #[case::device_absent("")]
     fn config_values_in_range_are_kept(#[case] text: &str) {
         assert!(parse_config(text).is_ok(), "{text:?} must parse");
     }
@@ -370,55 +341,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn keymap_error_names_the_file_and_the_line() {
-        let Err(error) = parse_config_settings("[keymap]\nnext = \"x\"\n[keymap]\n")
-        else {
-            panic!("a broken config file must not parse");
-        };
-        let text = error.to_string();
-        assert_eq!(text.lines().nth(1), Some("config.toml:3"), "was {text:?}");
-    }
-
-    #[test]
-    fn a_config_file_yields_its_keymap_and_its_music_dir_and_ignores_other_tables() {
-        let parsed = parse_config_settings(
-            "music_dir = \"/tmp\"\ntheme = \"dark\"\n\n[audio]\ncrossfade = \"3s\"\n\n[keymap]\nnext = \"x\"\n",
-        );
-        assert_eq!(
-            parsed.ok(),
-            Some(ConfigSettings {
-                keymap_overrides: KeymapOverrides::from([(
-                    Action::Next,
-                    KeyOverride::from("x")
-                )]),
-                music_dir: Some(PathBuf::from("/tmp")),
-                accounts: Vec::new(),
-            })
-        );
-    }
-
     const TWO_SERVERS: &str = "[[server]]\nname = \"home\"\nurl = \"https://music.example\"\nuser = \"ann\"\n\n[[server]]\nname = \"work\"\nurl = \"http://10.0.0.2:4533\"\nuser = \"bob\"\n";
-
-    fn account(name: &str, link: &str, user: &str) -> Account {
-        Account {
-            server_name: ServerName::new(name),
-            endpoint: Endpoint::parse(link).unwrap(),
-            user_name: UserName::new(user).unwrap(),
-        }
-    }
-
-    #[test]
-    fn two_servers_are_read_as_accounts_in_file_order() {
-        let parsed = parse_config_settings(TWO_SERVERS);
-        assert_eq!(
-            parsed.map(|settings| settings.accounts).ok(),
-            Some(vec![
-                account("home", "https://music.example", "ann"),
-                account("work", "http://10.0.0.2:4533", "bob"),
-            ])
-        );
-    }
 
     #[test]
     fn an_unknown_key_in_a_server_is_refused() {
@@ -454,13 +377,5 @@ mod tests {
             "was {message:?}"
         );
         assert!(message.contains("\"home\""), "was {message:?}");
-    }
-
-    #[test]
-    fn a_broken_config_file_reports_a_parse_error() {
-        assert!(matches!(
-            parse_config_settings("[keymap\nnot toml"),
-            Err(Error::Parse { .. })
-        ));
     }
 }

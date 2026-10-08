@@ -488,46 +488,17 @@ mod tests {
         cmd::Effect,
         domain::{
             config::Diagnostic,
-            cue::Cue,
-            driver::DriverName,
             geometry::{Cells, Pixels},
             key::{Key, KeyCode, KeyPress, Modifiers},
             model::Model,
-            revision::Revision,
             startup::{Shuffle, Startup},
             time::Moment,
             toast::Toast,
             track::Track,
         },
-        message::{DriverEvent, Message, PaintError, Timer},
+        message::{Message, PaintError},
         update::{branch, machine::Unhandled, startup::startup, update},
     };
-
-    #[test]
-    fn a_queued_follow_up_message_adds_its_effects() {
-        let mut model = Model::default();
-        let full_message = Message::Driver {
-            driver_name: DriverName::Audio,
-            event: DriverEvent::Full,
-        };
-
-        let effects = update(&mut model, full_message, Moment::default()).unwrap();
-
-        assert_eq!(
-            effects,
-            vec![
-                Effect::Animate(Cue::ToastRaised),
-                Effect::After {
-                    delay: Duration::from_secs(5),
-                    timer: Timer::Toast(Revision::default().next()),
-                },
-            ]
-        );
-        assert_eq!(
-            model.workspace.toasts,
-            vec![Toast::info("The audio driver is falling behind")]
-        );
-    }
 
     #[rstest]
     #[case::unbound('w')]
@@ -630,35 +601,23 @@ mod tests {
         assert_eq!(model.workspace.cover_side, cover_side);
     }
 
-    #[test]
-    fn a_key_reaching_the_branch_is_refused() {
-        let mut model = Model::default();
-        let before = model.clone();
+    #[rstest]
+    #[case::key({
         let key = Key {
             code: KeyCode::Char('j'),
             modifiers: Modifiers::default(),
         };
-
-        let result = branch(
-            &mut model,
-            Message::Key(KeyPress { key, typed: key }),
-            Moment::default(),
-        );
-
-        assert_eq!(result, Err(Unhandled));
-        assert_eq!(model, before);
-    }
-
-    #[test]
-    fn a_viewport_reaching_the_branch_is_refused() {
+        Message::Key(KeyPress { key, typed: key })
+    })]
+    #[case::viewport(Message::Viewport {
+        visible_rows: Cells(12),
+        cover_side: Some(Pixels(240)),
+    })]
+    fn a_message_reaching_the_branch_is_refused(#[case] message: Message) {
         let mut model = Model::default();
         let before = model.clone();
-        let viewport_message = Message::Viewport {
-            visible_rows: Cells(12),
-            cover_side: Some(Pixels(240)),
-        };
 
-        let result = branch(&mut model, viewport_message, Moment::default());
+        let result = branch(&mut model, message, Moment::default());
 
         assert_eq!(result, Err(Unhandled));
         assert_eq!(model, before);

@@ -56,21 +56,20 @@ impl<'a> PromptBody<'a> {
 }
 
 #[derive(Debug)]
-pub(crate) struct PromptWidget<'a> {
+pub struct PromptWidget<'a> {
     title: &'static str,
     hint: &'static str,
     min_width: Cells,
     answers: Vec<Line<'a>>,
     body: PromptBody<'a>,
     error: Option<&'a dyn Error>,
-    avoid: &'a [Rect],
     theme: ActiveTheme<'a>,
 }
 
 impl PromptWidget<'_> {
     #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> ModalAreas {
-        self.modal().areas(screen, self.avoid)
+    pub(crate) fn areas(&self, screen: Rect, avoid: &[Rect]) -> ModalAreas {
+        self.modal().areas(screen, avoid)
     }
 
     fn modal(&self) -> Modal<'_> {
@@ -123,7 +122,6 @@ impl<'a> PromptWidget<'a> {
             answers: Vec::new(),
             body,
             error: None,
-            avoid: &[],
             theme: active_theme,
         }
     }
@@ -158,12 +156,6 @@ impl<'a> PromptWidget<'a> {
         self
     }
 
-    #[must_use]
-    pub(crate) fn avoid(mut self, avoid: &'a [Rect]) -> Self {
-        self.avoid = avoid;
-        self
-    }
-
     pub(crate) fn paint(&self, areas: ModalAreas, canvas: Canvas<'_>) {
         let buffer = canvas.buffer;
         self.modal().paint(areas, buffer);
@@ -178,13 +170,16 @@ impl<'a> PromptWidget<'a> {
 
 impl Widget for &PromptWidget<'_> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
-        self.paint(self.areas(area), Canvas { area, buffer });
+        self.paint(self.areas(area, &[]), Canvas { area, buffer });
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
+
     use kernel::domain::time::TimecodeError;
+    use rstest::rstest;
 
     use crate::{
         overlay::modal::prompt::{PromptBody, PromptWidget},
@@ -193,15 +188,17 @@ mod tests {
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
 
-    #[test]
-    fn the_measured_width_of_the_body_and_the_error_is_the_painted_width() {
+    #[rstest]
+    #[case::sentence(PromptBody::Sentence(["“", "月の光", "”", " — ", "Debussy"]))]
+    #[case::entry(PromptBody::Entry(Cow::Borrowed("月の光")))]
+    fn the_measured_width_of_the_body_and_the_error_is_the_painted_width(
+        #[case] body: PromptBody<'static>,
+    ) {
         let theme = noir();
         let error = TimecodeError::Malformed;
-        let widget = PromptWidget::new(
-            PromptBody::Sentence(["“", "月の光", "”", " — ", "Debussy"]),
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        )
-        .error(Some(&error));
+        let widget =
+            PromptWidget::new(body, ActiveTheme::new(&theme, ColorDepth::TrueColor))
+                .error(Some(&error));
         let lines: Vec<_> = widget.lines(usize::MAX).collect();
         assert_eq!(widget.body.width(), lines[0].width());
         assert_eq!(display_width(&error), lines[1].width());

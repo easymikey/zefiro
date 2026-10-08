@@ -40,3 +40,13 @@ pub const TIMINGS: AnimationTimings = AnimationTimings {
     delete_force: 3.0,
     delete_force_variance: 1.0,
 };
+
+#[cfg(test)]
+mod tests {
+    use crate::animation::timings::TIMINGS;
+
+    #[test]
+    fn the_chip_pulse_half_lasts_half_a_row_flash() {
+        assert_eq!(TIMINGS.chip_pulse_half.0 * 2, TIMINGS.row_flash.0);
+    }
+}

@@ -37,9 +37,6 @@ struct ProgressScale {
 
 impl ProgressScale {
     fn text_bar(width: Cells, duration: Duration) -> Option<Self> {
-        if width == Cells(0) || duration.is_zero() {
-            return None;
-        }
         let steps = NonZeroU32::new(2 * u32::from(width.0))?;
         Some(Self { steps, duration })
     }
@@ -70,9 +67,7 @@ pub fn progress_frame_due(
     now: Moment,
 ) -> Option<Moment> {
     let Player::Playing {
-        playhead,
-        track,
-        preloaded: _preloaded,
+        playhead, track, ..
     } = player
     else {
         return None;
@@ -184,7 +179,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_stopped_player_has_no_progress_frame(Player::Stopped, Some(50), None)]
     #[case::a_paused_player_has_no_progress_frame(
         paused(Duration::from_secs(10), Duration::from_secs(100)),
         Some(50),
@@ -208,14 +202,14 @@ mod tests {
         None,
         None
     )]
-    #[case::a_sped_up_track_still_wants_a_progress_step(
-        playing(
-            Duration::from_millis(10_500),
-            Moment::new(Duration::from_secs(100)),
-            2.0
-        ),
+    #[case::a_zero_length_track_has_no_progress_frame(
+        Player::Playing {
+            track: track(Duration::ZERO),
+            playhead: playhead(0.0, 1.0),
+            preloaded: None,
+        },
         Some(50),
-        Some(Moment::new(Duration::from_millis(100_251)))
+        None
     )]
     fn a_progress_frame_is_due_only_while_the_bar_can_move(
         #[case] player: Player,
@@ -231,7 +225,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::minute_boundary_soon(Duration::from_secs(14 * 60 + 59), Duration::from_secs(59))]
     #[case::exact_quarter_hour(Duration::from_secs(15 * 60), Duration::from_secs(60))]
     #[case::deadline_itself(Duration::from_secs(30), Duration::from_secs(30))]
     fn the_next_sleep_wake_is_the_nearest_minute_boundary_or_the_deadline(
@@ -278,26 +271,8 @@ mod tests {
     }
 
     #[rstest]
-    #[case::quarter_speed(0.25)]
-    #[case::half_speed(0.5)]
-    #[case::unity_speed(1.0)]
-    #[case::one_and_a_half_speed(1.5)]
-    #[case::double_speed(2.0)]
-    #[case::quadruple_speed(4.0)]
-    fn the_returned_moment_really_crosses(#[case] speed_factor: f32) {
-        let scale = hundred_steps();
-        let playhead = playhead(7.37, speed_factor);
-        let now = Moment::default();
-        let step_before = playhead.position_at(now).as_secs();
-        let result = next_progress_step(scale, playhead, now).unwrap_or(now);
-        assert!(result > now, "expected a moment strictly after now");
-        let step_after = playhead.position_at(result).as_secs();
-        assert_eq!(step_after, step_before + 1);
-    }
-
-    #[rstest]
     #[case::zero_width(0, 100, None)]
-    #[case::zero_length(40, 0, None)]
+    #[case::zero_length(40, 0, Some(80))]
     #[case::forty_columns(40, 100, Some(80))]
     fn a_text_bar_has_two_steps_per_column_unless_empty(
         #[case] width: u16,

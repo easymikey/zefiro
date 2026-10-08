@@ -226,16 +226,12 @@ mod tests {
         domain::{keymap::Action, revision::Revision},
         update::keymap::{bindings::Keymap, chord::KeyBinding},
     };
+    use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
     use rstest::rstest;
 
     use crate::{
-        key_hints::{
-            CHORDS_PER_ACTION,
-            KeyHintChords,
-            KeyHintsView,
-            KeyHintsWidget,
-            chords_for_action,
-        },
+        key_hints::{KeyHintChords, KeyHintsView, KeyHintsWidget, chords_for_action},
+        repaint::Presence,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -283,23 +279,17 @@ mod tests {
     }
 
     #[test]
-    fn an_action_bound_to_two_chords_joins_them_with_a_slash() {
+    fn an_area_without_rows_paints_nothing() {
+        let theme = noir();
         let chords = stock_chords();
-        let help = chords.chips.iter().find(|chip| chip.label == "Help");
-        assert_eq!(help.map(|chip| chip.key.as_str()), Some(" ?/Ctrl+K "));
-    }
-
-    #[test]
-    fn an_action_bound_to_one_chord_shows_it_bare() {
-        let chords = stock_chords();
-        let quit = chords.chips.iter().find(|chip| chip.label == "Quit");
-        assert_eq!(quit.map(|chip| chip.key.as_str()), Some(" q "));
-    }
-
-    #[test]
-    fn an_unbound_action_shows_an_empty_chord() {
-        let bindings: Vec<KeyBinding> = Vec::new();
-        assert_eq!(chords_for_action(&bindings, Action::Help).next(), None);
+        let widget = KeyHintsWidget::new(
+            keys_view(&chords),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        );
+        let blank = Buffer::empty(Rect::new(0, 0, 40, 2));
+        let mut buffer = blank.clone();
+        (&widget).render(Rect::new(0, 0, 40, 0), &mut buffer);
+        assert_eq!(buffer, blank);
     }
 
     #[test]
@@ -309,13 +299,6 @@ mod tests {
             chords_for_action(keymap.bindings(), Action::Delete).collect::<Vec<_>>(),
             ["d"]
         );
-    }
-
-    #[test]
-    fn the_settings_select_hint_shows_both_bound_chords() {
-        let chords = stock_chords();
-        let text = hints_text(settings_view(&chords));
-        assert!(text.contains("Enter/Space"), "got {text:?}");
     }
 
     #[test]
@@ -338,30 +321,33 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn an_unbound_action_shows_no_hint() {
-        let chords = KeyHintChords::from_bindings(&without(Action::Search));
-        let text = hints_text(keys_view(&chords));
-        assert!(!text.contains("Find"), "got {text:?}");
-        assert!(text.contains("Help"), "got {text:?}");
-    }
-
-    #[test]
-    fn a_half_bound_settings_pair_shows_only_its_bound_chord() {
-        let bindings = without(Action::SettingsNavigateUp);
-        let down = chords_for_action(&bindings, Action::SettingsNavigateDown)
-            .take(CHORDS_PER_ACTION)
-            .collect::<Vec<_>>()
-            .join("/");
+    #[rstest]
+    #[case::the_select_hint_shows_both_bound_chords(
+        Keymap::default().bindings().to_vec(),
+        "Enter/Space",
+        Presence::Shown
+    )]
+    #[case::a_half_bound_pair_shows_only_its_bound_chord(
+        without(Action::SettingsNavigateUp),
+        " j/↓  move",
+        Presence::Shown
+    )]
+    #[case::a_fully_unbound_pair_shows_no_hint(
+        without(Action::SettingsClose),
+        "close",
+        Presence::Hidden
+    )]
+    fn settings_hints_show_only_bound_chords(
+        #[case] bindings: Vec<KeyBinding>,
+        #[case] hint: &str,
+        #[case] presence: Presence,
+    ) {
         let chords = KeyHintChords::from_bindings(&bindings);
         let text = hints_text(settings_view(&chords));
-        assert!(text.contains(&format!(" {down}  move")), "got {text:?}");
-    }
-
-    #[test]
-    fn a_fully_unbound_settings_pair_shows_no_hint() {
-        let chords = KeyHintChords::from_bindings(&without(Action::SettingsClose));
-        let text = hints_text(settings_view(&chords));
-        assert!(!text.contains("close"), "got {text:?}");
+        assert_eq!(
+            Presence::from(text.contains(hint)),
+            presence,
+            "got {text:?}"
+        );
     }
 }

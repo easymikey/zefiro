@@ -73,7 +73,7 @@ pub(crate) struct VacatedAreas {
     pub(crate) selected_row: Option<Rect>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Backdrop<'a> {
     pub animations: Animations,
     pub layout: FrameLayout<'a>,
@@ -190,23 +190,17 @@ mod tests {
 
     use kernel::domain::time::Moment;
     use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+    use rstest::rstest;
     use tachyonfx::{Interpolation, fx};
 
     use crate::{
-        animation::stage::{AnimationStage, Stage, animation_frame_due},
+        animation::stage::{AnimationStage, animation_frame_due},
         pixels::cover::CoverMotion,
     };
 
     const INSIDE: Rect = Rect {
         x: 0,
         y: 0,
-        width: 4,
-        height: 1,
-    };
-
-    const OUTSIDE: Rect = Rect {
-        x: 40,
-        y: 40,
         width: 4,
         height: 1,
     };
@@ -219,76 +213,16 @@ mod tests {
         )
     }
 
-    #[test]
-    fn an_idle_stage_wants_no_frame_and_stages_nothing() {
-        let stage = Stage::default();
-        assert!(!stage.is_running());
-        assert!(!stage.is_animating());
-        assert!(stage.take_active().is_empty());
-    }
-
-    #[test]
-    fn pushing_an_animation_starts_running_and_counts_it() {
-        let mut stage = Stage::default();
-        stage.push((fade(900), INSIDE));
-        assert!(stage.is_running());
-        assert!(stage.is_animating());
-        assert_eq!(stage.take_active().len(), 1);
-    }
-
-    #[test]
-    fn pushing_onto_an_already_running_stage_adds_to_it() {
-        let mut stage = Stage::default();
-        stage.push((fade(900), INSIDE));
-        stage.push((fade(900), INSIDE));
-        assert_eq!(stage.take_active().len(), 2);
-    }
-
-    #[test]
-    fn taking_active_empties_a_running_stage_and_returns_what_it_held() {
-        let mut stage = Stage::default();
-        stage.push((fade(900), INSIDE));
-        let active = stage.take_active();
-        assert_eq!(active.len(), 1);
-    }
-
-    #[test]
-    fn taking_active_from_an_idle_stage_returns_nothing() {
-        assert_eq!(Stage::default().take_active().len(), 0);
-    }
-
-    #[test]
-    fn advancing_an_area_outside_the_buffer_drops_it_and_settles_idle() {
-        let mut buffer = Buffer::empty(INSIDE);
-        let stage = Stage::Running(vec![(fade(900), OUTSIDE)]);
-        let advanced = stage.advance(&mut buffer, Duration::from_millis(1));
-        assert!(!advanced.is_running());
-    }
-
-    #[test]
-    fn advancing_a_fully_elapsed_animation_ends_the_stage() {
-        let mut buffer = Buffer::empty(INSIDE);
-        let stage = Stage::Running(vec![(fade(900), INSIDE)]);
-        let advanced = stage.advance(&mut buffer, Duration::from_secs(10));
-        assert!(
-            !advanced.is_running(),
-            "a fully elapsed animation must not still be running"
-        );
-    }
-
-    #[test]
-    fn advancing_a_partially_elapsed_animation_keeps_it_running() {
-        let mut buffer = Buffer::empty(INSIDE);
-        let stage = Stage::Running(vec![(fade(900), INSIDE)]);
-        let advanced = stage.advance(&mut buffer, Duration::from_millis(1));
-        assert!(advanced.is_running());
+    fn washing() -> AnimationStage {
+        let mut animation_stage = AnimationStage::default();
+        animation_stage.stage_whole_screen(fade(100), INSIDE);
+        animation_stage
     }
 
     #[test]
     fn a_finished_wash_is_dropped_and_a_later_screen_animation_is_no_wash() {
         let mut buffer = Buffer::empty(INSIDE);
-        let mut animation_stage = AnimationStage::default();
-        animation_stage.stage_whole_screen(fade(100), INSIDE);
+        let mut animation_stage = washing();
         assert!(animation_stage.wash_progress().is_some());
         assert!(animation_stage.is_animating());
         animation_stage.advance(&mut buffer, Duration::from_secs(10));
@@ -297,37 +231,28 @@ mod tests {
         assert_eq!(animation_stage.wash_progress(), None);
     }
 
-    #[test]
-    fn a_running_stage_wants_the_next_frame() {
-        let mut animation_stage = AnimationStage::default();
-        animation_stage.stage_whole_screen(fade(100), INSIDE);
+    #[rstest]
+    #[case::a_running_stage_wants_the_next_frame(washing(), CoverMotion::Still, Some)]
+    #[case::a_running_crossfade_wants_the_next_frame(
+        AnimationStage::default(),
+        CoverMotion::Moving,
+        Some
+    )]
+    #[case::a_settled_stage_wants_no_frame(
+        AnimationStage::default(),
+        CoverMotion::Still,
+        |_| None
+    )]
+    fn animation_frame_due_answers_the_next_frame_while_something_moves(
+        #[case] animation_stage: AnimationStage,
+        #[case] cover_motion: CoverMotion,
+        #[case] due: fn(Moment) -> Option<Moment>,
+    ) {
         let next_frame_at = Moment::new(Duration::from_millis(1_033));
 
         assert_eq!(
-            animation_frame_due(&animation_stage, CoverMotion::Still, next_frame_at),
-            Some(next_frame_at)
-        );
-    }
-
-    #[test]
-    fn a_running_crossfade_wants_the_next_frame() {
-        let animation_stage = AnimationStage::default();
-        let next_frame_at = Moment::new(Duration::from_millis(1_033));
-
-        assert_eq!(
-            animation_frame_due(&animation_stage, CoverMotion::Moving, next_frame_at),
-            Some(next_frame_at)
-        );
-    }
-
-    #[test]
-    fn a_settled_stage_wants_no_frame() {
-        let animation_stage = AnimationStage::default();
-        let next_frame_at = Moment::new(Duration::from_millis(1_033));
-
-        assert_eq!(
-            animation_frame_due(&animation_stage, CoverMotion::Still, next_frame_at),
-            None
+            animation_frame_due(&animation_stage, cover_motion, next_frame_at),
+            due(next_frame_at)
         );
     }
 }

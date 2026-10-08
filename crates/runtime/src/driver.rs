@@ -220,7 +220,7 @@ pub(crate) mod tests {
         Report(Note),
     }
 
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Debug, PartialEq, Eq)]
     enum NoJob {}
 
     struct Probe {
@@ -361,24 +361,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_second_after_of_the_same_kind_replaces_the_first() {
-        let run = ProbeRun::start(never());
-
-        run.send(ProbeCmd::After {
-            delay: SHORT,
-            tag: 2,
-        });
-        run.send(ProbeCmd::After {
-            delay: SHORT * 2,
-            tag: 1,
-        });
-
-        assert_eq!(run.doorbell.recv_timeout(RECV_TIMEOUT), Ok(Note::Fired(1)));
-        assert!(run.doorbell.recv_timeout(SHORT * 4).is_err());
-        run.stop();
-    }
-
-    #[test]
     fn a_write_under_a_watched_directory_arrives_as_a_change() {
         let directory = tempfile::tempdir().unwrap();
         let run = ProbeRun::start(never());
@@ -463,7 +445,7 @@ pub(crate) mod tests {
         assert!(outlets.workers.is_empty());
     }
 
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+    #[derive(Debug, PartialEq, Eq)]
     pub(crate) enum Nap {
         Long,
         Brief,

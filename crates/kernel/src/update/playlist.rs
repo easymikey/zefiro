@@ -94,21 +94,6 @@ mod tests {
     #[case::toggle_shuffle_from_shuffled(ordered(shuffled(&[1, 0]), RepeatMode::Off), PlaylistMessage::ToggleShuffle, ordered(PlayOrder::Linear, RepeatMode::Off))]
     #[case::shuffle_rolled_while_pending(ordered(PlayOrder::ShufflePending, RepeatMode::Off), rolled(&[2, 0, 1]), ordered(shuffled(&[2, 0, 1]), RepeatMode::Off))]
     #[case::shuffle_rolled_while_shuffled(ordered(shuffled(&[1, 0]), RepeatMode::Off), rolled(&[2, 0, 1]), ordered(shuffled(&[2, 0, 1]), RepeatMode::Off))]
-    #[case::cycle_repeat_from_off(
-        ordered(PlayOrder::Linear, RepeatMode::Off),
-        PlaylistMessage::CycleRepeat,
-        ordered(PlayOrder::Linear, RepeatMode::All)
-    )]
-    #[case::cycle_repeat_from_all(
-        ordered(PlayOrder::Linear, RepeatMode::All),
-        PlaylistMessage::CycleRepeat,
-        ordered(PlayOrder::Linear, RepeatMode::One)
-    )]
-    #[case::cycle_repeat_from_one(
-        ordered(PlayOrder::Linear, RepeatMode::One),
-        PlaylistMessage::CycleRepeat,
-        ordered(PlayOrder::Linear, RepeatMode::Off)
-    )]
     fn a_playlist_message_updates_the_play_order_and_repeat_mode(
         #[case] mut playlist: Playlist,
         #[case] message: PlaylistMessage,

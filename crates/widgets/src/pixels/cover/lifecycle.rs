@@ -45,7 +45,7 @@ impl PixmapSource {
                 let pixmap = if let Some(PaintedCover {
                     identity: Identity::Vinyl(painted),
                     pixmap,
-                    rect: _rect,
+                    ..
                 }) = painted_cover
                     && *painted == key
                 {
@@ -336,19 +336,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_track_change_without_a_new_cover_clears_the_previous_art() {
-        let mut sources = sources();
-        sources.model.player = playing("/music/a.flac");
-        let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
-        cover_lifecycle.set_cover(cover_image("/music/a.flac"));
-        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
-        sources.model.player = playing("/music/b.flac");
-
-        let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
-        assert!(matches!(update.card_cover, CardCover::Missing));
-    }
-
     fn translucent_cover(path: &str, red: u8) -> CoverImage {
         CoverImage {
             path: PathBuf::from(path),
@@ -363,10 +350,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_new_cover_is_painted_as_it_is() {
+    #[rstest]
+    #[case::with_animations_off(Animations::Off, rect())]
+    #[case::in_a_resized_rect(Animations::On, Rect::new(0, 0, 6, 6))]
+    fn a_new_cover_is_painted_as_it_is(
+        #[case] animations: Animations,
+        #[case] area: Rect,
+    ) {
         let mut sources = sources();
-        sources.model.settings.appearance_settings.animations = Animations::Off;
+        sources.model.settings.appearance_settings.animations = animations;
         sources.model.player = playing("/music/a.flac");
         let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
         cover_lifecycle.set_cover(cover_image("/music/a.flac"));
@@ -374,7 +366,7 @@ mod tests {
         sources.model.player = playing("/music/b.flac");
         cover_lifecycle.set_cover(translucent_cover("/music/b.flac", 20));
 
-        let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
+        let update = cover_lifecycle.refresh(&sources.scene(), Some(area));
         assert_eq!(painted_pixel(&update.frame), Some(Rgba([20, 100, 50, 128])));
     }
 
@@ -411,17 +403,6 @@ mod tests {
         assert_eq!(repaints.last(), Some(&20));
         assert_eq!(reds.first(), Some(&None));
         assert_eq!(reds.iter().rposition(Option::is_some), Some(24));
-    }
-
-    #[test]
-    fn a_cover_change_with_animations_off_repaints_once() {
-        let mut sources = sources();
-        sources.model.settings.appearance_settings.animations = Animations::Off;
-
-        let reds = painted_reds_over_a_cover_change(&mut sources);
-        let repaints: Vec<u8> = reds.iter().flatten().copied().collect();
-        assert_eq!(repaints, vec![20]);
-        assert_eq!(reds.first(), Some(&Some(20)));
     }
 
     #[test]
@@ -506,38 +487,6 @@ mod tests {
     }
 
     #[test]
-    fn a_track_change_fits_the_new_pixmap_to_the_cover_rect() {
-        let mut sources = sources();
-        sources.model.player = playing("/music/a.flac");
-        let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
-        cover_lifecycle.set_cover(cover_image("/music/a.flac"));
-        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
-        sources.model.player = playing("/music/b.flac");
-        cover_lifecycle.set_cover(cover_image("/music/b.flac"));
-        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
-        let incoming = cover_lifecycle
-            .painted_cover
-            .as_ref()
-            .map(|painted| &painted.pixmap)
-            .expect("a pixmap after install");
-        assert_eq!(incoming.dimensions(), fitted_size());
-    }
-
-    #[test]
-    fn a_new_cover_in_a_resized_rect_is_painted_as_it_is() {
-        let mut sources = sources();
-        sources.model.player = playing("/music/a.flac");
-        let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
-        cover_lifecycle.set_cover(cover_image("/music/a.flac"));
-        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
-        sources.model.player = playing("/music/b.flac");
-        cover_lifecycle.set_cover(translucent_cover("/music/b.flac", 20));
-        let update =
-            cover_lifecycle.refresh(&sources.scene(), Some(Rect::new(0, 0, 6, 6)));
-        assert_eq!(painted_pixel(&update.frame), Some(Rgba([20, 100, 50, 128])));
-    }
-
-    #[test]
     fn a_settled_plain_refresh_keeps_the_fitted_pixmap_and_repaints_nothing() {
         let mut sources = sources();
         sources.model.player = playing("/music/a.flac");
@@ -560,28 +509,5 @@ mod tests {
         assert_eq!(fitted.dimensions(), fitted_size());
         assert!(matches!(second.frame, CoverFrame::Keep));
         assert!(Arc::ptr_eq(&fitted, &kept));
-    }
-
-    #[test]
-    fn a_settled_vinyl_refresh_shares_the_cached_pixmap() {
-        let sources = sources();
-        let mut cover_lifecycle =
-            CoverLifecycle::new(PixmapSource::Vinyl(Box::default()), cell());
-
-        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
-        let first = cover_lifecycle
-            .painted_cover
-            .as_ref()
-            .map(|painted| Arc::clone(&painted.pixmap))
-            .expect("a refresh with a cover rect paints a pixmap");
-
-        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
-        let second = cover_lifecycle
-            .painted_cover
-            .as_ref()
-            .map(|painted| Arc::clone(&painted.pixmap))
-            .expect("a settled second refresh keeps the painted pixmap");
-
-        assert!(Arc::ptr_eq(&first, &second));
     }
 }

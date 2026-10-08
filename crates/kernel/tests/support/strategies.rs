@@ -1,4 +1,4 @@
-use std::{ops::Range, time::Duration};
+use std::time::Duration;
 
 use kernel::{
     domain::{
@@ -78,10 +78,6 @@ pub(crate) fn unmodified_key_code() -> impl Strategy<Value = KeyCode> {
         Just(KeyCode::PageUp),
         Just(KeyCode::PageDown),
     ]
-}
-
-pub(crate) fn durations(len: Range<usize>) -> impl Strategy<Value = Vec<Duration>> {
-    proptest::collection::vec((0u64..7200).prop_map(Duration::from_secs), len)
 }
 
 fn direction() -> impl Strategy<Value = Direction> {

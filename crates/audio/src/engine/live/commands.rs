@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use kernel::{
     cmd::{AudioCmd, Cmd, Playback, TrackLoad},
-    domain::{crossfade::Crossfade, device::OutputDevice},
+    domain::{crossfade::Crossfade, device::OutputDevice, revision::Revision},
     message::AudioEvent,
     update::machine::{LoopEffect, Unhandled},
 };
@@ -21,7 +21,7 @@ use crate::{
 impl Live {
     pub(crate) fn command(
         &mut self,
-        revisions: &mut JobRevisions,
+        job_revisions: &mut JobRevisions,
         audio_cmd: AudioCmd,
     ) -> Result<AudioLoopCmd, Unhandled> {
         match audio_cmd {
@@ -30,9 +30,11 @@ impl Live {
                 media: _media,
                 decibels: _decibels,
             }) if revision <= self.executed_revisions.load => Err(Unhandled),
-            AudioCmd::Load(track_load) => Ok(self.load(revisions, track_load)),
-            AudioCmd::Preload(track_load) => self.preload(revisions, track_load),
-            AudioCmd::CancelPreload => self.cancel_preload(revisions),
+            AudioCmd::Load(track_load) => Ok(self.load(job_revisions, track_load)),
+            AudioCmd::Preload(track_load) => self.preload(job_revisions, track_load),
+            AudioCmd::CancelPreload(revision) => {
+                Ok(self.cancel_preload(job_revisions, revision))
+            }
             AudioCmd::SetPlayback(playback) => {
                 let effect = match playback {
                     Playback::Paused => EngineEffect::Pause,
@@ -49,13 +51,13 @@ impl Live {
             }
             AudioCmd::Stop => {
                 self.phase = Phase::Idle;
-                revisions.cancel();
+                job_revisions.cancel();
                 Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(
                     self.speed,
                 ))))
             }
             AudioCmd::SetCrossfade(crossfade) => {
-                Ok(self.set_crossfade(revisions, crossfade))
+                Ok(self.set_crossfade(job_revisions, crossfade))
             }
             AudioCmd::SetReplayGain(replay_gain) => {
                 self.settings.replay_gain = replay_gain;
@@ -70,13 +72,15 @@ impl Live {
             AudioCmd::Grow {
                 revision,
                 downloaded,
-            } => revisions.grow(revision, downloaded).map(|()| Cmd::none()),
+            } => job_revisions
+                .grow(revision, downloaded)
+                .map(|()| Cmd::none()),
         }
     }
 
     pub(crate) fn load(
         &mut self,
-        revisions: &mut JobRevisions,
+        job_revisions: &mut JobRevisions,
         track_load: TrackLoad,
     ) -> AudioLoopCmd {
         let TrackLoad {
@@ -98,11 +102,14 @@ impl Live {
             return Cmd::effect(LoopEffect::Execute(EngineEffect::StartHandover(
                 speed,
             )))
-            .then(Cmd::effect(LoopEffect::Run(revisions.decode_job(media))));
+            .then(Cmd::effect(LoopEffect::Run(
+                job_revisions.decode_job(media),
+            )));
         }
         self.phase = Phase::Loading(loading);
-        Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(speed)))
-            .then(Cmd::effect(LoopEffect::Run(revisions.decode_job(media))))
+        Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(speed))).then(
+            Cmd::effect(LoopEffect::Run(job_revisions.decode_job(media))),
+        )
     }
 
     fn seek(&mut self, target: Duration) -> AudioLoopCmd {
@@ -151,7 +158,7 @@ impl Live {
 
     fn preload(
         &mut self,
-        revisions: &mut JobRevisions,
+        job_revisions: &mut JobRevisions,
         track_load: TrackLoad,
     ) -> Result<AudioLoopCmd, Unhandled> {
         let TrackLoad {
@@ -170,23 +177,27 @@ impl Live {
             decibels,
         };
         self.executed_revisions.preload = revision;
-        Ok(Cmd::effect(LoopEffect::Run(revisions.preload_job(media))))
+        Ok(Cmd::effect(LoopEffect::Run(
+            job_revisions.preload_job(media),
+        )))
     }
 
     fn cancel_preload(
         &mut self,
-        revisions: &mut JobRevisions,
-    ) -> Result<AudioLoopCmd, Unhandled> {
+        job_revisions: &mut JobRevisions,
+        revision: Revision,
+    ) -> AudioLoopCmd {
+        let cancelled = Cmd::message(AudioEvent::PreloadCancelled(revision));
         let Phase::Playing(playing) = &mut self.phase else {
-            return Err(Unhandled);
+            return cancelled;
         };
         let drop_preload = Cmd::effect(LoopEffect::Execute(EngineEffect::DropPreload));
         let audio_loop_cmd = match &playing.next {
-            NextTrack::None => return Err(Unhandled),
+            NextTrack::None => return cancelled,
             NextTrack::Crossfading {
                 incoming: _incoming,
                 fade: Fade::Running,
-            } => return Ok(Cmd::message(AudioEvent::PreloadKept)),
+            } => return Cmd::message(AudioEvent::PreloadKept(revision)),
             NextTrack::Crossfading {
                 incoming: _incoming,
                 fade: Fade::Armed,
@@ -198,14 +209,14 @@ impl Live {
             } => drop_preload,
             NextTrack::Gapless(_incoming) => drop_preload,
         };
-        revisions.drop_preload(&playing.current.media);
+        job_revisions.drop_preload(&playing.current.media);
         playing.next = NextTrack::None;
-        Ok(audio_loop_cmd.then(Cmd::message(AudioEvent::PreloadCancelled)))
+        audio_loop_cmd.then(cancelled)
     }
 
     fn set_crossfade(
         &mut self,
-        revisions: &mut JobRevisions,
+        job_revisions: &mut JobRevisions,
         crossfade: Crossfade,
     ) -> AudioLoopCmd {
         self.settings.crossfade = crossfade;
@@ -233,7 +244,9 @@ impl Live {
                 };
                 Cmd::effect(LoopEffect::Execute(EngineEffect::SetFadeStart(None)))
                     .then(Cmd::effect(LoopEffect::Execute(EngineEffect::DropPreload)))
-                    .then(Cmd::effect(LoopEffect::Run(revisions.preload_job(media))))
+                    .then(Cmd::effect(LoopEffect::Run(
+                        job_revisions.preload_job(media),
+                    )))
             }
             (Fade::Running, false) => Cmd::none(),
         }
@@ -262,7 +275,6 @@ mod tests {
         message::AudioEvent,
         update::machine::{LoopEffect, Machine, Unhandled},
     };
-    use proptest::prelude::{any, prop_assert, prop_assert_eq, proptest};
     use rstest::rstest;
 
     use crate::{
@@ -304,7 +316,6 @@ mod tests {
                 step,
                 track_a,
                 track_b,
-                unhandled,
                 with_load_revision,
                 with_preload_revision,
             },
@@ -317,6 +328,17 @@ mod tests {
         load("/a"),
         EngineRow {
             next: EngineState::Live(with_load_revision(loading(), first())),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(Speed::default()))).then(decoding("/a"))),
+        }
+    )]
+    #[case::load_while_idle_with_a_crossfade_starts_a_decode(
+        EngineState::Live(live_with_crossfade(10)),
+        load("/a"),
+        EngineRow {
+            next: EngineState::Live(with_load_revision(
+                Live { phase: Phase::Loading(loading_track("/a")), ..live_with_crossfade(10) },
+                first(),
+            )),
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::StartLoad(Speed::default()))).then(decoding("/a"))),
         }
     )]
@@ -390,6 +412,14 @@ mod tests {
         EngineRow {
             next: EngineState::Live(crossfading_mid_ramp()),
             effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(seconds(95)))))),
+        }
+    )]
+    #[case::seek_onto_the_fade_start_keeps_fading(
+        EngineState::Live(crossfading_mid_ramp()),
+        cmd(AudioCmd::Seek(seconds(90))),
+        EngineRow {
+            next: EngineState::Live(crossfading_mid_ramp()),
+            effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(seconds(90)))))),
         }
     )]
     #[case::speed(
@@ -503,47 +533,27 @@ mod tests {
     }
 
     #[rstest]
-    #[case::while_idle(live())]
-    #[case::while_loading(loading())]
-    #[case::while_the_skip_is_still_decoding(handing_over(Incoming::Loading(
-        loading_track("/b")
-    )))]
-    #[case::while_the_skip_fades_in(handed_over_to_b())]
-    fn a_preload_without_a_settled_track_is_refused(#[case] live: Live) {
+    #[case::a_preload_while_idle(live(), preload("/c"))]
+    #[case::a_preload_while_loading(loading(), preload("/c"))]
+    #[case::a_preload_while_the_skip_is_still_decoding(
+        handing_over(Incoming::Loading(loading_track("/b"))),
+        preload("/c")
+    )]
+    #[case::a_preload_while_the_skip_fades_in(handed_over_to_b(), preload("/c"))]
+    #[case::the_device_in_use(
+        playing(),
+        cmd(AudioCmd::SetDevice(OutputDevice::SystemDefault))
+    )]
+    #[case::a_stale_load(with_load_revision(live(), second()), load("/b"))]
+    #[case::a_stale_preload(with_preload_revision(playing(), second()), preload("/b"))]
+    fn a_refused_cell_leaves_the_live_engine_alone(
+        #[case] live: Live,
+        #[case] message: EngineMessage,
+    ) {
         let expected = EngineState::Live(live.clone());
         let mut state = EngineState::Live(live);
-        assert_eq!(step(&mut state, preload("/c")).err(), Some(Unhandled));
+        assert_eq!(step(&mut state, message).err(), Some(Unhandled));
         assert_eq!(state, expected);
-    }
-
-    #[test]
-    fn the_device_in_use_is_refused() {
-        let mut state = EngineState::Live(playing());
-        assert_eq!(
-            step(
-                &mut state,
-                cmd(AudioCmd::SetDevice(OutputDevice::SystemDefault)),
-            )
-            .err(),
-            Some(Unhandled)
-        );
-        assert_eq!(state, EngineState::Live(playing()));
-    }
-
-    #[test]
-    fn a_stale_load_is_refused() {
-        let live = with_load_revision(live(), second());
-        let mut state = EngineState::Live(live.clone());
-        assert_eq!(step(&mut state, load("/b")).err(), Some(Unhandled));
-        assert_eq!(state, EngineState::Live(live));
-    }
-
-    #[test]
-    fn a_stale_preload_is_refused() {
-        let live = with_preload_revision(playing(), second());
-        let mut state = EngineState::Live(live.clone());
-        assert_eq!(step(&mut state, preload("/b")).err(), Some(Unhandled));
-        assert_eq!(state, EngineState::Live(live));
     }
 
     struct ReplayRow {
@@ -595,30 +605,6 @@ mod tests {
             step(&mut engine, row.engine_message),
             Ok(row.audio_loop_cmd),
         );
-    }
-
-    proptest! {
-        #[test]
-        fn a_load_opens_an_outgoing_stream_only_when_it_will_fade(
-            crossfade_seconds in 0u64..30,
-            already_playing in any::<bool>(),
-        ) {
-            let base = if already_playing { playing() } else { live() };
-            let starting = Live {
-                settings: AudioSettings {
-                    crossfade: crossfade(crossfade_seconds),
-                    ..settings()
-                },
-                ..base
-            };
-            let mut state = EngineState::Live(starting);
-            prop_assert!(step(&mut state, load("/next")).is_ok());
-            let EngineState::Live(live) = state else {
-                return Err(unhandled("the engine stays live across a load"));
-            };
-            let fades = crossfade_seconds > 0 && already_playing;
-            prop_assert_eq!(matches!(live.phase, Phase::Handover(_)), fades);
-        }
     }
 
     fn growing_load(downloaded: u64) -> TrackLoad {
@@ -687,13 +673,13 @@ mod tests {
         let preloaded = engine
             .transition(cmd(AudioCmd::Preload(track_load)))
             .is_ok();
-        let cancelled = engine.transition(cmd(AudioCmd::CancelPreload)).is_ok();
+        drop(engine.transition(cmd(AudioCmd::CancelPreload(first()))));
         let grown = engine.transition(cmd(AudioCmd::Grow {
             revision: download_revision,
             downloaded: 600,
         }));
 
-        assert!(preloaded && cancelled);
+        assert!(preloaded);
         assert_eq!(grown.err(), Some(Unhandled));
     }
 
@@ -725,8 +711,9 @@ mod tests {
         let mut state = EngineState::Live(live);
 
         assert_same(
-            step(&mut state, cmd(AudioCmd::CancelPreload)),
-            Ok(audio_loop_cmd.then(Cmd::message(AudioEvent::PreloadCancelled))),
+            step(&mut state, cmd(AudioCmd::CancelPreload(first()))),
+            Ok(audio_loop_cmd
+                .then(Cmd::message(AudioEvent::PreloadCancelled(first())))),
         );
         assert_same(
             step(&mut state, EngineMessage::Finished(SinkRole::Current)),
@@ -739,8 +726,8 @@ mod tests {
         let mut state = EngineState::Live(crossfading_mid_ramp());
 
         assert_same(
-            step(&mut state, cmd(AudioCmd::CancelPreload)),
-            Ok(Cmd::message(AudioEvent::PreloadKept)),
+            step(&mut state, cmd(AudioCmd::CancelPreload(first()))),
+            Ok(Cmd::message(AudioEvent::PreloadKept(first()))),
         );
         assert_eq!(state, EngineState::Live(crossfading_mid_ramp()));
     }
@@ -748,12 +735,12 @@ mod tests {
     #[rstest]
     #[case::no_preload(playing())]
     #[case::idle(live())]
-    fn cancel_preload_without_a_preload_is_refused(#[case] live: Live) {
+    fn cancel_preload_without_a_preload_answers_cancelled(#[case] live: Live) {
         let mut state = EngineState::Live(live.clone());
 
-        assert_eq!(
-            step(&mut state, cmd(AudioCmd::CancelPreload)).err(),
-            Some(Unhandled)
+        assert_same(
+            step(&mut state, cmd(AudioCmd::CancelPreload(first()))),
+            Ok(Cmd::message(AudioEvent::PreloadCancelled(first()))),
         );
         assert_eq!(state, EngineState::Live(live));
     }

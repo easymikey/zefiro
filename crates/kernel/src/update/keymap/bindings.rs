@@ -57,20 +57,10 @@ impl Binding {
     fn collides(&self, other: &Self) -> bool {
         lane(self.key_context) == lane(other.key_context)
             && match (self.chord, other.chord) {
-                (
-                    Chord::Key(key),
-                    Chord::Sequence {
-                        prefix: chord_prefix,
-                        key: _key,
-                    },
-                )
-                | (
-                    Chord::Sequence {
-                        prefix: chord_prefix,
-                        key: _key,
-                    },
-                    Chord::Key(key),
-                ) => key == chord_prefix.key(),
+                (Chord::Key(key), Chord::Sequence { chord_prefix, .. })
+                | (Chord::Sequence { chord_prefix, .. }, Chord::Key(key)) => {
+                    key == chord_prefix.key()
+                }
                 (Chord::Key(_), Chord::Key(_))
                 | (Chord::Sequence { .. }, Chord::Sequence { .. }) => {
                     self.chord == other.chord
@@ -394,6 +384,8 @@ fn resolved_bindings(
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use crate::{
         domain::{
             config::Diagnostic,
@@ -402,37 +394,40 @@ mod tests {
         update::keymap::bindings::Keymap,
     };
 
-    #[test]
-    fn the_shipped_keymap_has_no_chord_collisions() {
-        assert_eq!(Keymap::default().diagnostic(), None);
+    struct DiagnosticRow {
+        keymap_overrides: KeymapOverrides,
+        text: Option<&'static str>,
     }
 
-    #[test]
-    fn error_text_joins_entries_with_semicolon_space() {
-        let keymap_overrides = KeymapOverrides::from([
+    #[rstest]
+    #[case::the_shipped_keymap_has_no_chord_collisions(DiagnosticRow {
+        keymap_overrides: KeymapOverrides::default(),
+        text: None,
+    })]
+    #[case::error_text_joins_entries_with_semicolon_space(DiagnosticRow {
+        keymap_overrides: KeymapOverrides::from([
             (Action::PlayPause, KeyOverride::from("bad")),
             (Action::Next, KeyOverride::from("y")),
             (Action::Previous, KeyOverride::from("y")),
-        ]);
-        assert_eq!(
-            Keymap::new(keymap_overrides)
-                .diagnostic()
-                .as_ref()
-                .map(Diagnostic::text),
-            Some("invalid key chord `bad`; key collision on `y`")
-        );
-    }
+        ]),
+        text: Some("invalid key chord `bad`; key collision on `y`"),
+    })]
+    #[case::a_configured_chord_on_a_fixed_chord_is_a_collision(DiagnosticRow {
+        keymap_overrides: KeymapOverrides::from([(Action::Next, KeyOverride::from("5"))]),
+        text: Some("key collision on `5`"),
+    })]
+    fn the_diagnostic_names_each_bad_chord(#[case] row: DiagnosticRow) {
+        let DiagnosticRow {
+            keymap_overrides,
+            text,
+        } = row;
 
-    #[test]
-    fn a_configured_chord_on_a_fixed_chord_is_a_collision() {
-        let keymap_overrides =
-            KeymapOverrides::from([(Action::Next, KeyOverride::from("5"))]);
         assert_eq!(
             Keymap::new(keymap_overrides)
                 .diagnostic()
                 .as_ref()
                 .map(Diagnostic::text),
-            Some("key collision on `5`")
+            text
         );
     }
 }

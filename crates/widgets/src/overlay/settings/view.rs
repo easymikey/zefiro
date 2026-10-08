@@ -330,6 +330,7 @@ mod tests {
         settings::ReplayGain,
     };
     use rstest::rstest;
+    use unicode_width::UnicodeWidthStr;
 
     use crate::overlay::settings::{
         tests::settings_values,
@@ -340,6 +341,7 @@ mod tests {
             settings_label,
             sleep_presets_text,
             value_text,
+            widest_value,
         },
     };
 
@@ -438,5 +440,20 @@ mod tests {
             value_text(cover_mode_row, &view)
                 .contains(&CoverMode::default().to_string())
         );
+    }
+
+    #[rstest]
+    #[case::replay_gain(SettingRow::ReplayGain)]
+    #[case::animations(SettingRow::Appearance(AppearanceField::Animations))]
+    fn a_toggle_row_reserves_the_width_of_its_wider_value(#[case] row: SettingRow) {
+        let view = SettingsView {
+            replay_gain: ReplayGain::Off,
+            appearance_settings: AppearanceSettings {
+                animations: Animations::Off,
+                ..AppearanceSettings::default()
+            },
+            ..settings_values()
+        };
+        assert_eq!(widest_value(row, &view), value_text(row, &view).width());
     }
 }

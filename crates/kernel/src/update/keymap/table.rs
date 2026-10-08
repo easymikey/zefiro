@@ -82,7 +82,7 @@ fn playlist_rows() -> Vec<KeyBinding> {
         row(Down, bare(KeyCode::Down), Message::Browse(B::CursorBy { rows: 1 })),
         row(Up, key('k'), Message::Browse(B::CursorBy { rows: -1 })),
         row(Up, bare(KeyCode::Up), Message::Browse(B::CursorBy { rows: -1 })),
-        row(Top, Chord::Sequence { prefix: ChordPrefix::G, key: ChordPrefix::G.key() }, Message::Browse(B::SelectFirst)),
+        row(Top, Chord::Sequence { chord_prefix: ChordPrefix::G, key: ChordPrefix::G.key() }, Message::Browse(B::SelectFirst)),
         row(Top, bare(KeyCode::Home), Message::Browse(B::SelectFirst)),
         row(Bottom, key('G'), Message::Browse(B::SelectLast)),
         row(Bottom, bare(KeyCode::End), Message::Browse(B::SelectLast)),

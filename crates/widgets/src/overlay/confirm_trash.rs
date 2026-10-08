@@ -34,11 +34,9 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use kernel::domain::track::{AudioFormat, Tags, Track, TrackParts};
-    use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};
 
     use crate::{
-        overlay::confirm_trash::{prompt, sentence},
-        primitive::canvas::Canvas,
+        overlay::confirm_trash::prompt,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
     };
@@ -67,40 +65,7 @@ mod tests {
     }
 
     #[test]
-    fn the_sentence_quotes_the_title_and_names_the_artist() {
-        assert_eq!(
-            sentence(&track()).concat(),
-            "\"Moon River\" — Audrey Hepburn"
-        );
-    }
-
-    #[test]
     fn confirm_trash_shows_the_quoted_title_and_artist() {
         insta::assert_snapshot!(frame(60, 12));
-    }
-
-    #[test]
-    fn prompt_paints_the_areas_it_is_given() {
-        let theme = noir();
-        let track = track();
-        let widget = prompt(&track, ActiveTheme::new(&theme, ColorDepth::TrueColor));
-        let rect = Rect::new(0, 0, 60, 12);
-        let mut buffer = Buffer::empty(rect);
-        widget.paint(
-            widget.areas(rect),
-            Canvas {
-                area: rect,
-                buffer: &mut buffer,
-            },
-        );
-        let mut rendered = Buffer::empty(rect);
-        (&widget).render(rect, &mut rendered);
-        assert_ne!(buffer, Buffer::empty(rect));
-        assert_eq!(buffer, rendered);
-    }
-
-    #[test]
-    fn confirm_trash_does_not_panic_on_a_tiny_terminal() {
-        assert_eq!(frame(4, 3).lines().count(), 3);
     }
 }

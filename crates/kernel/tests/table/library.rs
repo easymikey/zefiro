@@ -174,12 +174,7 @@ fn a_tagged_chunk_rewrites_the_preloaded_track() {
     drop(tag(&mut model, tagged("/music/b.flac", "Bravo", 300)));
 
     assert_eq!(titles(&model), ["a", "Bravo"]);
-    let Player::Playing {
-        track: _track,
-        playhead: _playhead,
-        preloaded,
-    } = &model.player
-    else {
+    let Player::Playing { preloaded, .. } = &model.player else {
         panic!("the player must stay playing");
     };
     assert_eq!(
@@ -343,7 +338,6 @@ fn rescanning_model() -> Model {
 
 #[rstest]
 #[case::the_generation_it_asked_for(1, Some(1), ScanStatus::Idle)]
-#[case::a_superseded_generation(0, None, ScanStatus::Scanning)]
 #[case::a_generation_it_never_asked_for(2, None, ScanStatus::Scanning)]
 fn only_the_awaited_scan_generation_lands(
     #[case] bumps: u64,

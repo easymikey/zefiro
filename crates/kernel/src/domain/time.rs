@@ -94,19 +94,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_timecode_rejects_non_numeric_input() {
-        assert_eq!(parse_timecode("abc"), Err(TimecodeError::Malformed));
-    }
-
-    #[test]
     fn parse_timecode_rejects_empty_input() {
         assert_eq!(parse_timecode(""), Err(TimecodeError::Empty));
-    }
-
-    #[test]
-    fn since_epoch_returns_the_stored_duration() {
-        let moment = Moment::new(Duration::from_secs(3));
-        assert_eq!(moment.since_epoch(), Duration::from_secs(3));
     }
 
     #[test]

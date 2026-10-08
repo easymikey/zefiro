@@ -78,9 +78,9 @@ pub(crate) fn visible_band(window_background: Rgb, text: Rgb, mix: f32) -> Rgb {
 #[cfg(test)]
 mod tests {
     use kernel::domain::appearance::Rgb;
+    use rstest::rstest;
 
     use crate::theme::contrast::{
-        MIN_BAND_CONTRAST,
         MIN_MARKER_CONTRAST,
         contrast_ratio,
         raise_contrast,
@@ -97,50 +97,35 @@ mod tests {
         assert!((relative_luminance(WHITE) - 1.0).abs() < f32::EPSILON);
     }
 
-    #[test]
-    fn black_on_white_is_the_maximum_ratio() {
-        assert!((contrast_ratio(BLACK, WHITE) - 21.0).abs() < 0.01);
-        assert!((contrast_ratio(WHITE, BLACK) - 21.0).abs() < 0.01);
+    #[rstest]
+    #[case::black_on_white(BLACK, WHITE, 21.0)]
+    #[case::white_on_black(WHITE, BLACK, 21.0)]
+    #[case::a_colour_against_itself(
+        Rgb([0x2a, 0xa8, 0xa0]),
+        Rgb([0x2a, 0xa8, 0xa0]),
+        1.0
+    )]
+    fn contrast_ratio_spans_one_to_twenty_one(
+        #[case] first: Rgb,
+        #[case] second: Rgb,
+        #[case] ratio: f32,
+    ) {
+        assert!((contrast_ratio(first, second) - ratio).abs() < 0.01);
     }
 
-    #[test]
-    fn a_colour_against_itself_is_one_to_one() {
-        assert!(
-            (contrast_ratio(Rgb([0x2a, 0xa8, 0xa0]), Rgb([0x2a, 0xa8, 0xa0])) - 1.0)
-                .abs()
-                < 0.01
-        );
-    }
-
-    #[test]
-    fn raise_contrast_leaves_a_colour_that_already_clears_the_bar_alone() {
-        assert_eq!(raise_contrast(WHITE, &[BLACK], MIN_MARKER_CONTRAST), WHITE);
-    }
-
-    #[test]
-    fn raise_contrast_pushes_a_light_colour_further_from_a_light_background() {
-        let cream = Rgb([0xf3, 0xe9, 0xd2]);
-        let raised =
-            raise_contrast(cream, &[Rgb([0xf5, 0xf1, 0xe8])], MIN_MARKER_CONTRAST);
-        assert_ne!(raised, cream);
-        assert!(contrast_ratio(raised, Rgb([0xf5, 0xf1, 0xe8])) >= MIN_MARKER_CONTRAST);
-    }
-
-    #[test]
-    fn raise_contrast_pushes_a_dark_colour_toward_black() {
-        let teal = Rgb([0x2a, 0xa8, 0xa0]);
-        let paper = Rgb([0xd8, 0xd0, 0xc8]);
-        let raised = raise_contrast(teal, &[paper], MIN_MARKER_CONTRAST);
-        assert!(relative_luminance(raised) < relative_luminance(teal));
-        assert!(contrast_ratio(raised, paper) >= MIN_MARKER_CONTRAST);
-    }
-
-    #[test]
-    fn a_band_clears_the_band_ratio_even_when_the_mix_alone_would_not() {
-        let window_background = Rgb([0x0b, 0x0b, 0x0b]);
-        let text = Rgb([0xf5, 0xf1, 0xe8]);
-        let band = visible_band(window_background, text, 0.0);
-        assert!(contrast_ratio(band, window_background) >= MIN_BAND_CONTRAST);
+    #[rstest]
+    #[case::a_light_colour_on_a_light_background(
+        Rgb([0xf3, 0xe9, 0xd2]),
+        Rgb([0xf5, 0xf1, 0xe8])
+    )]
+    #[case::a_dark_colour(Rgb([0x2a, 0xa8, 0xa0]), Rgb([0xd8, 0xd0, 0xc8]))]
+    fn raise_contrast_pushes_a_light_or_dark_colour_toward_black(
+        #[case] color: Rgb,
+        #[case] background: Rgb,
+    ) {
+        let raised = raise_contrast(color, &[background], MIN_MARKER_CONTRAST);
+        assert!(relative_luminance(raised) < relative_luminance(color));
+        assert!(contrast_ratio(raised, background) >= MIN_MARKER_CONTRAST);
     }
 
     #[test]

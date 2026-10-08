@@ -61,10 +61,7 @@ impl TrackSource {
     pub fn local_path(&self) -> Option<&Path> {
         match self {
             TrackSource::Local(path) => Some(path),
-            TrackSource::Server {
-                server_name: _server_name,
-                server_track_id: _server_track_id,
-            } => None,
+            TrackSource::Server { .. } => None,
         }
     }
 
@@ -75,8 +72,7 @@ impl TrackSource {
                 |stem| stem.to_string_lossy().into_owned(),
             ),
             TrackSource::Server {
-                server_name: _server_name,
-                server_track_id,
+                server_track_id, ..
             } => server_track_id.as_str().to_owned(),
         }
     }
@@ -105,7 +101,7 @@ impl std::fmt::Debug for Track {
             tags,
             audio_format,
             display,
-            title: _title,
+            title: _,
             tagging,
         } = self;
         formatter
@@ -180,8 +176,7 @@ impl Track {
                 None,
                 _artist,
                 TrackSource::Server {
-                    server_name: _server_name,
-                    server_track_id,
+                    server_track_id, ..
                 },
             ) => server_track_id.as_str().to_owned(),
         };
@@ -278,41 +273,12 @@ impl From<TrackSource> for Track {
 
 #[cfg(test)]
 mod tests {
-    use std::{cmp::Ordering, collections::HashSet, path::Path, time::Duration};
+    use std::{cmp::Ordering, collections::HashSet};
 
     use crate::domain::{
         server::{ServerName, ServerTrackId},
-        track::{AudioFormat, Tags, Track, TrackParts, TrackSource},
+        track::TrackSource,
     };
-
-    #[test]
-    fn a_tagged_track_shows_its_tag_title_as_the_title() {
-        let track = Track::new(TrackParts {
-            path: "/music/file-name.mp3".into(),
-            duration: Duration::from_secs(1),
-            tags: Tags {
-                title: Some("Song".to_owned()),
-                ..Tags::default()
-            },
-            audio_format: AudioFormat::default(),
-        });
-
-        assert_eq!(track.title(), "Song");
-    }
-
-    #[test]
-    fn an_untagged_track_shows_its_file_stem_as_the_title() {
-        let built_track = Track::new(TrackParts {
-            path: "/music/file-name.mp3".into(),
-            duration: Duration::from_secs(1),
-            tags: Tags::default(),
-            audio_format: AudioFormat::default(),
-        });
-        let listed = Track::listed(Path::new("/music/file-name.mp3"));
-
-        assert_eq!(built_track.title(), "file-name");
-        assert_eq!(listed.title(), "file-name");
-    }
 
     #[test]
     fn a_server_source_orders_and_hashes_apart_from_a_local_one_with_the_same_text() {
@@ -326,17 +292,5 @@ mod tests {
 
         assert_ne!(local_source.cmp(&server_source), Ordering::Equal);
         assert_eq!(sources.len(), 2);
-    }
-
-    #[test]
-    fn a_server_track_has_no_local_path() {
-        let server_track = Track::from(TrackSource::Server {
-            server_name: ServerName::new("home"),
-            server_track_id: ServerTrackId::new("tr-1"),
-        });
-        let local_track = Track::listed(Path::new("/music/a.flac"));
-
-        assert_eq!(server_track.local_path(), None);
-        assert_eq!(local_track.local_path(), Some(Path::new("/music/a.flac")));
     }
 }

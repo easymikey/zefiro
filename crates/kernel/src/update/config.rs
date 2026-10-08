@@ -92,17 +92,20 @@ fn music_dir_reloaded(
 mod tests {
     use std::path::PathBuf;
 
+    use rstest::rstest;
+
     use crate::{
         cmd::{Cmd, Effect, LibraryCmd},
         domain::{
             appearance::{AppearanceSettings, CoverMode},
             config::{ConfigError, ConfigName},
+            cue::Cue,
             io_error::IoError,
             keymap::{Action, KeyOverride, KeymapOverrides},
             model::Model,
             settings::Settings,
             theme::{ThemeName, Themes},
-            toast::ToastLevel,
+            toast::{Toast, ToastLevel},
         },
         message::{ConfigEvent, ConfigReload},
         update::{config, config_parts, machine::Unhandled},
@@ -123,33 +126,20 @@ mod tests {
 
         let keymap_overrides =
             KeymapOverrides::from([(Action::Next, KeyOverride::from("x"))]);
-        update(
+        let cmd = emitted(
             &mut model,
-            ConfigEvent::KeymapReloaded(Box::new(keymap_overrides)),
-        )
-        .unwrap();
-
-        assert_ne!(model.revisions.config, before);
-    }
-
-    #[test]
-    fn unchanged_keymap_keeps_the_revision() {
-        let mut model = Model::default();
-        let keymap_overrides = model.workspace.keymap.overrides().clone();
-        let before = model.revisions.config;
-
-        let result = update(
-            &mut model,
-            ConfigEvent::KeymapReloaded(Box::new(keymap_overrides)),
+            ConfigEvent::KeymapReloaded(Box::new(keymap_overrides.clone())),
         );
 
-        assert_eq!(result, Err(Unhandled));
-        assert_eq!(model.revisions.config, before);
+        assert_ne!(model.revisions.config, before);
+        assert_eq!(model.workspace.keymap.overrides(), &keymap_overrides);
+        assert_eq!(cmd, Cmd::none());
     }
 
     #[test]
     fn theme_reload_bumps_the_theme_revision_and_cues() {
         let mut model = Model::default();
+        model.workspace.toasts = vec![Toast::error("Theme: boom")];
         let before = model.revisions.theme;
 
         let cmd = emitted(
@@ -158,7 +148,11 @@ mod tests {
         );
 
         assert_ne!(model.revisions.theme, before);
-        assert_ne!(cmd, Cmd::none());
+        assert_eq!(model.workspace.toasts, vec![Toast::error("Theme: boom")]);
+        assert!(
+            cmd.effects()
+                .any(|effect| matches!(effect, Effect::Animate(Cue::ThemeChanged)))
+        );
     }
 
     #[test]
@@ -188,42 +182,20 @@ mod tests {
         }
     }
 
-    #[rstest::rstest]
-    #[case::the_root_it_already_plays(PathBuf::from("/music"), Err(Unhandled))]
-    #[case::another_root(PathBuf::from("/other"), Ok(Some(PathBuf::from("/other"))))]
-    fn a_music_dir_reload_rescans_only_a_music_dir_that_moved(
-        #[case] reloaded_path: PathBuf,
-        #[case] expected: Result<Option<PathBuf>, Unhandled>,
-    ) {
-        let mut model = Model {
-            music_dir: PathBuf::from("/music"),
-            ..Model::default()
-        };
-
-        let result = config::update(
-            config_parts(&mut model),
-            ConfigEvent::MusicDirReloaded(reloaded_path.clone()),
-        );
-
-        assert_eq!(result.map(|cmd| rescanned_music_dir(&cmd)), expected);
-        assert_eq!(model.music_dir, reloaded_path);
-    }
-
     #[test]
-    fn an_unchanged_music_dir_is_refused() {
+    fn a_music_dir_reload_rescans_only_a_music_dir_that_moved() {
         let mut model = Model {
             music_dir: PathBuf::from("/music"),
             ..Model::default()
         };
-        let before = model.clone();
 
-        let result = update(
+        let cmd = emitted(
             &mut model,
-            ConfigEvent::MusicDirReloaded(PathBuf::from("/music")),
+            ConfigEvent::MusicDirReloaded(PathBuf::from("/other")),
         );
 
-        assert_eq!(result, Err(Unhandled));
-        assert_eq!(model, before);
+        assert_eq!(rescanned_music_dir(&cmd), Some(PathBuf::from("/other")));
+        assert_eq!(model.music_dir, PathBuf::from("/other"));
     }
 
     #[test]
@@ -245,26 +217,34 @@ mod tests {
         assert_eq!(model, before);
     }
 
-    #[test]
-    fn a_config_reload_with_nothing_to_clear_is_refused() {
-        let mut model = Model::default();
-        let before = model.clone();
-
-        let result = update(
-            &mut model,
-            ConfigEvent::Reloaded(ConfigReload {
-                name: ConfigName::Config,
-                result: Ok(()),
-            }),
-        );
-
-        assert_eq!(result, Err(Unhandled));
-        assert_eq!(model, before);
+    struct RefusalRow {
+        model: Model,
+        event: ConfigEvent,
     }
 
-    #[test]
-    fn an_equal_appearance_is_refused() {
-        let mut model = Model {
+    #[rstest]
+    #[case::an_unchanged_keymap(RefusalRow {
+        model: Model::default(),
+        event: ConfigEvent::KeymapReloaded(Box::new(
+            Model::default().workspace.keymap.overrides().clone(),
+        )),
+    })]
+    #[case::an_unchanged_music_dir(RefusalRow {
+        model: Model {
+            music_dir: PathBuf::from("/music"),
+            ..Model::default()
+        },
+        event: ConfigEvent::MusicDirReloaded(PathBuf::from("/music")),
+    })]
+    #[case::a_config_reload_with_nothing_to_clear(RefusalRow {
+        model: Model::default(),
+        event: ConfigEvent::Reloaded(ConfigReload {
+            name: ConfigName::Config,
+            result: Ok(()),
+        }),
+    })]
+    #[case::an_equal_appearance(RefusalRow {
+        model: Model {
             settings: Settings {
                 appearance_settings: AppearanceSettings {
                     cover_mode: CoverMode::Plain,
@@ -273,37 +253,30 @@ mod tests {
                 ..Settings::default()
             },
             ..Model::default()
-        };
-        let appearance_settings = model.settings.appearance_settings;
-        let before = model.clone();
-
-        let result = update(
-            &mut model,
-            ConfigEvent::AppearanceReloaded(appearance_settings),
-        );
-
-        assert_eq!(result, Err(Unhandled));
-        assert_eq!(model, before);
-    }
-
-    #[test]
-    fn reloading_the_same_themes_is_refused() {
-        let mut model = Model {
+        },
+        event: ConfigEvent::AppearanceReloaded(AppearanceSettings {
+            cover_mode: CoverMode::Plain,
+            ..AppearanceSettings::default()
+        }),
+    })]
+    #[case::the_same_themes(RefusalRow {
+        model: Model {
             themes: Themes {
                 names: vec![ThemeName::from_static("wafer")],
                 ..Themes::default()
             },
             ..Model::default()
-        };
+        },
+        event: ConfigEvent::ThemesLoaded {
+            theme_names: vec![ThemeName::from_static("wafer")],
+            refused: Vec::new(),
+        },
+    })]
+    fn a_reload_that_changes_nothing_is_refused(#[case] row: RefusalRow) {
+        let RefusalRow { mut model, event } = row;
         let before = model.clone();
 
-        let result = update(
-            &mut model,
-            ConfigEvent::ThemesLoaded {
-                theme_names: vec![ThemeName::from_static("wafer")],
-                refused: Vec::new(),
-            },
-        );
+        let result = update(&mut model, event);
 
         assert_eq!(result, Err(Unhandled));
         assert_eq!(model, before);
@@ -329,6 +302,7 @@ mod tests {
 
         assert_eq!(model.themes.names, [ThemeName::from_static("wafer")]);
         assert!(cmd == Cmd::none());
+        assert!(model.workspace.toasts.is_empty());
     }
 
     #[test]
@@ -352,21 +326,5 @@ mod tests {
             toast.title,
             "Skipped themes with invalid names: solar..dark, auto"
         );
-    }
-
-    #[test]
-    fn a_theme_list_with_nothing_refused_raises_no_toast() {
-        let mut model = Model::default();
-
-        update(
-            &mut model,
-            ConfigEvent::ThemesLoaded {
-                theme_names: vec![ThemeName::from_static("wafer")],
-                refused: Vec::new(),
-            },
-        )
-        .unwrap();
-
-        assert!(model.workspace.toasts.is_empty());
     }
 }

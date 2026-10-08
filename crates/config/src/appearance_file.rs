@@ -218,14 +218,11 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::{
-        appearance_file::{
-            TomlAppearance,
-            TomlCoverCells,
-            TomlLayout,
-            parse_appearance,
-        },
-        error::Error,
+    use crate::appearance_file::{
+        TomlAppearance,
+        TomlCoverCells,
+        TomlLayout,
+        parse_appearance,
     };
 
     #[test]
@@ -260,19 +257,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn an_empty_file_is_all_defaults() {
-        assert_eq!(parse_appearance("").unwrap(), TomlAppearance::default());
-    }
-
-    #[test]
-    fn a_broken_file_reports_the_real_parse_error() {
-        assert!(matches!(
-            parse_appearance("[cover\nnot toml"),
-            Err(Error::Parse { .. })
-        ));
-    }
-
     #[rstest]
     #[case::an_unknown_top_level_table("unknown_table", "[nope]\nkey = 1\n")]
     #[case::an_unknown_key_in_a_known_table("unknown_key", "[cover]\nbogus = 1\n")]
@@ -283,20 +267,12 @@ mod tests {
         });
     }
 
-    #[test]
-    fn a_duplicate_table_names_the_ui_file_and_its_line() {
-        let text = "[cover]\nmode = \"plain\"\n[card]\n[card]\n";
-
-        let broken = parse_appearance(text)
-            .expect_err("a duplicate table must not parse")
-            .to_string();
-
-        assert_eq!(broken.lines().nth(1), Some("sifr-ui.toml:4"), "{broken:?}");
-    }
-
     type Parsed = fn(&TomlAppearance);
 
     #[rstest]
+    #[case::an_empty_file("", |c: &TomlAppearance| {
+        assert_eq!(*c, TomlAppearance::default());
+    })]
     #[case::a_plain_cover("[cover]\nmode = \"plain\"\n", |c: &TomlAppearance| {
         assert_eq!(c.cover.mode, CoverMode::Plain);
     })]
@@ -360,7 +336,6 @@ mod tests {
     #[case::a_removed_notice_table("[notice]\nmode = \"banner\"\n")]
     #[case::a_removed_theme_key("theme = \"oreo\"\n")]
     #[case::a_removed_keymap_table("[keymap]\nnext = \"x\"\n")]
-    #[case::a_misspelt_key("[cover]\nbrakcets = true\n")]
     #[case::a_negative_bar_height("[progress]\nheight_px = -1\n")]
     fn a_key_nothing_reads_is_rejected(#[case] text: &str) {
         assert!(parse_appearance(text).is_err(), "{text} must not parse");

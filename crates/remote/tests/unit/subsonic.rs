@@ -34,6 +34,7 @@ use remote::{
     message::RemoteMessage,
     subsonic::ping,
 };
+use rstest::rstest;
 
 pub(crate) const OK_BODY: &str =
     r#"{"subsonic-response":{"status":"ok","version":"1.16.1"}}"#;
@@ -94,9 +95,11 @@ pub(crate) fn query_value<'a>(query: &'a str, key: &str) -> Option<&'a str> {
         .find_map(|pair| pair.strip_prefix(key)?.strip_prefix('='))
 }
 
-#[test]
-fn ok_gives_a_session_signed_with_the_salted_secret() {
-    let (link, handle) = serve(vec![answer("200 OK", "", OK_BODY)]);
+#[rstest]
+#[case::plain(OK_BODY.to_owned())]
+#[case::padded_inside_the_limit(format!("{OK_BODY}{}", " ".repeat(2 * 1024 * 1024)))]
+fn ok_gives_a_session_signed_with_the_salted_secret(#[case] body: String) {
+    let (link, handle) = serve(vec![answer("200 OK", "", &body)]);
     let query = pinged(&link)
         .and_then(Result::ok)
         .map(|session| session.query.to_string());
@@ -114,133 +117,94 @@ fn ok_gives_a_session_signed_with_the_salted_secret() {
     }));
 }
 
-#[test]
-fn failed_with_code_40_is_a_credentials_error() {
-    let (link, handle) = serve(vec![answer("200 OK", "", FAILED_BODY)]);
-    let refused = pinged(&link).and_then(Result::err);
-    assert!(
-        refused.as_ref().is_some_and(RemoteError::is_credentials),
-        "{refused:?}"
-    );
-    assert!(handle.join().is_ok());
-}
-
-#[test]
-fn service_unavailable_is_a_status_error() {
-    let (link, handle) = serve(vec![answer("503 Service Unavailable", "", "")]);
-    let refused = pinged(&link).and_then(Result::err);
-    assert_eq!(
-        refused,
-        Some(RemoteError::Status {
-            server_name: ServerName::new("home"),
-            http_status: HttpStatus(503),
-        })
-    );
-    assert!(handle.join().is_ok());
-}
-
-#[test]
-fn a_closed_port_is_unreachable() {
-    let (link, handle) = serve(Vec::new());
-    assert!(handle.join().is_ok());
-    let refused = pinged(&link).and_then(Result::err);
-    assert!(
-        matches!(refused, Some(RemoteError::Unreachable { .. })),
-        "{refused:?}"
-    );
-}
-
-#[test]
-fn a_redirect_to_another_host_is_moved() {
-    let (link, handle) = serve(vec![answer(
-        "302 Found",
-        "Location: http://elsewhere.example/rest/ping\r\n",
-        "",
-    )]);
-    let refused = pinged(&link).and_then(Result::err);
-    assert_eq!(
-        refused,
-        Some(RemoteError::Moved {
-            server_name: ServerName::new("home"),
-        })
-    );
-    assert!(handle.join().is_ok());
-}
-
-#[test]
-fn a_redirect_to_the_same_host_and_path_is_followed() {
-    let (link, handle) = serve(vec![
-        answer("301 Moved Permanently", "Location: /rest/ping\r\n", ""),
-        answer("200 OK", "", OK_BODY),
-    ]);
-    let session = pinged(&link).and_then(Result::ok);
-    assert!(session.is_some());
-    let requests = handle.join();
-    assert!(requests.as_ref().is_ok_and(|requests| requests.len() == 2
-        && requests.iter().all(|line| line.contains("&s="))));
-}
-
-#[test]
-fn a_redirect_with_its_own_query_is_followed_and_signed() {
-    let (link, handle) = serve(vec![
-        answer("302 Found", "Location: /rest/ping?x=1\r\n", ""),
-        answer("200 OK", "", OK_BODY),
-    ]);
-    let session = pinged(&link).and_then(Result::ok);
-    assert!(session.is_some());
-    let requests = handle.join();
-    assert!(
-        requests
-            .as_ref()
-            .is_ok_and(|requests| requests
-                .get(1)
-                .is_some_and(|line| line.starts_with("GET /rest/ping?x=1&")
-                    && line.contains("&s="))),
-        "{requests:?}"
-    );
-}
-
-#[test]
-fn a_protocol_relative_redirect_is_moved() {
-    let (link, handle) = serve(vec![answer(
+#[rstest]
+#[case::service_unavailable(
+    vec![answer("503 Service Unavailable", "", "")],
+    1,
+    |error: &RemoteError| *error == RemoteError::Status {
+        server_name: ServerName::new("home"),
+        http_status: HttpStatus(503),
+    }
+)]
+#[case::bad_request(
+    vec![answer("400 Bad Request", "", "")],
+    1,
+    |error: &RemoteError| *error == RemoteError::Status {
+        server_name: ServerName::new("home"),
+        http_status: HttpStatus(400),
+    }
+)]
+#[case::redirect_to_another_host(
+    vec![answer("302 Found", "Location: http://elsewhere.example/rest/ping\r\n", "")],
+    1,
+    |error: &RemoteError| *error == RemoteError::Moved { server_name: ServerName::new("home") }
+)]
+#[case::protocol_relative_redirect(
+    vec![answer(
         "302 Found",
         &format!("Location: {}elsewhere.example/rest/ping\r\n", "/".repeat(2)),
         "",
-    )]);
+    )],
+    1,
+    |error: &RemoteError| *error == RemoteError::Moved { server_name: ServerName::new("home") }
+)]
+#[case::fourth_redirect(
+    vec![answer("302 Found", "Location: /rest/ping\r\n", ""); 4],
+    4,
+    |error: &RemoteError| *error == RemoteError::Moved { server_name: ServerName::new("home") }
+)]
+#[case::body_over_the_limit(
+    vec![answer(
+        "200 OK",
+        "",
+        &" ".repeat(usize::try_from(API_BYTES).unwrap_or(usize::MAX) + 1),
+    )],
+    1,
+    |error: &RemoteError| matches!(error, RemoteError::Parse { .. })
+)]
+fn a_refused_ping_answers_its_error(
+    #[case] answers: Vec<String>,
+    #[case] asked: usize,
+    #[case] refusal: fn(&RemoteError) -> bool,
+) {
+    let (link, handle) = serve(answers);
     let refused = pinged(&link).and_then(Result::err);
-    assert_eq!(
-        refused,
-        Some(RemoteError::Moved {
-            server_name: ServerName::new("home"),
-        })
-    );
-    assert!(handle.join().is_ok());
+    assert!(refused.as_ref().is_some_and(refusal), "{refused:?}");
+    assert!(handle.join().is_ok_and(|requests| requests.len() == asked));
 }
 
-#[test]
-fn a_fourth_redirect_is_moved() {
-    let (link, handle) =
-        serve(vec![answer("302 Found", "Location: /rest/ping\r\n", ""); 4]);
-    let refused = pinged(&link).and_then(Result::err);
-    assert_eq!(
-        refused,
-        Some(RemoteError::Moved {
-            server_name: ServerName::new("home"),
-        })
-    );
-    assert!(handle.join().is_ok_and(|requests| requests.len() == 4));
-}
-
-#[test]
-fn a_body_over_the_limit_is_a_parse_error() {
-    let body = " ".repeat(usize::try_from(API_BYTES).unwrap_or(usize::MAX) + 1);
-    let (link, handle) = serve(vec![answer("200 OK", "", &body)]);
-    let refused = pinged(&link).and_then(Result::err);
+#[rstest]
+#[case::same_host_and_path(
+    "301 Moved Permanently",
+    "Location: /rest/ping\r\n",
+    "GET /rest/ping?u=alice&"
+)]
+#[case::own_query(
+    "302 Found",
+    "Location: /rest/ping?x=1\r\n",
+    "GET /rest/ping?x=1&u=alice&"
+)]
+fn a_redirect_to_the_same_host_is_followed_and_signed(
+    #[case] status: &str,
+    #[case] location: &str,
+    #[case] followed: &str,
+) {
+    let (link, handle) = serve(vec![
+        answer(status, location, ""),
+        answer("200 OK", "", OK_BODY),
+    ]);
+    let session = pinged(&link).and_then(Result::ok);
+    assert!(session.is_some());
+    let requests = handle.join();
     assert!(
-        matches!(refused, Some(RemoteError::Parse { .. })),
-        "{refused:?}"
+        requests.as_ref().is_ok_and(|requests| {
+            requests.len() == 2
+                && requests.get(1).is_some_and(|line| {
+                    line.starts_with(followed) && line.contains("&s=")
+                })
+        }),
+        "{requests:?}"
     );
-    assert!(handle.join().is_ok());
 }
 
 #[test]

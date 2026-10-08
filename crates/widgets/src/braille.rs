@@ -140,6 +140,7 @@ pub(crate) struct MeterFill<'a> {
 mod tests {
     use kernel::domain::geometry::Cells;
     use ratatui::{buffer::Buffer, layout::Rect, style::Color};
+    use rstest::rstest;
 
     use crate::{
         braille::{BrailleCanvas, CanvasSize, MeterFill, scaled_dots},
@@ -168,103 +169,53 @@ mod tests {
         assert_eq!(buffer, Buffer::empty(area));
     }
 
-    #[test]
-    fn empty_canvas_is_blank() {
-        let area = Rect::new(0, 0, 3, 2);
-        let mut buffer = Buffer::empty(area);
-        BrailleCanvas::new(Cells(3), Cells(2)).paint(
-            Canvas {
-                area,
-                buffer: &mut buffer,
-            },
-            |_| Color::Reset,
-        );
-        for cell in buffer.content() {
-            assert_eq!(cell.symbol(), "\u{2800}");
-        }
+    #[rstest]
+    #[case::empty(0.0, 8, 0)]
+    #[case::full(1.0, 8, 8)]
+    #[case::an_exact_half_step_rounds_down(4.5 / 8.0, 8, 4)]
+    #[case::float_noise_below_a_half_step_rounds_down(4.5 / 8.0 - 1e-6, 8, 4)]
+    #[case::float_noise_above_a_half_step_rounds_down(4.5 / 8.0 + 1e-6, 8, 4)]
+    #[case::past_a_half_step_rounds_up(0.6, 8, 5)]
+    fn scaled_dots_rounds_to_the_nearest_dot_and_a_half_step_down(
+        #[case] fraction: f32,
+        #[case] max_dots: u32,
+        #[case] expected: u32,
+    ) {
+        assert_eq!(scaled_dots(fraction, max_dots), expected);
     }
 
-    #[test]
-    fn single_dot_maps_to_correct_cell_bit() {
-        let area = Rect::new(0, 0, 1, 1);
-        let mut buffer = Buffer::empty(area);
-        let mut top_left_braille_canvas = BrailleCanvas::new(Cells(1), Cells(1));
-        top_left_braille_canvas.set(0, 0);
-        top_left_braille_canvas.paint(
-            Canvas {
-                area,
-                buffer: &mut buffer,
-            },
-            |_| Color::Reset,
-        );
-        assert_eq!(buffer[(0, 0)].symbol(), "\u{2801}");
-
-        let mut bottom_right_column_braille_canvas =
-            BrailleCanvas::new(Cells(1), Cells(1));
-        bottom_right_column_braille_canvas.set(1, 3);
-        bottom_right_column_braille_canvas.paint(
-            Canvas {
-                area,
-                buffer: &mut buffer,
-            },
-            |_| Color::Reset,
-        );
-        assert_eq!(buffer[(0, 0)].symbol(), "\u{2880}");
-
-        let mut bottom_left_column_braille_canvas =
-            BrailleCanvas::new(Cells(1), Cells(1));
-        bottom_left_column_braille_canvas.set(0, 3);
-        bottom_left_column_braille_canvas.paint(
-            Canvas {
-                area,
-                buffer: &mut buffer,
-            },
-            |_| Color::Reset,
-        );
-        assert_eq!(buffer[(0, 0)].symbol(), "\u{2840}");
-
-        bottom_left_column_braille_canvas.set(100, 100);
-        bottom_left_column_braille_canvas.paint(
-            Canvas {
-                area,
-                buffer: &mut buffer,
-            },
-            |_| Color::Reset,
-        );
-        assert_eq!(buffer[(0, 0)].symbol(), "\u{2840}");
+    #[rstest]
+    #[case::first_dot(0, 0, [0b0000_0001, 0, 0, 0])]
+    #[case::last_dot(3, 7, [0, 0, 0, 0b1000_0000])]
+    #[case::past_the_right_edge(4, 0, [0; 4])]
+    #[case::past_the_bottom_edge(0, 8, [0; 4])]
+    fn set_lights_one_dot_inside_the_canvas_and_none_outside(
+        #[case] x: u16,
+        #[case] y: u16,
+        #[case] cells: [u8; 4],
+    ) {
+        let mut braille_canvas = BrailleCanvas::new(Cells(2), Cells(2));
+        braille_canvas.set(x, y);
+        assert_eq!(braille_canvas.cells, cells);
     }
 
-    #[test]
-    fn full_column_is_full_glyph() {
-        let area = Rect::new(0, 0, 1, 1);
-        let mut buffer = Buffer::empty(area);
-        let mut braille_canvas = BrailleCanvas::new(Cells(1), Cells(1));
-        for y in 0..4 {
-            braille_canvas.set(0, y);
-            braille_canvas.set(1, y);
-        }
-        braille_canvas.paint(
-            Canvas {
-                area,
-                buffer: &mut buffer,
-            },
-            |_| Color::Reset,
-        );
-        assert_eq!(buffer[(0, 0)].symbol(), "\u{28FF}");
-    }
-
-    #[test]
-    fn scaled_dots_matches_plain_rounding_away_from_a_boundary() {
-        assert_eq!(scaled_dots(0.3, 10), 3);
-        assert_eq!(scaled_dots(0.76, 10), 8);
-    }
-
-    #[test]
-    fn scaled_dots_does_not_flip_across_float_noise_at_a_half_step_boundary() {
-        let boundary = 4.5 / 8.0;
-        assert_eq!(
-            scaled_dots(boundary - 1e-6, 8),
-            scaled_dots(boundary + 1e-6, 8)
-        );
+    #[rstest]
+    #[case::one_level_fills_all_but_the_last_dot_column(2, &[0.5], &[0xE4, 0x44])]
+    #[case::each_level_leaves_a_gap_before_the_next(
+        4,
+        &[1.0, 1.0],
+        &[0xFF, 0x47, 0xFF, 0x47]
+    )]
+    fn a_meter_fills_each_level_from_the_bottom_across_its_share_of_columns(
+        #[case] width: u16,
+        #[case] levels: &[f32],
+        #[case] cells: &[u8],
+    ) {
+        let braille_canvas = BrailleCanvas::from(&MeterFill {
+            size: CanvasSize { width, height: 1 },
+            levels,
+            max_dots: 4,
+        });
+        assert_eq!(braille_canvas.cells, cells);
     }
 }

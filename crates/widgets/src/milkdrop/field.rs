@@ -1,4 +1,7 @@
-use crate::{pixels::numeric::dimension_f32, spectrum::Spectrum};
+use crate::{
+    pixels::numeric::{dimension_f32, floor},
+    spectrum::Spectrum,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BandRange {
@@ -58,41 +61,30 @@ pub(crate) struct MilkdropPreset {
     pub(crate) mirror: Mirror,
 }
 
-impl Default for MilkdropPreset {
-    fn default() -> Self {
-        Self {
-            base_zoom: 1.0,
-            base_rotation: 0.0,
-            mirror: Mirror::None,
-        }
-    }
-}
+const DRIFT: MilkdropPreset = MilkdropPreset {
+    base_zoom: 1.12,
+    base_rotation: 0.04,
+    mirror: Mirror::None,
+};
 
-const PRESETS: [MilkdropPreset; 3] = [
-    MilkdropPreset {
-        base_zoom: 1.12,
-        base_rotation: 0.04,
-        mirror: Mirror::None,
-    },
-    MilkdropPreset {
-        base_zoom: 0.94,
-        base_rotation: -0.05,
-        mirror: Mirror::Horizontal,
-    },
-    MilkdropPreset {
-        base_zoom: 1.18,
-        base_rotation: 0.07,
-        mirror: Mirror::Kaleido4,
-    },
-];
+const MIRRORED: MilkdropPreset = MilkdropPreset {
+    base_zoom: 0.94,
+    base_rotation: -0.05,
+    mirror: Mirror::Horizontal,
+};
+
+const KALEIDO: MilkdropPreset = MilkdropPreset {
+    base_zoom: 1.18,
+    base_rotation: 0.07,
+    mirror: Mirror::Kaleido4,
+};
 
 pub(crate) fn preset_for_seed(seed: u64) -> MilkdropPreset {
-    let index = u64::try_from(PRESETS.len()).map_or(0, |len| seed % len);
-    let index = usize::try_from(index).unwrap_or(0);
-    PRESETS
-        .get(index)
-        .copied()
-        .unwrap_or_else(MilkdropPreset::default)
+    match seed % 3 {
+        0 => DRIFT,
+        1 => MIRRORED,
+        _ => KALEIDO,
+    }
 }
 
 pub(crate) const DECAY: f32 = 0.85;
@@ -123,20 +115,20 @@ pub(crate) struct FieldSize {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct FieldCenter {
-    pub(crate) column: f32,
+    pub(crate) x: f32,
     pub(crate) y: f32,
 }
 
 pub(crate) fn field_center(size: FieldSize) -> FieldCenter {
     FieldCenter {
-        column: dimension_f32(size.width.saturating_sub(1)) / 2.0,
+        x: dimension_f32(size.width.saturating_sub(1)) / 2.0,
         y: dimension_f32(size.height.saturating_sub(1)) / 2.0,
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct PlaneOffset {
-    pub(crate) column: f32,
+    pub(crate) x: f32,
     pub(crate) y: f32,
 }
 
@@ -146,7 +138,7 @@ pub(crate) fn physical_offset(
     aspect_x: f32,
 ) -> PlaneOffset {
     PlaneOffset {
-        column: (dimension_f32(position.column) - center.column) * aspect_x,
+        x: (dimension_f32(position.column) - center.x) * aspect_x,
         y: dimension_f32(position.row) - center.y,
     }
 }
@@ -163,15 +155,15 @@ pub(crate) struct Warp {
 pub(crate) fn warp_source(position: CellPosition, warp: &Warp) -> PlaneOffset {
     let offset = physical_offset(position, warp.center, warp.aspect_x);
     let scaled_offset = PlaneOffset {
-        column: offset.column / warp.zoom,
+        x: offset.x / warp.zoom,
         y: offset.y / warp.zoom,
     };
     let rotated_offset = PlaneOffset {
-        column: scaled_offset.column * warp.cos - scaled_offset.y * warp.sin,
-        y: scaled_offset.column * warp.sin + scaled_offset.y * warp.cos,
+        x: scaled_offset.x * warp.cos - scaled_offset.y * warp.sin,
+        y: scaled_offset.x * warp.sin + scaled_offset.y * warp.cos,
     };
     PlaneOffset {
-        column: warp.center.column + rotated_offset.column / warp.aspect_x,
+        x: warp.center.x + rotated_offset.x / warp.aspect_x,
         y: warp.center.y + rotated_offset.y,
     }
 }
@@ -183,19 +175,19 @@ pub(crate) fn bilinear_sample(
 ) -> f32 {
     let last_column = dimension_f32(size.width.saturating_sub(1));
     let last_row = dimension_f32(size.height.saturating_sub(1));
-    let is_out_of_bounds = plane_offset.column < 0.0
+    let is_out_of_bounds = plane_offset.x < 0.0
         || plane_offset.y < 0.0
-        || plane_offset.column > last_column
+        || plane_offset.x > last_column
         || plane_offset.y > last_row;
     if is_out_of_bounds {
         return 0.0;
     }
 
-    let column_low = crate::pixels::numeric::floor::<usize>(plane_offset.column);
-    let row_low = crate::pixels::numeric::floor::<usize>(plane_offset.y);
+    let column_low = floor::<usize>(plane_offset.x);
+    let row_low = floor::<usize>(plane_offset.y);
     let column_high = (column_low + 1).min(size.width.saturating_sub(1));
     let row_high = (row_low + 1).min(size.height.saturating_sub(1));
-    let column_fraction = plane_offset.column - dimension_f32(column_low);
+    let column_fraction = plane_offset.x - dimension_f32(column_low);
     let row_fraction = plane_offset.y - dimension_f32(row_low);
 
     let sample = |row: usize, column: usize| {
@@ -241,7 +233,7 @@ pub(crate) fn inject(cells: &mut [f32], size: FieldSize, injection: &Injection) 
             let position = CellPosition { column, row };
             let offset =
                 physical_offset(position, injection.center, injection.aspect_x);
-            let distance = (offset.column * offset.column + offset.y * offset.y).sqrt();
+            let distance = (offset.x * offset.x + offset.y * offset.y).sqrt();
             if distance <= injection.core_radius {
                 *cell = cell.max(1.0);
             }
@@ -320,5 +312,172 @@ pub(crate) fn kaleidoscope_quadrants_into(
             .nth(mirrored(row, size.height))
             .unwrap_or(&[]);
         write_mirrored_row(mirrored_row, source_row, size.width);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rstest::rstest;
+
+    use crate::milkdrop::field::{
+        BandLevels,
+        CellPosition,
+        FieldCenter,
+        FieldSize,
+        Injection,
+        MilkdropPreset,
+        Mirror,
+        PlaneOffset,
+        Warp,
+        band_levels,
+        bilinear_sample,
+        inject,
+        mirrored,
+        preset_for_seed,
+        warp_source,
+        xorshift64,
+    };
+
+    fn lit_cells(cells: &[f32]) -> Vec<usize> {
+        cells
+            .iter()
+            .enumerate()
+            .filter(|(_, cell)| **cell > 0.0)
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    #[test]
+    fn band_levels_average_the_bins_of_each_band() {
+        let mut spectrum = [0.9; 16];
+        spectrum[..3].fill(0.6);
+        spectrum[3..9].fill(0.3);
+        let BandLevels { bass, mid, treble } = band_levels(&spectrum);
+        for (level, expected) in [(bass, 0.6), (mid, 0.3), (treble, 0.9)] {
+            assert!((level - expected).abs() < 1e-5, "{level} != {expected}");
+        }
+    }
+
+    #[rstest]
+    #[case::drift(0, MilkdropPreset { base_zoom: 1.12, base_rotation: 0.04, mirror: Mirror::None })]
+    #[case::mirrored_turns_the_other_way(1, MilkdropPreset { base_zoom: 0.94, base_rotation: -0.05, mirror: Mirror::Horizontal })]
+    #[case::kaleido(2, MilkdropPreset { base_zoom: 1.18, base_rotation: 0.07, mirror: Mirror::Kaleido4 })]
+    #[case::wraps_after_three(3, MilkdropPreset { base_zoom: 1.12, base_rotation: 0.04, mirror: Mirror::None })]
+    fn each_seed_picks_its_preset(#[case] seed: u64, #[case] expected: MilkdropPreset) {
+        assert_eq!(preset_for_seed(seed), expected);
+    }
+
+    #[rstest]
+    #[case::no_zoom_no_turn(1.0, (0.0, 1.0), PlaneOffset { x: 5.0, y: 4.0 })]
+    #[case::zoom_and_turn(2.0, (0.6, 0.8), PlaneOffset { x: 2.6, y: 3.1 })]
+    fn warp_source_shrinks_by_the_zoom_and_turns_around_the_center(
+        #[case] zoom: f32,
+        #[case] turn: (f32, f32),
+        #[case] expected: PlaneOffset,
+    ) {
+        let (sin, cos) = turn;
+        let warp = Warp {
+            center: FieldCenter { x: 3.0, y: 2.0 },
+            zoom,
+            sin,
+            cos,
+            aspect_x: 0.5,
+        };
+        let source = warp_source(CellPosition { column: 5, row: 4 }, &warp);
+        assert!(
+            (source.x - expected.x).abs() < 1e-5
+                && (source.y - expected.y).abs() < 1e-5,
+            "{source:?} != {expected:?}"
+        );
+    }
+
+    #[rstest]
+    #[case::left_edge(PlaneOffset { x: 0.0, y: 1.0 }, 4.0)]
+    #[case::top_edge(PlaneOffset { x: 1.0, y: 0.0 }, 2.0)]
+    #[case::right_edge(PlaneOffset { x: 2.0, y: 1.0 }, 6.0)]
+    #[case::bottom_edge(PlaneOffset { x: 1.0, y: 2.0 }, 8.0)]
+    #[case::between_four_cells(PlaneOffset { x: 0.5, y: 0.5 }, 3.0)]
+    #[case::left_of_the_field(PlaneOffset { x: -0.5, y: 1.0 }, 0.0)]
+    #[case::above_the_field(PlaneOffset { x: 1.0, y: -0.5 }, 0.0)]
+    #[case::right_of_the_field(PlaneOffset { x: 2.5, y: 1.0 }, 0.0)]
+    #[case::below_the_field(PlaneOffset { x: 1.0, y: 2.5 }, 0.0)]
+    fn bilinear_sample_reads_up_to_the_edges_and_nothing_outside(
+        #[case] plane_offset: PlaneOffset,
+        #[case] expected: f32,
+    ) {
+        let cells = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0];
+        let size = FieldSize {
+            width: 3,
+            height: 3,
+        };
+        assert_eq!(bilinear_sample(&cells, size, plane_offset), expected);
+    }
+
+    #[rstest]
+    #[case::one(1, 1_082_269_761)]
+    #[case::golden_ratio(0x9E37_79B9_7F4A_7C15, 15_860_402_102_123_842_989)]
+    fn xorshift64_shifts_by_13_7_17(#[case] state: u64, #[case] expected: u64) {
+        assert_eq!(xorshift64(state), expected);
+    }
+
+    #[test]
+    fn inject_lights_the_cells_within_the_core_radius_of_the_center() {
+        let size = FieldSize {
+            width: 5,
+            height: 5,
+        };
+        let mut cells = vec![0.0; 25];
+        inject(
+            &mut cells,
+            size,
+            &Injection {
+                center: FieldCenter { x: 2.0, y: 2.0 },
+                aspect_x: 0.5,
+                core_radius: 1.2,
+                treble: 0.0,
+                spark_count: 0,
+                seed: 0,
+                tick: 0,
+            },
+        );
+        assert_eq!(lit_cells(&cells), [6, 7, 8, 10, 11, 12, 13, 14, 16, 17, 18]);
+    }
+
+    #[test]
+    fn inject_scatters_the_treble_sparks_over_seeded_cells() {
+        let size = FieldSize {
+            width: 5,
+            height: 4,
+        };
+        let mut cells = vec![0.0; 20];
+        inject(
+            &mut cells,
+            size,
+            &Injection {
+                center: FieldCenter { x: 2.0, y: 1.5 },
+                aspect_x: 0.5,
+                core_radius: 0.0,
+                treble: 0.5,
+                spark_count: 3,
+                seed: 7,
+                tick: 2,
+            },
+        );
+        assert_eq!(lit_cells(&cells), [6, 13, 15]);
+    }
+
+    #[rstest]
+    #[case::near_half_of_even(1, 4, 1)]
+    #[case::middle_of_even(2, 4, 1)]
+    #[case::far_end_of_even(3, 4, 0)]
+    #[case::first_of_even(0, 4, 0)]
+    #[case::middle_of_odd(2, 5, 2)]
+    #[case::far_end_of_odd(4, 5, 0)]
+    fn mirrored_folds_the_far_half_onto_the_near_half(
+        #[case] coordinate: usize,
+        #[case] extent: usize,
+        #[case] expected: usize,
+    ) {
+        assert_eq!(mirrored(coordinate, extent), expected);
     }
 }

@@ -452,6 +452,7 @@ mod tests {
             envelope::{
                 Curve,
                 Envelope,
+                EnvelopeControl,
                 EnvelopeMessage,
                 Frames,
                 Order,
@@ -478,22 +479,24 @@ mod tests {
     }
 
     #[rstest]
-    fn an_envelope_raises_finished_when_the_source_ends() {
-        let (_file, source, envelope, control, _feed) =
-            played(100, Revision::default());
-        drain(source, envelope);
-        assert_eq!(control.take_signals(), Signals::FINISHED);
-    }
-
-    #[rstest]
-    fn an_envelope_raises_fade_start_at_its_fade_start() {
+    #[case::no_order(|_: &mut EnvelopeControl| {}, Signals::FINISHED)]
+    #[case::fade_start(
+        |control: &mut EnvelopeControl| control.set_fade_start(Some(Duration::from_millis(50))),
+        Signals(Signals::FADE_START.0 | Signals::FINISHED.0)
+    )]
+    #[case::crossfade_cancelled_by_a_hold(
+        |control: &mut EnvelopeControl| control.ramp(Ramp::hold(Gain::UNITY)),
+        Signals::FINISHED
+    )]
+    fn an_envelope_raises_finished_when_the_source_ends(
+        #[case] order: fn(&mut EnvelopeControl),
+        #[case] signals: Signals,
+    ) {
         let (_file, source, envelope, mut control, _feed) =
             played(100, Revision::default());
-        control.set_fade_start(Some(Duration::from_millis(50)));
+        order(&mut control);
         drain(source, envelope);
-        let flags = control.take_signals();
-        assert!(flags.contains(Signals::FADE_START));
-        assert!(flags.contains(Signals::FINISHED));
+        assert_eq!(control.take_signals(), signals);
     }
 
     #[rstest]
@@ -514,28 +517,6 @@ mod tests {
         let samples = drain(source, envelope);
         assert_eq!(control.take_signals(), Signals::FINISHED);
         assert_eq!(samples, decoded(&file));
-    }
-
-    #[rstest]
-    fn a_seek_rebases_the_published_position() {
-        let (_file, mut source, mut envelope, control, mut feed) =
-            played(200, Revision::default());
-        assert_eq!(pulled(&mut source, &mut envelope, 100).len(), 100);
-        source.seek(Duration::from_millis(150));
-        envelope.seek();
-        feed.prime();
-        assert_eq!(pulled(&mut source, &mut envelope, 1).len(), 1);
-        let position = control.position().as_secs_f32();
-        assert!((position - 0.150).abs() < 1e-3, "got {position}");
-    }
-
-    #[rstest]
-    fn a_seek_publishes_the_target_before_any_sample_is_pulled() {
-        let (_file, mut source, mut envelope, control, _feed) =
-            played(3000, Revision::default());
-        source.seek(Duration::from_secs(2));
-        envelope.seek();
-        assert_eq!(control.position(), Duration::from_secs(2));
     }
 
     #[rstest]
@@ -650,15 +631,6 @@ mod tests {
         assert!(kept.iter().any(|sample| *sample != 0.0));
         assert_eq!(control.position(), Duration::from_millis(400));
         assert!(!control.take_signals().contains(Signals::FADE_START));
-    }
-
-    #[rstest]
-    fn a_crossfade_cancelled_by_a_hold_raises_no_ramped() {
-        let (_file, source, envelope, mut control, _feed) =
-            played(100, Revision::default());
-        control.ramp(Ramp::hold(Gain::UNITY));
-        drain(source, envelope);
-        assert_eq!(control.take_signals(), Signals::FINISHED);
     }
 
     #[rstest]

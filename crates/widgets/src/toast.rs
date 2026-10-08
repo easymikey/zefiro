@@ -67,7 +67,7 @@ impl Form {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 struct PlacedToast<'a> {
     toast: &'a Toast,
     rect: Rect,
@@ -76,7 +76,7 @@ struct PlacedToast<'a> {
     body_lines: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Placement<'a> {
     area: Rect,
     placed_toasts: Arc<[PlacedToast<'a>]>,
@@ -292,7 +292,12 @@ impl Widget for ToastWidget<'_> {
 #[cfg(test)]
 mod tests {
     use kernel::domain::toast::{Toast, ToastLevel};
-    use ratatui::layout::Rect;
+    use ratatui::{
+        buffer::Buffer,
+        layout::Rect,
+        style::{Color, Modifier},
+    };
+    use rstest::rstest;
 
     use crate::{
         screen::breakpoint::Breakpoint,
@@ -354,8 +359,13 @@ mod tests {
         assert_eq!(area.right(), 30);
     }
 
-    #[test]
-    fn the_area_is_the_union_of_the_painted_toasts() {
+    #[rstest]
+    #[case::wide(60, Rect::new(17, 1, 42, 12))]
+    #[case::narrow(30, Rect::new(1, 1, 28, 13))]
+    fn the_area_is_the_union_of_the_painted_toasts(
+        #[case] screen_width: u16,
+        #[case] expected: Rect,
+    ) {
         let toasts = [
             Toast::info("Careful").with_text(
                 "The quick brown fox jumps over the lazy dog and keeps running far away",
@@ -364,7 +374,7 @@ mod tests {
         ];
         let theme = noir();
         let placement = toast_widget(&toasts, &theme)
-            .area(Rect::new(0, 0, 60, 20), Breakpoint::Full)
+            .area(Rect::new(0, 0, screen_width, 20), Breakpoint::Full)
             .unwrap();
         let painted = placement
             .placed_toasts
@@ -372,6 +382,36 @@ mod tests {
             .map(|placed_toast| placed_toast.rect)
             .reduce(Rect::union);
         assert_eq!(Some(placement.area()), painted);
-        assert_eq!(placement.area(), Rect::new(17, 1, 42, 12));
+        assert_eq!(placement.area(), expected);
+    }
+
+    fn alert(active_theme: &ActiveTheme<'_>) -> Color {
+        accent(active_theme, ToastLevel::Error)
+    }
+
+    fn foreground(active_theme: &ActiveTheme<'_>) -> Color {
+        active_theme.colors().foreground
+    }
+
+    #[rstest]
+    #[case::title((19, 2), alert, Modifier::BOLD)]
+    #[case::body((19, 3), foreground, Modifier::empty())]
+    #[case::bottom_border((19, 4), alert, Modifier::empty())]
+    fn a_card_paints_its_title_bold_and_its_body_inside_the_border(
+        #[case] position: (u16, u16),
+        #[case] fg: fn(&ActiveTheme<'_>) -> Color,
+        #[case] modifier: Modifier,
+    ) {
+        let toasts = [Toast::error("Scan failed").with_text("line one")];
+        let theme = noir();
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let widget = toast_widget(&toasts, &theme);
+        let screen = Rect::new(0, 0, 60, 20);
+        let placement = widget.area(screen, Breakpoint::Full).unwrap();
+        assert_eq!(placement.area(), Rect::new(17, 1, 42, 4));
+        let mut buffer = Buffer::empty(screen);
+        widget.paint(&placement, &mut buffer);
+        let cell = &buffer[position];
+        assert_eq!((cell.fg, cell.modifier), (fg(&active_theme), modifier));
     }
 }

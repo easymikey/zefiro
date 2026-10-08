@@ -81,41 +81,30 @@ mod tests {
         )))
     }
 
-    #[test]
-    fn a_key_press_becomes_a_key_message() {
-        let reaction = reaction_for(key_input(' '));
-
+    fn space_press() -> Reaction {
         let key = Key::plain(KeyCode::Char(' '));
-        assert_eq!(
-            reaction,
-            Reaction::Message(Message::Key(KeyPress { key, typed: key }))
-        );
+        Reaction::Message(Message::Key(KeyPress { key, typed: key }))
     }
 
-    #[test]
-    fn terminate_quits_without_touching_the_model() {
-        let reaction = reaction_for(ShellInput::Terminate);
-
-        assert_eq!(reaction, Reaction::Message(Message::Quit));
-    }
-
-    #[test]
-    fn a_probe_failure_becomes_a_paint_error_message() {
-        let error = PaintError::Query(Diagnostic::from_error(&std::io::Error::other(
-            "no answer",
-        )));
-
-        let reaction = reaction_for(ShellInput::Error(error.clone()));
-
-        assert_eq!(reaction, Reaction::Message(Message::from(error)));
+    fn probe_failure() -> PaintError {
+        PaintError::Query(Diagnostic::from_error(&std::io::Error::other("no answer")))
     }
 
     #[rstest]
-    #[case::a_resize(ShellInput::Terminal(Event::Resize(80, 24)))]
-    #[case::focus_gained(ShellInput::Terminal(Event::FocusGained))]
-    fn resize_and_focus_gained_ask_for_a_repaint(#[case] input: ShellInput) {
+    #[case::a_key_press(key_input(' '), space_press())]
+    #[case::terminate(ShellInput::Terminate, Reaction::Message(Message::Quit))]
+    #[case::a_probe_failure(
+        ShellInput::Error(probe_failure()),
+        Reaction::Message(Message::from(probe_failure()))
+    )]
+    #[case::a_resize(ShellInput::Terminal(Event::Resize(80, 24)), Reaction::Repaint)]
+    #[case::focus_gained(ShellInput::Terminal(Event::FocusGained), Reaction::Repaint)]
+    fn each_shell_input_becomes_its_reaction(
+        #[case] input: ShellInput,
+        #[case] expected: Reaction,
+    ) {
         let reaction = reaction_for(input);
 
-        assert_eq!(reaction, Reaction::Repaint);
+        assert_eq!(reaction, expected);
     }
 }

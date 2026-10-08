@@ -219,7 +219,7 @@ mod tests {
         },
         engine::{
             crossfade::replay_gain_factor,
-            effect::{AudioLoopCmd, EngineEffect},
+            effect::EngineEffect,
             message::{AudioMessage, EngineMessage, SinkRole},
             phase::{Incoming, LoadedTrack, NextTrack, Phase, Playing},
             state::{Engine, EngineState, Live, then_report},
@@ -262,199 +262,56 @@ mod tests {
         },
     };
 
-    struct DeckEventRow {
-        engine_state: EngineState,
-        expected: EngineState,
-        audio_loop_cmd: AudioLoopCmd,
-    }
-
-    fn gapless_next() -> EngineState {
+    #[rstest]
+    #[case::a_finished_current_moves_the_track(
         EngineState::Live(Live {
-            phase: Phase::Playing(Playing {
-                next: NextTrack::Gapless(track_b()),
-                ..Playing::new(track_a())
-            }),
+            phase: Phase::Playing(Playing { next: NextTrack::Gapless(track_b()), ..Playing::new(track_a()) }),
             ..live()
-        })
-    }
-
-    #[test]
-    fn a_finished_current_moves_the_track() {
-        let rows = vec![
-            DeckEventRow {
-                engine_state: gapless_next(),
-                expected: EngineState::Live(Live {
-                    phase: Phase::Playing(Playing::new(track_b())),
-                    ..live()
-                }),
-                audio_loop_cmd: Cmd::effect(LoopEffect::Execute(
-                    EngineEffect::Advance(crate::gain::Gain::UNITY),
-                ))
+        }),
+        EngineMessage::Finished(SinkRole::Current),
+        EngineRow {
+            next: EngineState::Live(Live { phase: Phase::Playing(Playing::new(track_b())), ..live() }),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Advance(crate::gain::Gain::UNITY)))
                 .then(Cmd::message(AudioEvent::TrackChanged))
-                .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report))),
-            },
-            DeckEventRow {
-                engine_state: EngineState::Live(playing()),
-                expected: EngineState::Live(live()),
-                audio_loop_cmd: Cmd::message(AudioEvent::Ended)
-                    .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report))),
-            },
-        ];
-        for row in rows {
-            let mut state = row.engine_state;
-            let effect =
-                step(&mut state, EngineMessage::Finished(SinkRole::Current)).unwrap();
-            assert_same(effect, row.audio_loop_cmd);
-            assert_eq!(state, row.expected);
+                .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))),
         }
-    }
-
-    #[rstest]
-    #[case::idle(EngineState::Live(live()))]
-    #[case::loading(EngineState::Live(loading()))]
-    #[case::closed(closed())]
-    fn a_finished_outside_a_track_is_ignored(#[case] engine_state: EngineState) {
-        let expected = engine_state.clone();
-        let mut state = engine_state;
-        assert_eq!(
-            step(&mut state, EngineMessage::Finished(SinkRole::Current)).err(),
-            Some(Unhandled)
-        );
-        assert_eq!(state, expected);
-    }
-
-    #[test]
-    fn a_track_that_ends_inside_its_handover_ends() {
-        let mut state = EngineState::Live(handed_over_to_b());
-        assert_same(
-            step(&mut state, EngineMessage::Finished(SinkRole::Current)),
-            Ok(then_report(
-                Cmd::effect(LoopEffect::Execute(EngineEffect::DropOutgoing))
-                    .then(Cmd::message(AudioEvent::Ended)),
-            )),
-        );
-        assert_eq!(
-            state,
-            EngineState::Live(Live {
-                phase: Phase::Idle,
-                ..handed_over_to_b()
-            })
-        );
-    }
-
-    #[rstest]
-    #[case::outgoing(SinkRole::Outgoing)]
-    #[case::incoming(SinkRole::Incoming)]
-    fn a_finished_outgoing_or_incoming_without_a_handover_is_nothing(
-        #[case] role: SinkRole,
-    ) {
-        let mut state = EngineState::Live(playing());
-        assert_eq!(
-            step(&mut state, EngineMessage::Finished(role)).err(),
-            Some(Unhandled)
-        );
-    }
-
-    #[test]
-    fn a_finish_mid_crossfade_promotes() {
-        let mut state = EngineState::Live(crossfading_mid_ramp());
-        let effect =
-            step(&mut state, EngineMessage::Finished(SinkRole::Current)).unwrap();
-        assert_same(
-            effect,
-            Cmd::effect(LoopEffect::Execute(EngineEffect::Promote(
-                crate::gain::Gain::UNITY,
-            )))
-            .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
-            .then(Cmd::message(AudioEvent::TrackChanged)),
-        );
-        assert_eq!(
-            state,
-            EngineState::Live(promoted(Crossfade::clamped(seconds(10))))
-        );
-    }
-
-    #[test]
-    fn a_track_at_its_fade_start_fades_in_and_out() {
-        let mut state = EngineState::Live(crossfading_idle());
-        let effect = step(&mut state, EngineMessage::FadeStartReached).unwrap();
-        assert_same(
-            effect,
-            Cmd::effect(LoopEffect::Execute(EngineEffect::Crossfade {
-                duration: seconds(10),
-                incoming: crate::gain::Gain::UNITY,
-            })),
-        );
-        assert_eq!(state, EngineState::Live(crossfading_mid_ramp()));
-    }
-
-    #[test]
-    fn a_second_fade_start_is_ignored() {
-        let mut state = EngineState::Live(crossfading_mid_ramp());
-        assert_eq!(
-            step(&mut state, EngineMessage::FadeStartReached).err(),
-            Some(Unhandled)
-        );
-        assert_eq!(state, EngineState::Live(crossfading_mid_ramp()));
-    }
-
-    #[rstest]
-    #[case::idle(EngineState::Live(live()))]
-    #[case::loading(EngineState::Live(loading()))]
-    fn a_fade_start_while_idle_or_loading_is_ignored(
-        #[case] engine_state: EngineState,
-    ) {
-        let expected = engine_state.clone();
-        let mut state = engine_state;
-        assert_eq!(
-            step(&mut state, EngineMessage::FadeStartReached).err(),
-            Some(Unhandled)
-        );
-        assert_eq!(state, expected);
-    }
-
-    #[test]
-    fn a_seek_back_during_a_running_crossfade_keeps_the_playing_track_audible() {
-        let mut state = EngineState::Live(crossfading_mid_ramp());
-        assert!(step(&mut state, cmd(AudioCmd::Seek(seconds(50)))).is_ok());
-        assert_eq!(
-            step(&mut state, EngineMessage::Ramped(SinkRole::Current)).err(),
-            Some(Unhandled)
-        );
-        assert_eq!(state, EngineState::Live(crossfading_idle()));
-    }
-
-    #[test]
-    fn a_finished_ramp_promotes_the_incoming_track() {
-        let mut state = EngineState::Live(crossfading_mid_ramp());
-        let effect =
-            step(&mut state, EngineMessage::Ramped(SinkRole::Current)).unwrap();
-        assert_same(
-            effect,
-            Cmd::effect(LoopEffect::Execute(EngineEffect::Promote(
-                crate::gain::Gain::UNITY,
-            )))
-            .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
-            .then(Cmd::message(AudioEvent::TrackChanged)),
-        );
-        assert_eq!(
-            state,
-            EngineState::Live(promoted(Crossfade::clamped(seconds(10))))
-        );
-    }
-
-    #[rstest]
-    #[case::outgoing(SinkRole::Outgoing)]
-    #[case::incoming(SinkRole::Incoming)]
-    fn a_ramped_outgoing_or_incoming_is_ignored(#[case] role: SinkRole) {
-        let mut state = EngineState::Live(crossfading_mid_ramp());
-        assert_eq!(
-            step(&mut state, EngineMessage::Ramped(role)).err(),
-            Some(Unhandled)
-        );
-    }
-
-    #[rstest]
+    )]
+    #[case::a_track_that_ends_inside_its_handover_ends(
+        EngineState::Live(handed_over_to_b()),
+        EngineMessage::Finished(SinkRole::Current),
+        EngineRow {
+            next: EngineState::Live(Live { phase: Phase::Idle, ..handed_over_to_b() }),
+            effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::DropOutgoing)).then(Cmd::message(AudioEvent::Ended)))),
+        }
+    )]
+    #[case::a_finish_mid_crossfade_promotes(
+        EngineState::Live(crossfading_mid_ramp()),
+        EngineMessage::Finished(SinkRole::Current),
+        EngineRow {
+            next: EngineState::Live(promoted(Crossfade::clamped(seconds(10)))),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Promote(crate::gain::Gain::UNITY)))
+                .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
+                .then(Cmd::message(AudioEvent::TrackChanged))),
+        }
+    )]
+    #[case::a_finished_ramp_promotes_the_incoming_track(
+        EngineState::Live(crossfading_mid_ramp()),
+        EngineMessage::Ramped(SinkRole::Current),
+        EngineRow {
+            next: EngineState::Live(promoted(Crossfade::clamped(seconds(10)))),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Promote(crate::gain::Gain::UNITY)))
+                .then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
+                .then(Cmd::message(AudioEvent::TrackChanged))),
+        }
+    )]
+    #[case::a_track_at_its_fade_start_fades_in_and_out(
+        EngineState::Live(crossfading_idle()),
+        EngineMessage::FadeStartReached,
+        EngineRow {
+            next: EngineState::Live(crossfading_mid_ramp()),
+            effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Crossfade { duration: seconds(10), incoming: crate::gain::Gain::UNITY }))),
+        }
+    )]
     #[case::ramped_outgoing_drops_it(
         EngineState::Live(handed_over_to_b()),
         EngineMessage::Ramped(SinkRole::Outgoing),
@@ -471,23 +328,6 @@ mod tests {
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::DropOutgoing))),
         }
     )]
-    #[case::ramped_current_in_handover_ignored(
-        EngineState::Live(handing_over(Incoming::Loading(loading_track("/b")))),
-        EngineMessage::Ramped(SinkRole::Current),
-        EngineRow {
-            next: EngineState::Live(handing_over(Incoming::Loading(loading_track("/b")))),
-            effect: Err(Unhandled),
-        }
-    )]
-    fn a_handover_follows_its_ramps(
-        #[case] engine_state: EngineState,
-        #[case] message: EngineMessage,
-        #[case] moved_row: EngineRow,
-    ) {
-        assert_cell(engine_state, message, moved_row);
-    }
-
-    #[rstest]
     #[case::preloaded_opens_the_crossfade(
         EngineState::Live(awaiting(
             playing_with_crossfade(),
@@ -506,6 +346,59 @@ mod tests {
             next: EngineState::Live(playing()),
             effect: Ok(Cmd::message(AudioEvent::Error(preload_error()))),
         }
+    )]
+    #[case::finished_while_idle_is_ignored(
+        EngineState::Live(live()),
+        EngineMessage::Finished(SinkRole::Current),
+        EngineRow { next: EngineState::Live(live()), effect: Err(Unhandled) }
+    )]
+    #[case::finished_while_loading_is_ignored(
+        EngineState::Live(loading()),
+        EngineMessage::Finished(SinkRole::Current),
+        EngineRow { next: EngineState::Live(loading()), effect: Err(Unhandled) }
+    )]
+    #[case::finished_while_closed_is_ignored(
+        closed(),
+        EngineMessage::Finished(SinkRole::Current),
+        EngineRow { next: closed(), effect: Err(Unhandled) }
+    )]
+    #[case::finished_outgoing_without_a_handover_is_ignored(
+        EngineState::Live(playing()),
+        EngineMessage::Finished(SinkRole::Outgoing),
+        EngineRow { next: EngineState::Live(playing()), effect: Err(Unhandled) }
+    )]
+    #[case::ramped_outgoing_without_a_handover_is_ignored(
+        EngineState::Live(crossfading_mid_ramp()),
+        EngineMessage::Ramped(SinkRole::Outgoing),
+        EngineRow { next: EngineState::Live(crossfading_mid_ramp()), effect: Err(Unhandled) }
+    )]
+    #[case::ramped_current_before_the_fade_runs_is_ignored(
+        EngineState::Live(crossfading_idle()),
+        EngineMessage::Ramped(SinkRole::Current),
+        EngineRow { next: EngineState::Live(crossfading_idle()), effect: Err(Unhandled) }
+    )]
+    #[case::ramped_current_in_handover_ignored(
+        EngineState::Live(handing_over(Incoming::Loading(loading_track("/b")))),
+        EngineMessage::Ramped(SinkRole::Current),
+        EngineRow {
+            next: EngineState::Live(handing_over(Incoming::Loading(loading_track("/b")))),
+            effect: Err(Unhandled),
+        }
+    )]
+    #[case::a_second_fade_start_is_ignored(
+        EngineState::Live(crossfading_mid_ramp()),
+        EngineMessage::FadeStartReached,
+        EngineRow { next: EngineState::Live(crossfading_mid_ramp()), effect: Err(Unhandled) }
+    )]
+    #[case::fade_start_while_idle_is_ignored(
+        EngineState::Live(live()),
+        EngineMessage::FadeStartReached,
+        EngineRow { next: EngineState::Live(live()), effect: Err(Unhandled) }
+    )]
+    #[case::fade_start_while_loading_is_ignored(
+        EngineState::Live(loading()),
+        EngineMessage::FadeStartReached,
+        EngineRow { next: EngineState::Live(loading()), effect: Err(Unhandled) }
     )]
     #[case::an_attach_nobody_awaits_is_ignored(
         EngineState::Live(playing()),

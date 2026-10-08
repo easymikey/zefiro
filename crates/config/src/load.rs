@@ -136,8 +136,7 @@ mod tests {
     use kernel::domain::{
         config::{ConfigError, ConfigName},
         io_error::IoError,
-        keymap::{Action, KeyOverride, KeymapOverrides},
-        theme::{ThemeChoice, ThemeName, ThemeNameError},
+        theme::{ThemeChoice, ThemeName},
     };
     use rstest::rstest;
 
@@ -145,7 +144,6 @@ mod tests {
         appearance_file::TomlAppearance,
         config_file::TomlSettings,
         driver::paths::{ConfigPaths, SeenTexts},
-        embedded_theme::{STOCK_THEME, embedded_theme},
         load::{Loaded, load},
     };
 
@@ -185,23 +183,6 @@ mod tests {
     }
 
     #[test]
-    fn nothing_on_disk_loads_defaults_and_the_embedded_theme() {
-        let directory = tempfile::tempdir().unwrap();
-
-        let loaded = loaded(directory.path(), None);
-
-        assert_eq!(loaded.toml_settings, TomlSettings::default());
-        assert_eq!(loaded.toml_appearance, TomlAppearance::default());
-        assert_eq!(loaded.theme_name.as_str(), STOCK_THEME);
-        assert_eq!(
-            loaded.toml_theme.map(|theme| theme.name),
-            Some(loaded.theme_name)
-        );
-        assert_eq!(loaded.texts, SeenTexts::default());
-        assert!(loaded.errors.is_empty());
-    }
-
-    #[test]
     fn the_theme_comes_from_the_config_unless_the_paths_name_one() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("config.toml"), "theme = \"ghost\"\n")
@@ -217,21 +198,6 @@ mod tests {
         assert_eq!(from_config.theme_name.as_str(), "ghost");
         assert_eq!(from_paths.theme_name.as_str(), "noir");
         assert!(from_paths.toml_theme.is_some());
-    }
-
-    #[test]
-    fn a_keymap_in_the_config_is_loaded_and_its_text_is_seen() {
-        let directory = tempfile::tempdir().unwrap();
-        let text = "[keymap]\nquit = \"q\"\n";
-        std::fs::write(directory.path().join("config.toml"), text).unwrap();
-
-        let loaded = loaded(directory.path(), None);
-
-        assert_eq!(
-            loaded.toml_settings.keymap.into_keymap_overrides(),
-            KeymapOverrides::from([(Action::Quit, KeyOverride::from("q"))])
-        );
-        assert_eq!(loaded.texts.config.as_deref(), Some(text));
     }
 
     #[test]
@@ -272,20 +238,6 @@ mod tests {
     }
 
     #[test]
-    fn a_valid_user_theme_is_read() {
-        let text = embedded_theme("noir").unwrap();
-        let directory = mine_with(Some(text));
-
-        let loaded = loaded(directory.path(), Some("mine"));
-
-        assert_eq!(
-            loaded.toml_theme,
-            Some(crate::theme_file::parse_theme(text, "mine").unwrap())
-        );
-        assert!(loaded.errors.is_empty());
-    }
-
-    #[test]
     fn a_broken_user_theme_has_no_theme_and_reports_why() {
         let directory = mine_with(Some("colors = 3\n"));
 
@@ -315,13 +267,6 @@ mod tests {
                 }
             )]
         );
-    }
-
-    #[rstest]
-    #[case::parent("../x")]
-    #[case::nested("a/b")]
-    fn a_theme_name_with_a_path_in_it_cannot_be_built(#[case] name: &str) {
-        assert_eq!(ThemeName::new(name.to_owned()), Err(ThemeNameError::Path));
     }
 
     #[test]

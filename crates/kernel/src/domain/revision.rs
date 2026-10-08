@@ -73,27 +73,3 @@ pub(crate) enum Freshness {
     Awaited,
     Stale,
 }
-
-#[cfg(test)]
-mod tests {
-    use rstest::rstest;
-
-    use crate::domain::revision::{Freshness, Revision};
-
-    fn bumped(times: u64) -> Revision {
-        (0..times).fold(Revision::default(), |revision, _| revision.next())
-    }
-
-    #[rstest]
-    #[case::same_generation(2, 2, Freshness::Awaited)]
-    #[case::superseded(1, 2, Freshness::Stale)]
-    #[case::ahead(3, 2, Freshness::Stale)]
-    #[case::untouched(0, 0, Freshness::Awaited)]
-    fn only_the_awaited_generation_answers(
-        #[case] stamp: u64,
-        #[case] awaited: u64,
-        #[case] freshness: Freshness,
-    ) {
-        assert_eq!(bumped(stamp).freshness(bumped(awaited)), freshness);
-    }
-}

@@ -71,7 +71,7 @@ pub(crate) fn compose_vinyl_frame(
 ) -> RgbaImage {
     let mut pixmap = record.clone();
     let geometry = VinylGeometry::new(sleeve_input.frame.side);
-    paint_label_ring_spindle(&mut pixmap, sleeve_input, &geometry);
+    paint_label_and_ring(&mut pixmap, sleeve_input, &geometry);
     pixmap.draw_pixmap(
         0,
         0,
@@ -115,7 +115,7 @@ fn paint_record_and_grooves(
     paint_grooves(pixmap, frame, geometry);
 }
 
-fn paint_label_ring_spindle(
+fn paint_label_and_ring(
     pixmap: &mut Pixmap,
     sleeve_input: &SleeveInput<'_>,
     geometry: &VinylGeometry,
@@ -140,16 +140,6 @@ fn paint_label_ring_spindle(
             color: skia_color(sleeve_input.frame.style.paper),
             width: VINYL_LAYOUT.label_border_width * geometry.size(),
         },
-    );
-
-    let spindle_disc = Disc {
-        radius: VINYL_LAYOUT.spindle_radius_fraction * geometry.size(),
-        ..label
-    };
-    fill_path(
-        pixmap,
-        circle_path(spindle_disc),
-        skia_color(sleeve_input.frame.style.record),
     );
 }
 
@@ -298,6 +288,7 @@ mod tests {
                 compose_vinyl_frame,
                 paint_record_layer,
                 paint_sleeve_layer,
+                scale_alpha,
                 skia_color,
                 skia_color_with_alpha,
             },
@@ -381,5 +372,86 @@ mod tests {
             *image.get_pixel(canvas_side.0 / 2, canvas_side.0 / 2),
             image::Rgba([red, green, blue, 255])
         );
+    }
+
+    #[rstest]
+    #[case::fifty_at_half(50, 0.5, 25)]
+    #[case::fifty_at_three_quarters(50, 0.75, 38)]
+    #[case::fifty_at_full(50, 1.0, 50)]
+    #[case::two_hundred_at_a_quarter(200, 0.25, 50)]
+    fn scale_alpha_scales_the_peak_by_the_fraction(
+        #[case] peak: u8,
+        #[case] fraction: f32,
+        #[case] alpha: u8,
+    ) {
+        assert_eq!(scale_alpha(peak, fraction), alpha);
+    }
+
+    struct PixelRow {
+        side: u32,
+        x: u32,
+        y: u32,
+        pixel: [u8; 4],
+    }
+
+    #[rstest]
+    #[case::sleeve_top_left_corner(PixelRow { side: 250, x: 0, y: 0, pixel: [111, 119, 133, 165] })]
+    #[case::sleeve_top_right_corner(PixelRow { side: 250, x: 249, y: 0, pixel: [113, 120, 133, 151] })]
+    #[case::sleeve_bottom_right_corner(PixelRow { side: 250, x: 249, y: 249, pixel: [89, 95, 105, 191] })]
+    #[case::sleeve_bottom_left_corner(PixelRow { side: 250, x: 0, y: 249, pixel: [106, 112, 125, 175] })]
+    #[case::sleeve_inside_the_rounded_corner(PixelRow { side: 250, x: 2, y: 2, pixel: [216, 221, 230, 255] })]
+    #[case::sleeve_left_border(PixelRow { side: 250, x: 0, y: 125, pixel: [161, 167, 179, 255] })]
+    #[case::sleeve_right_border(PixelRow { side: 250, x: 249, y: 125, pixel: [161, 167, 179, 255] })]
+    #[case::art_top_left_corner(PixelRow { side: 250, x: 5, y: 5, pixel: [94, 96, 172, 255] })]
+    #[case::art_inside_its_corner(PixelRow { side: 250, x: 6, y: 6, pixel: [0, 0, 128, 255] })]
+    #[case::art_left_edge(PixelRow { side: 250, x: 5, y: 125, pixel: [53, 149, 153, 255] })]
+    #[case::art_centre(PixelRow { side: 250, x: 125, y: 125, pixel: [126, 126, 128, 255] })]
+    #[case::art_right_edge(PixelRow { side: 250, x: 244, y: 125, pixel: [243, 149, 153, 255] })]
+    #[case::art_bottom_edge(PixelRow { side: 250, x: 125, y: 244, pixel: [148, 244, 153, 255] })]
+    #[case::label_beside_the_sleeve(PixelRow { side: 250, x: 252, y: 125, pixel: [150, 78, 78, 255] })]
+    #[case::label_border_inner(PixelRow { side: 250, x: 254, y: 125, pixel: [200, 156, 160, 255] })]
+    #[case::label_border_outer(PixelRow { side: 250, x: 255, y: 125, pixel: [210, 215, 224, 255] })]
+    #[case::third_groove(PixelRow { side: 250, x: 291, y: 125, pixel: [55, 57, 62, 255] })]
+    #[case::second_groove(PixelRow { side: 250, x: 295, y: 125, pixel: [54, 56, 61, 255] })]
+    #[case::between_grooves(PixelRow { side: 250, x: 297, y: 125, pixel: [37, 39, 44, 255] })]
+    #[case::first_groove(PixelRow { side: 250, x: 298, y: 125, pixel: [55, 57, 62, 255] })]
+    #[case::record_shadow_right(PixelRow { side: 250, x: 308, y: 129, pixel: [0, 0, 0, 34] })]
+    #[case::record_shadow_below(PixelRow { side: 250, x: 270, y: 200, pixel: [0, 0, 0, 87] })]
+    #[case::empty_top_right(PixelRow { side: 250, x: 310, y: 2, pixel: [0, 0, 0, 0] })]
+    #[case::sleeve_shadow_row_at_250(PixelRow { side: 250, x: 250, y: 20, pixel: [78, 82, 92, 177] })]
+    #[case::sleeve_shadow_row_at_251(PixelRow { side: 250, x: 251, y: 20, pixel: [0, 0, 0, 99] })]
+    #[case::sleeve_shadow_row_at_252(PixelRow { side: 250, x: 252, y: 20, pixel: [0, 0, 0, 99] })]
+    #[case::sleeve_shadow_row_at_253(PixelRow { side: 250, x: 253, y: 20, pixel: [0, 0, 0, 79] })]
+    #[case::sleeve_shadow_row_at_254(PixelRow { side: 250, x: 254, y: 20, pixel: [0, 0, 0, 34] })]
+    #[case::sleeve_shadow_row_at_255(PixelRow { side: 250, x: 255, y: 20, pixel: [0, 0, 0, 7] })]
+    #[case::sleeve_shadow_row_at_256(PixelRow { side: 250, x: 256, y: 20, pixel: [0, 0, 0, 0] })]
+    #[case::sleeve_shadow_row_at_258(PixelRow { side: 250, x: 258, y: 20, pixel: [0, 0, 0, 0] })]
+    #[case::sleeve_shadow_row_at_260(PixelRow { side: 250, x: 260, y: 20, pixel: [0, 0, 0, 0] })]
+    #[case::sleeve_shadow_row_at_262(PixelRow { side: 250, x: 262, y: 20, pixel: [0, 0, 0, 0] })]
+    #[case::sleeve_shadow_top_at_0(PixelRow { side: 250, x: 252, y: 0, pixel: [0, 0, 0, 0] })]
+    #[case::sleeve_shadow_top_at_1(PixelRow { side: 250, x: 252, y: 1, pixel: [0, 0, 0, 10] })]
+    #[case::sleeve_shadow_top_at_2(PixelRow { side: 250, x: 252, y: 2, pixel: [0, 0, 0, 30] })]
+    #[case::sleeve_shadow_top_at_3(PixelRow { side: 250, x: 252, y: 3, pixel: [0, 0, 0, 60] })]
+    #[case::sleeve_shadow_top_at_5(PixelRow { side: 250, x: 252, y: 5, pixel: [0, 0, 0, 99] })]
+    #[case::sleeve_shadow_bottom(PixelRow { side: 250, x: 252, y: 248, pixel: [0, 0, 0, 99] })]
+    #[case::sleeve_shadow_bottom_on_a_small_side(PixelRow { side: 100, x: 100, y: 80, pixel: [51, 53, 59, 255] })]
+    #[case::art_corner_square_once_the_padding_passes_the_radius(PixelRow { side: 240, x: 5, y: 5, pixel: [0, 0, 128, 255] })]
+    fn each_layer_paints_its_pixels_where_the_geometry_puts_them(
+        #[case] row: PixelRow,
+    ) {
+        let PixelRow { side, x, y, pixel } = row;
+        let cover_image = CoverImage {
+            path: PathBuf::from("/music/a.flac"),
+            image: Arc::new(synthetic_art(64)),
+        };
+        let wanted = Wanted {
+            cover_image: Some(&cover_image),
+            side: Pixels(side),
+            vinyl_style: noir_vinyl_style(),
+        };
+
+        let image = VinylCache::default().compose(&wanted);
+
+        assert_eq!(image.get_pixel(x, y).0, pixel);
     }
 }

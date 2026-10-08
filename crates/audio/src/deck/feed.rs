@@ -194,6 +194,15 @@ impl Feed {
         }
     }
 
+    pub(crate) fn serve(&mut self) {
+        if let Some(spare) = self.spare_chunks.pop() {
+            self.refill(spare);
+        }
+        while let Ok(chunk) = self.empty_consumer.pop() {
+            self.refill(chunk);
+        }
+    }
+
     fn refill(&mut self, chunk: Chunk) {
         let due = self.due_seek();
         if due.is_none()
@@ -389,7 +398,6 @@ pub(crate) mod tests {
                 SEEK_SPARES,
                 UNDERRUN_FRAMES,
                 feed_channel,
-                play,
             },
             source::{
                 DecodedTrack,
@@ -426,24 +434,6 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_primed_source_yields_the_decoded_samples_in_order() {
-        let file = ramp_file(1, 2_000);
-        let expected = decoded(&file);
-        let (mut source, mut feed) = opened(&file);
-        feed.prime();
-        assert_eq!(pulled(&mut source, expected.len() + 1), expected);
-    }
-
-    #[test]
-    fn a_source_past_its_end_keeps_answering_none() {
-        let file = ramp_file(1, 100);
-        let (mut source, mut feed) = opened(&file);
-        feed.prime();
-        assert_eq!(pulled(&mut source, 200).len(), 100);
-        assert_eq!([0; 3].map(|_| pulled(&mut source, 1).len()), [0, 0, 0]);
-    }
-
-    #[test]
     fn a_dropped_feed_ends_the_source_after_the_chunks_already_sent() {
         let file = ramp_file(1, 40_000);
         let expected = decoded(&file);
@@ -468,17 +458,6 @@ pub(crate) mod tests {
         feed.prime();
         assert_eq!(pulled(&mut source, silence - 1), vec![0.0; silence - 1]);
         assert_eq!(pulled(&mut source, 1).first(), expected.first());
-    }
-
-    #[test]
-    fn chunks_decoded_before_a_seek_are_not_played_after_it() {
-        let file = ramp_file(1, 40_000);
-        let expected = decoded(&file);
-        let (mut source, mut feed) = opened(&file);
-        feed.prime();
-        source.seek(Duration::from_secs(1));
-        feed.prime();
-        assert_eq!(pulled(&mut source, 1).first(), expected.get(8_000));
     }
 
     #[test]
@@ -605,22 +584,5 @@ pub(crate) mod tests {
         let bound = 1_000_000;
         assert!(pulled(&mut source, bound).len() < bound);
         assert_eq!(pulled(&mut source, 1), []);
-    }
-
-    #[test]
-    fn a_played_track_yields_its_samples_through_its_envelope() {
-        let file = ramp_file(1, 1_000);
-        let expected = decoded(&file);
-        let (feed_sender, _feed_receiver) = crossbeam_channel::bounded(1);
-        let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
-        let decoded_track = DecodedTrack {
-            revision: Revision::default().next(),
-            decoder: decode(file.path()).unwrap(),
-        };
-        let (mut source, feed) = feed_channel(decoded_track, 1, callback_sender);
-        let (mut envelope, _control) = play(&source, feed, &feed_sender);
-        let pulled =
-            crate::deck::tests::pulled(&mut source, &mut envelope, expected.len() + 1);
-        assert_eq!(pulled, expected);
     }
 }

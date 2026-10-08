@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use crate::error::Error;
 
 #[must_use]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LibraryDirs {
     pub(crate) cache_dir: PathBuf,
     pub(crate) data_dir: PathBuf,
@@ -12,17 +12,22 @@ pub struct LibraryDirs {
 
 impl LibraryDirs {
     pub fn user() -> Result<Self, Error> {
-        let cache_dir = dirs::cache_dir().ok_or(Error::NoUserDirs)?.join("sifr");
-        let data_dir = dirs::data_dir().ok_or(Error::NoUserDirs)?.join("sifr");
-        let playlists_dir = dirs::config_dir()
-            .ok_or(Error::NoUserDirs)?
-            .join("sifr")
-            .join("playlists");
-        Ok(Self {
-            cache_dir,
-            data_dir,
-            playlists_dir,
-        })
+        let user_cache_dir = dirs::cache_dir().ok_or(Error::NoUserDirs)?;
+        let user_data_dir = dirs::data_dir().ok_or(Error::NoUserDirs)?;
+        let user_config_dir = dirs::config_dir().ok_or(Error::NoUserDirs)?;
+        Ok(Self::new(&user_cache_dir, &user_data_dir, &user_config_dir))
+    }
+
+    pub fn new(
+        user_cache_dir: &Path,
+        user_data_dir: &Path,
+        user_config_dir: &Path,
+    ) -> Self {
+        Self {
+            cache_dir: user_cache_dir.join("sifr"),
+            data_dir: user_data_dir.join("sifr"),
+            playlists_dir: user_config_dir.join("sifr").join("playlists"),
+        }
     }
 
     #[must_use]
@@ -34,12 +39,39 @@ impl LibraryDirs {
     pub fn reports_path(&self) -> PathBuf {
         self.cache_dir.join("reports.json")
     }
+}
 
-    pub fn under(root_dir: &Path) -> Self {
-        Self {
-            cache_dir: root_dir.join("cache"),
-            data_dir: root_dir.join("data"),
-            playlists_dir: root_dir.join("playlists"),
-        }
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use crate::dirs::LibraryDirs;
+
+    fn library_dirs() -> LibraryDirs {
+        LibraryDirs::new(
+            Path::new("/user/cache"),
+            Path::new("/user/data"),
+            Path::new("/user/config"),
+        )
+    }
+
+    #[test]
+    fn new_puts_each_dir_in_the_app_folder_of_its_user_dir() {
+        assert_eq!(
+            library_dirs(),
+            LibraryDirs {
+                cache_dir: PathBuf::from("/user/cache/sifr"),
+                data_dir: PathBuf::from("/user/data/sifr"),
+                playlists_dir: PathBuf::from("/user/config/sifr/playlists"),
+            }
+        );
+    }
+
+    #[test]
+    fn the_media_dir_lies_in_the_cache_dir() {
+        assert_eq!(
+            library_dirs().media_dir(),
+            Path::new("/user/cache/sifr/media")
+        );
     }
 }

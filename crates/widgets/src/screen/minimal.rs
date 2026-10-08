@@ -146,6 +146,7 @@ mod tests {
         time::Moment,
         transport::OutputStatus,
     };
+    use ratatui::backend::TestBackend;
     use rstest::rstest;
 
     use crate::{
@@ -158,6 +159,16 @@ mod tests {
     };
 
     fn painted(repeat_mode: RepeatMode) -> String {
+        painted_with(repeat_mode, |view| {
+            progress_bar_width(view, SpeedChip::Always, Cells(40))
+        })
+        .to_string()
+    }
+
+    fn painted_with(
+        repeat_mode: RepeatMode,
+        bar_width: impl FnOnce(CardView<'_>) -> Cells,
+    ) -> TestBackend {
         let theme = noir();
         let player = Player::Stopped;
         let spectrum: Spectrum = [0.0; SPECTRUM_BANDS];
@@ -178,13 +189,30 @@ mod tests {
         let widget = MinimalScreenWidget::new(
             view,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
-            progress_bar_width(view, SpeedChip::Always, Cells(40)),
+            bar_width(view),
         )
         .speed_chip(SpeedChip::Always);
         rendered(40, 3, |frame| {
             frame.render_widget(&widget, frame.area());
         })
-        .to_string()
+    }
+
+    #[rstest]
+    #[case::without_a_bar_the_time_starts_the_row(Cells(0), "")]
+    #[case::after_a_bar_one_space_comes_first(Cells(4), " ")]
+    fn the_elapsed_text_follows_the_bar(#[case] bar_width: Cells, #[case] gap: &str) {
+        let mut time_text = String::new();
+        let backend = painted_with(RepeatMode::Off, |view| {
+            time_text = elapsed_text(view.position(), view.duration());
+            bar_width
+        });
+        let after_bar = (bar_width.0..40)
+            .map(|x| backend.buffer()[(x, 1)].symbol())
+            .collect::<String>();
+        assert!(
+            after_bar.starts_with(&format!("{gap}{time_text}")),
+            "{after_bar:?}"
+        );
     }
 
     #[test]
