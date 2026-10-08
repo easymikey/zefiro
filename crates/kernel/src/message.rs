@@ -364,6 +364,8 @@ pub enum AudioEvent {
     DeviceOpened(DeviceName),
     Buffering(Revision),
     Buffered(Revision),
+    PreloadCancelled,
+    PreloadKept,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, IntoStaticStr)]

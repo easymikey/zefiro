@@ -103,6 +103,12 @@ FrameLayout {
                 width: 78,
                 height: 9,
             },
+            banner: Rect {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+            },
             scroll_areas: ScrollAreas {
                 outer: Rect {
                     x: 1,
@@ -160,5 +166,5 @@ FrameLayout {
     },
     overlay_areas: None,
     overlay_content: None,
-    toast: None,
+    toast_placement: None,
 }

@@ -1,7 +1,7 @@
 use crate::{
     domain::{
         bounded::Bounded,
-        chord::{Chord, ChordPrefix, KeyPattern},
+        chord::{Chord, ChordPrefix},
         direction::Direction,
         key::KeyCode,
         keymap::{Action, KeyContext},
@@ -17,19 +17,10 @@ use crate::{
         SeekTenths,
     },
     update::keymap::{
-        chord::{KeyBinding, bare, ctrl, digit_char, digits, key, shifted},
+        chord::{KeyBinding, bare, ctrl, digit_char, digits, key, row, shifted},
         overlays,
     },
 };
-
-fn row(key_context: KeyContext) -> impl Fn(Action, Chord, Message) -> KeyBinding {
-    move |action, chord, message| KeyBinding {
-        pattern: KeyPattern::Chord(chord),
-        message,
-        action: Some(action),
-        key_context,
-    }
-}
 
 fn digit_seek_rows() -> impl Iterator<Item = KeyBinding> {
     digits().filter_map(|digit| {

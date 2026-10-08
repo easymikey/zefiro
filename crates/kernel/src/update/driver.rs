@@ -391,6 +391,7 @@ mod tests {
         player: Player,
         downloads: Vec<Download>,
         driver_name: DriverName,
+        revisions: Revisions,
         cmd: Cmd,
     }
 
@@ -469,12 +470,20 @@ mod tests {
         },
         downloads: Vec::new(),
         driver_name: DriverName::Audio,
+        revisions: Revisions {
+            effects: Revision::default().next(),
+            ..Revisions::default()
+        },
         cmd: reloaded(Duration::from_secs(5), Playback::Playing),
     })]
     #[case::a_loading_track_resumes_playing(ResumeRow {
         player: Player::Loading(track()),
         downloads: Vec::new(),
         driver_name: DriverName::Audio,
+        revisions: Revisions {
+            effects: Revision::default().next(),
+            ..Revisions::default()
+        },
         cmd: reloaded(Duration::ZERO, Playback::Playing),
     })]
     #[case::a_paused_track_resumes_paused(ResumeRow {
@@ -485,18 +494,24 @@ mod tests {
         },
         downloads: Vec::new(),
         driver_name: DriverName::Audio,
+        revisions: Revisions {
+            effects: Revision::default().next(),
+            ..Revisions::default()
+        },
         cmd: reloaded(Duration::from_secs(3), Playback::Paused),
     })]
     #[case::a_stopped_player_resumes_nothing(ResumeRow {
         player: Player::Stopped,
         downloads: Vec::new(),
         driver_name: DriverName::Audio,
+        revisions: Revisions::default(),
         cmd: Cmd::none(),
     })]
     #[case::a_library_restart_resumes_nothing(ResumeRow {
         player: Player::Loading(track()),
         downloads: Vec::new(),
         driver_name: DriverName::Library,
+        revisions: Revisions::default(),
         cmd: Cmd::none(),
     })]
     #[case::a_playing_server_track_resumes(ResumeRow {
@@ -514,6 +529,7 @@ mod tests {
             download("tr-2", fetch_revision(), START_MARGIN),
         ],
         driver_name: DriverName::Audio,
+        revisions: Revisions::default(),
         cmd: Cmd::from_iter([
             Effect::Audio(AudioCmd::Load(served("tr-1"))),
             Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
@@ -534,6 +550,10 @@ mod tests {
         },
         downloads: vec![download("tr-2", fetch_revision(), START_MARGIN)],
         driver_name: DriverName::Audio,
+        revisions: Revisions {
+            effects: Revision::default().next(),
+            ..Revisions::default()
+        },
         cmd: reloaded(Duration::from_secs(5), Playback::Playing)
             .then(Cmd::effect(Effect::Audio(AudioCmd::Preload(served("tr-2"))))),
     })]
@@ -549,6 +569,10 @@ mod tests {
         },
         downloads: vec![download("tr-1", fetch_revision(), START_MARGIN)],
         driver_name: DriverName::Audio,
+        revisions: Revisions {
+            effects: Revision::default().next(),
+            ..Revisions::default()
+        },
         cmd: Cmd::from_iter([
             Effect::Audio(AudioCmd::Load(served("tr-1"))),
             Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
@@ -567,6 +591,7 @@ mod tests {
         player: Player::Loading(server_track("tr-1")),
         downloads: vec![download("tr-1", fetch_revision(), 0)],
         driver_name: DriverName::Audio,
+        revisions: Revisions::default(),
         cmd: Cmd::from_iter([
             Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
             Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
@@ -580,6 +605,7 @@ mod tests {
         },
         downloads: Vec::new(),
         driver_name: DriverName::Audio,
+        revisions: Revisions::default(),
         cmd: Cmd::message(Message::Playback(PlaybackRequest::Stop)),
     })]
     fn an_audio_restart_resumes_the_player(#[case] row: ResumeRow) {
@@ -587,6 +613,7 @@ mod tests {
             player,
             downloads,
             driver_name,
+            revisions: expected_revisions,
             cmd,
         } = row;
         let mut revisions = Revisions::default();
@@ -600,7 +627,7 @@ mod tests {
             driver_name,
             Moment::default(),
         );
-        assert_eq!(effects, cmd);
+        assert_eq!((effects, revisions), (cmd, expected_revisions));
     }
 
     #[test]

@@ -103,8 +103,8 @@ impl Live {
         };
         let NextTrack::Crossfading {
             fade: Fade::Running,
-            incoming: ref _incoming,
-        } = playing.next
+            incoming: _incoming,
+        } = &playing.next
         else {
             return Err(Unhandled);
         };

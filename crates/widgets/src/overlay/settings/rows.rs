@@ -11,7 +11,7 @@ use crate::{
         modal::placement::indented,
         settings::view::{SettingsView, settings_label, value_text},
     },
-    primitive::truncate::truncate,
+    primitive::truncate::truncate_owned,
     theme::colors::Colors,
 };
 
@@ -63,16 +63,15 @@ pub(crate) fn settings_row(
 
 fn settings_cells(table_row: &SettingsTableRow<'_>) -> [String; 2] {
     let columns = table_row.columns;
-    let cell = |value: &str, width: Cells| truncate(value, width.count()).into_owned();
     [
         indented(
             settings_label(table_row.setting_row),
             columns.lead_width,
             columns.label_width,
         ),
-        cell(
-            &value_text(table_row.setting_row, table_row.view),
-            columns.value_width,
+        truncate_owned(
+            value_text(table_row.setting_row, table_row.view),
+            columns.value_width.count(),
         ),
     ]
 }

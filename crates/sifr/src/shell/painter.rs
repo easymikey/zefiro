@@ -319,17 +319,15 @@ where
         {
             self.terminal.clear()?;
         }
-        let (pixels, animation_stage) =
-            (&mut self.cover_painter, &mut self.animation_stage);
         let cues = mem::take(&mut self.pending_cues);
         let completed = self.terminal.draw(|screen| {
             screen.render_widget(
                 &ScreenWidget::new(scene, &layout).card_cover(&card_cover),
                 screen.area(),
             );
-            pixels.paint(screen.buffer_mut(), &layout);
-            animation_stage.play(cues, &backdrop);
-            animation_stage.advance(screen.buffer_mut(), elapsed);
+            self.cover_painter.paint(screen.buffer_mut(), &layout);
+            self.animation_stage.play(cues, &backdrop);
+            self.animation_stage.advance(screen.buffer_mut(), elapsed);
         })?;
         self.motion.painted_cells.clear();
         match animations {
@@ -359,6 +357,7 @@ fn protected_layout<'a>(
         cover_area,
         remaining_label: String::new(),
         overlay_content: None,
+        toast_placement: layout.toast_placement.clone(),
         ..*layout
     }
 }
@@ -368,7 +367,10 @@ mod tests {
     use std::{sync::Arc, time::Duration};
 
     use audio::tap::SpectrumTap;
-    use config::theme_file::{TomlColors, TomlTheme};
+    use config::{
+        embedded_theme::{STOCK_THEME, STOCK_THEME_TEXT},
+        theme_file::{TomlColors, TomlTheme, parse_theme},
+    };
     use crossterm::event::Event;
     use kernel::{
         cmd::WindowColorsCmd,
@@ -401,16 +403,13 @@ mod tests {
         theme::rgb::ColorDepth,
     };
 
-    use crate::{
-        shell::{
-            motion::{PaintClock, ScreenClear},
-            painter::{Painter, protected_layout},
-            presentation::{ShellPresentation, theme},
-            shell_input::ShellInput,
-            view,
-            window_colors::WindowColorsWrite,
-        },
-        startup::fallback_theme,
+    use crate::shell::{
+        motion::{PaintClock, ScreenClear},
+        painter::{Painter, protected_layout},
+        presentation::{ShellPresentation, theme},
+        shell_input::ShellInput,
+        view,
+        window_colors::WindowColorsWrite,
     };
 
     fn test_terminal() -> Terminal<TestBackend> {
@@ -422,7 +421,7 @@ mod tests {
     }
 
     fn test_theme() -> TomlTheme {
-        fallback_theme()
+        parse_theme(STOCK_THEME_TEXT, STOCK_THEME).unwrap()
     }
 
     fn test_backdrop(card_cover: &CardCover) -> Backdrop<'static> {
@@ -430,7 +429,7 @@ mod tests {
         let mut painter =
             Painter::new(&mut terminal, test_theme(), test_capabilities());
         painter.presentation = ShellPresentation::new(
-            theme(fallback_theme()),
+            theme(test_theme()),
             PixelPath::Halfblocks,
             ColorDepth::TrueColor,
         );
@@ -449,7 +448,7 @@ mod tests {
             search_bounds: Rect::default(),
             overlay_areas: None,
             overlay_content: None,
-            toast: Some(Rect::new(0, 0, 10, 1)),
+            toast_placement: None,
         };
         painter.backdrop(Animations::On, protected_layout(&layout, card_cover))
     }
@@ -614,15 +613,15 @@ mod tests {
         window_background: Rgb,
         foreground: Rgb,
     ) -> TomlTheme {
-        let fallback = fallback_theme();
+        let stock = test_theme();
         TomlTheme {
             name: ThemeName::from_static(name),
             colors: TomlColors {
                 foreground,
                 window_background: Some(window_background),
-                ..fallback.colors
+                ..stock.colors
             },
-            ..fallback
+            ..stock
         }
     }
 

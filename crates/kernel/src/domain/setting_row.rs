@@ -44,23 +44,11 @@ impl SettingRow {
     ];
 
     #[must_use]
-    pub fn control(self) -> Option<AppearanceControl> {
-        match self {
-            SettingRow::Appearance(field) => Some(field.row().control),
-            SettingRow::Theme
-            | SettingRow::Crossfade
-            | SettingRow::ReplayGain
-            | SettingRow::OutputDevice
-            | SettingRow::SleepPresets => None,
-        }
-    }
-
-    #[must_use]
     pub fn activates(self) -> bool {
         match self {
             SettingRow::Crossfade => false,
-            SettingRow::Appearance(_) => self.control().is_some(),
-            SettingRow::Theme
+            SettingRow::Appearance(_)
+            | SettingRow::Theme
             | SettingRow::ReplayGain
             | SettingRow::OutputDevice
             | SettingRow::SleepPresets => true,
@@ -78,10 +66,7 @@ impl AppearanceControl {
     #[must_use]
     pub const fn count(self) -> OptionCount {
         match self {
-            AppearanceControl::Toggle => match OptionCount::new(2) {
-                Some(count) => count,
-                None => OptionCount::ONE,
-            },
+            AppearanceControl::Toggle => OptionCount::TWO,
             AppearanceControl::Cycle(count) => count,
         }
     }
@@ -92,6 +77,7 @@ pub struct OptionCount(NonZeroUsize);
 
 impl OptionCount {
     pub const ONE: Self = Self(NonZeroUsize::MIN);
+    pub const TWO: Self = Self(NonZeroUsize::MIN.saturating_add(1));
 
     #[must_use]
     pub const fn new(count: usize) -> Option<Self> {
@@ -150,9 +136,7 @@ impl Choice {
 }
 
 fn clamped(count: OptionCount, requested_index: usize) -> OptionIndex {
-    count
-        .index(requested_index.min(count.get() - 1))
-        .unwrap_or(OptionIndex(0))
+    OptionIndex(requested_index.min(count.get() - 1))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

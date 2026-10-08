@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{collections::HashMap, mem, path::Path, sync::Arc};
 
 use crate::{
     cmd::{Cmd, Effect, LibraryCmd},
@@ -21,6 +21,7 @@ use crate::{
     update::{
         browse::{ResyncParts, relist, resync_playlist},
         machine::{Unhandled, replace},
+        overlay::search,
     },
 };
 
@@ -117,7 +118,7 @@ fn trashed_track(
             resync_playlist(&PlaylistSource::Library, library, resync_parts);
         }
         PlaylistSource::Named | PlaylistSource::Server(_) => {
-            let kept = std::mem::take(&mut resync_parts.playlist.tracks)
+            let kept = mem::take(&mut resync_parts.playlist.tracks)
                 .into_iter()
                 .filter(|listed| listed.source() != track.source())
                 .collect();
@@ -197,24 +198,27 @@ fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged_tracks: &[Arc<Track>]) -> 
     retag_tracks(&mut parts.playlist.tracks, &tagged);
     retag_player(parts.player, &tagged);
     if let Some(Overlay::Search(search)) = parts.workspace.overlay.as_mut() {
-        crate::update::overlay::search::rerank(search, &parts.playlist.tracks);
+        search::rerank(search, &parts.playlist.tracks);
     }
     tagging_progress(parts.scan_status, read)
 }
 
 fn library_loaded(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
-    install_library(parts, tracks);
-    if let Some(ready) = parts.library {
-        resync_playlist(
-            parts.playlist_source,
-            ready,
-            ResyncParts {
-                workspace: &mut *parts.workspace,
-                player: parts.player,
-                playlist: parts.playlist,
-            },
-        );
-    }
+    let sort_key = parts.workspace.browse.sort_key;
+    let view = sort_indices(&tracks, sort_key, parts.favorites);
+    let library = parts.library.insert(Library {
+        tracks,
+        track_indexes: view,
+    });
+    resync_playlist(
+        parts.playlist_source,
+        library,
+        ResyncParts {
+            workspace: &mut *parts.workspace,
+            player: parts.player,
+            playlist: parts.playlist,
+        },
+    );
 }
 
 type Tagged<'a> = HashMap<&'a TrackSource, &'a Arc<Track>>;
@@ -258,15 +262,6 @@ fn tagging_progress(scan_status: &mut ScanStatus, read: usize) -> Cmd {
     }
     *scan_status = ScanStatus::Tagging { done, total };
     Cmd::none()
-}
-
-fn install_library(parts: &mut LibraryParts<'_>, tracks: Vec<Arc<Track>>) {
-    let sort_key = parts.workspace.browse.sort_key;
-    let view = sort_indices(&tracks, sort_key, parts.favorites);
-    *parts.library = Some(Library {
-        tracks,
-        track_indexes: view,
-    });
 }
 
 #[cfg(test)]

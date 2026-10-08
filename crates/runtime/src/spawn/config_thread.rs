@@ -50,7 +50,6 @@ mod tests {
                 KeyHints,
                 preset_appearance,
             },
-            startup::Startup,
             theme::ThemeName,
         },
         message::{ConfigEvent, Message},
@@ -60,12 +59,11 @@ mod tests {
         driver_thread::DriverThread,
         spawn::{
             config_thread::spawn_config,
-            tests::{RECV_TIMEOUT, stub_paths},
+            tests::{SETTLE_TIMEOUT, drain, spawned_with, stub_paths},
         },
-        spawn_setup::{SpawnSetup, StartupPaths},
+        spawn_setup::StartupPaths,
     };
 
-    const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
     const DISK_TIMEOUT: Duration = Duration::from_secs(3);
 
     struct ConfigRun {
@@ -81,18 +79,8 @@ mod tests {
 
         fn start_with(paths: &StartupPaths) -> Self {
             let (inbox, inbox_receiver) = unbounded();
-            let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-            let (latest_senders, _latest_receivers, doorbell) =
-                crate::latest::latest_channels();
-            let thread = spawn_config(&SpawnSetup {
-                audio_settings: &model.settings.audio_settings,
-                paths,
-                inbox: &inbox,
-                latest_senders: &latest_senders,
-                #[cfg(target_os = "macos")]
-                macos_channel: &crate::spawn_setup::MacosChannel::new(),
-            })
-            .unwrap();
+            let (thread, _latest_receivers, doorbell) =
+                spawned_with(spawn_config, paths, &inbox);
             Self {
                 thread,
                 inbox_receiver,
@@ -108,14 +96,6 @@ mod tests {
             drop(self.thread.cmd_sender);
             self.thread.handle.join().unwrap();
         }
-    }
-
-    fn drain<T>(receiver: &Receiver<T>) -> Vec<T> {
-        let mut collected = vec![receiver.recv_timeout(RECV_TIMEOUT).unwrap()];
-        collected.extend(std::iter::from_fn(|| {
-            receiver.recv_timeout(SETTLE_TIMEOUT).ok()
-        }));
-        collected
     }
 
     fn wait_for_content(path: &Path, marker: &str) -> Option<String> {

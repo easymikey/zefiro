@@ -29,7 +29,7 @@ use kernel::domain::{
 use serde::Deserialize;
 
 use crate::{
-    appearance::{from_str_option, rounded_pixels, variant_field},
+    appearance::{flag, from_str_option, rounded_pixels, variant_field},
     error::{Error, parse_toml},
 };
 
@@ -59,7 +59,7 @@ pub struct TomlCover {
     #[serde(deserialize_with = "variant_field")]
     pub(crate) mode: CoverMode,
     pub cover_cells: TomlCoverCells,
-    #[serde(deserialize_with = "crate::appearance::flag")]
+    #[serde(deserialize_with = "flag")]
     pub(crate) brackets: CoverBrackets,
 }
 
@@ -76,7 +76,7 @@ impl Default for TomlCover {
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, expecting = "a [card] table")]
 pub struct TomlCard {
-    #[serde(deserialize_with = "crate::appearance::flag")]
+    #[serde(deserialize_with = "flag")]
     pub(crate) format_chips: FormatChips,
     #[serde(deserialize_with = "variant_field")]
     pub(crate) speed_chip: SpeedChip,
@@ -93,7 +93,7 @@ pub struct TomlProgress {
     pub fill: Option<Rgb>,
     #[serde(deserialize_with = "from_str_option")]
     pub groove: Option<Rgb>,
-    #[serde(rename = "remaining", deserialize_with = "crate::appearance::flag")]
+    #[serde(rename = "remaining", deserialize_with = "flag")]
     pub(crate) progress_time: ProgressTime,
 }
 
@@ -112,9 +112,9 @@ impl Default for TomlProgress {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields, expecting = "a [window] table")]
 pub struct TomlWindow {
-    #[serde(deserialize_with = "crate::appearance::flag")]
+    #[serde(deserialize_with = "flag")]
     pub(crate) animations: Animations,
-    #[serde(deserialize_with = "crate::appearance::flag")]
+    #[serde(deserialize_with = "flag")]
     pub(crate) key_hints: KeyHints,
 }
 

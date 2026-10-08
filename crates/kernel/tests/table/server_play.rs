@@ -601,19 +601,42 @@ fn local_before_a_preloaded_server_track() -> Model {
     model
 }
 
-#[test]
-fn remove_of_the_server_of_the_preloaded_track_drops_it_and_its_download() {
-    let mut model = local_before_a_preloaded_server_track();
+fn preloads_the_successor(model: &Model) -> bool {
     let successor = server_track(2, "flac");
-    assert!(matches!(
+    matches!(
         &model.player,
         Player::Playing { preloaded: Some(track), .. } if track.source() == successor.source()
-    ));
-    assert_eq!(model.downloads.len(), 1);
+    )
+}
+
+#[test]
+fn remove_of_the_server_of_the_preloaded_track_keeps_it_and_its_download_until_the_engine_answers()
+ {
+    let mut model = local_before_a_preloaded_server_track();
+    assert!(preloads_the_successor(&model));
+    let downloads = model.downloads.clone();
+    assert_eq!(downloads.len(), 1);
 
     let answer = remove(&mut model, home());
 
     assert!(answer.is_ok());
+    assert!(preloads_the_successor(&model));
+    assert_eq!(model.downloads, downloads);
+}
+
+#[test]
+fn remove_of_the_server_of_the_preloaded_track_drops_it_and_its_download_once_the_preload_is_cancelled()
+ {
+    let mut model = local_before_a_preloaded_server_track();
+    drop(remove(&mut model, home()));
+
+    let answer = update(
+        &mut model,
+        Message::Audio(AudioEvent::PreloadCancelled),
+        Moment::default(),
+    );
+
+    assert_eq!(answer, Ok(Cmd::none()));
     assert!(matches!(
         model.player,
         Player::Playing {
@@ -625,6 +648,34 @@ fn remove_of_the_server_of_the_preloaded_track_drops_it_and_its_download() {
     let media_fetches = played_fetches(&mut model, Message::Audio(AudioEvent::Ended));
     assert_eq!(media_fetches, Vec::new());
     assert_eq!(model.player, Player::Stopped);
+}
+
+#[test]
+fn remove_of_the_server_of_the_preloaded_track_plays_it_when_the_engine_keeps_the_preload()
+ {
+    let mut model = local_before_a_preloaded_server_track();
+    let successor = server_track(2, "flac");
+    let downloads = model.downloads.clone();
+    drop(remove(&mut model, home()));
+
+    let kept = update(
+        &mut model,
+        Message::Audio(AudioEvent::PreloadKept),
+        Moment::default(),
+    );
+    let changed = update(
+        &mut model,
+        Message::Audio(AudioEvent::TrackChanged),
+        Moment::default(),
+    );
+
+    assert_eq!(kept, Ok(Cmd::none()));
+    assert!(changed.is_ok());
+    assert!(matches!(
+        &model.player,
+        Player::Playing { track, .. } if track.source() == successor.source()
+    ));
+    assert_eq!(model.downloads, downloads);
 }
 
 #[test]

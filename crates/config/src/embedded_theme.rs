@@ -2,6 +2,8 @@ use kernel::domain::theme::{ThemeChoice, ThemeName};
 
 pub const STOCK_THEME: &str = "noir";
 
+pub const STOCK_THEME_TEXT: &str = include_str!("../../../themes/noir.toml");
+
 pub const EMBEDDED_THEMES: &[(&str, &str)] = &[
     (
         "terracotta-dark",
@@ -27,7 +29,7 @@ pub const EMBEDDED_THEMES: &[(&str, &str)] = &[
         "neobrutalism-light",
         include_str!("../../../themes/neobrutalism-light.toml"),
     ),
-    ("noir", include_str!("../../../themes/noir.toml")),
+    (STOCK_THEME, STOCK_THEME_TEXT),
     ("oreo", include_str!("../../../themes/oreo.toml")),
     ("ristretto", include_str!("../../../themes/ristretto.toml")),
     ("rose-pine", include_str!("../../../themes/rose-pine.toml")),

@@ -80,20 +80,33 @@ fn parse_history(
     contents: &str,
     limit: usize,
 ) -> (Vec<HistoryEntry>, Option<serde_json::Error>) {
-    let mut skipped = None;
-    let entries = contents
+    let read = contents
         .lines()
         .rev()
-        .filter_map(|line| match serde_json::from_str::<HistoryRecord>(line) {
-            Ok(record) => Some(HistoryEntry::from(record)),
-            Err(error) => {
-                skipped.get_or_insert(error);
-                None
+        .fold(HistoryParse::default(), |read, line| {
+            if read.entries.len() == limit {
+                read
+            } else {
+                read.adding(line)
             }
-        })
-        .take(limit)
-        .collect();
-    (entries, skipped)
+        });
+    (read.entries, read.skipped)
+}
+
+#[derive(Default)]
+struct HistoryParse {
+    entries: Vec<HistoryEntry>,
+    skipped: Option<serde_json::Error>,
+}
+
+impl HistoryParse {
+    fn adding(mut self, line: &str) -> Self {
+        match serde_json::from_str::<HistoryRecord>(line) {
+            Ok(record) => self.entries.push(HistoryEntry::from(record)),
+            Err(error) => self.skipped = self.skipped.or(Some(error)),
+        }
+        self
+    }
 }
 
 #[cfg(test)]

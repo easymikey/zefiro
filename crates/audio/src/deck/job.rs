@@ -8,7 +8,7 @@ use kernel::domain::revision::Revision;
 
 use crate::{
     deck::{
-        feed::{FeedCmd, serve},
+        feed::{FeedCmd, serve::serve},
         source::{GrowingDownload, TrackDecoder, decode},
     },
     device::list_output_devices,

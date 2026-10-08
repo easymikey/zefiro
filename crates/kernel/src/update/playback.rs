@@ -250,9 +250,8 @@ fn restart(
         .cloned()
         .or_else(|| playback_parts.playlist.current().cloned());
     let track = again.ok_or(Unhandled)?;
-    Ok(match player::start(playback_parts, track, now) {
-        Ok(cmd) | Err(cmd) => cmd,
-    })
+    Ok(player::start(playback_parts, track, now)
+        .unwrap_or_else(|offline_toast| offline_toast))
 }
 
 fn seek(

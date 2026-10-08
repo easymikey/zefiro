@@ -23,7 +23,7 @@ use ratatui::{
 use crate::{
     overlay::{
         add_server,
-        confirm_remove::ConfirmRemoveWidget,
+        confirm_remove,
         confirm_trash,
         help::{HelpColumns, HelpWidget, groups::HelpGroups},
         history::{HistoryMeasures, HistoryWidget},
@@ -34,7 +34,7 @@ use crate::{
         },
         music_dir,
         search::{SearchWidget, matches::Query, search_title},
-        servers::ServersWidget,
+        servers::{ServersTable, ServersWidget},
         settings::{SettingsTable, SettingsWidget, view::SettingsView},
         track_details::{TrackDetailsRow, TrackDetailsWidget},
     },
@@ -86,7 +86,10 @@ impl<'a> OverlayView<'a> {
             Overlay::AddServer(server_prompt) => {
                 OverlayContent::AddServer(server_prompt)
             }
-            Overlay::Servers(cursor) => OverlayContent::Servers(cursor),
+            Overlay::Servers(cursor) => OverlayContent::Servers(
+                cursor,
+                ServersTable::new(self.servers, cursor.selected(), &self.active_theme),
+            ),
             Overlay::ConfirmRemove(server_name) => {
                 OverlayContent::ConfirmRemove(server_name)
             }
@@ -116,24 +119,38 @@ enum ActiveOverlay<'a> {
 impl ActiveOverlay<'_> {
     fn areas(&self, screen: Rect) -> Option<OverlayAreas> {
         match self {
-            Self::Help(overlay) => Some(overlay.areas(screen)),
+            Self::Help(overlay) => Some(OverlayAreas::List(overlay.areas(screen))),
             Self::Search(overlay) => Some(overlay.areas(screen)),
-            Self::History(overlay) => Some(overlay.areas(screen)),
-            Self::Settings(overlay) => Some(overlay.areas(screen)),
+            Self::History(overlay) => Some(OverlayAreas::List(overlay.areas(screen))),
+            Self::Settings(overlay) => Some(OverlayAreas::List(overlay.areas(screen))),
             Self::Prompt(overlay) => Some(OverlayAreas::Dialog(overlay.areas(screen))),
             Self::Servers(overlay) => Some(OverlayAreas::Dialog(overlay.areas(screen))),
-            Self::TrackDetails(overlay) => Some(overlay.areas(screen)),
+            Self::TrackDetails(overlay) => {
+                Some(OverlayAreas::Dialog(overlay.areas(screen)))
+            }
             Self::Banner(..) => banner_area(screen).map(OverlayAreas::Banner),
         }
     }
 
     fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
         match self {
-            Self::Help(widget) => widget.paint(areas, canvas),
             Self::Search(widget) => widget.paint(areas, canvas),
-            Self::Settings(widget) => widget.paint(areas, canvas),
-            Self::History(widget) => widget.paint(areas, canvas),
-            Self::TrackDetails(widget) => widget.paint(areas, canvas),
+            Self::Help(widget) => match areas {
+                OverlayAreas::List(list) => widget.paint(list, canvas),
+                OverlayAreas::Dialog(_) | OverlayAreas::Banner(_) => {}
+            },
+            Self::Settings(widget) => match areas {
+                OverlayAreas::List(list) => widget.paint(list, canvas),
+                OverlayAreas::Dialog(_) | OverlayAreas::Banner(_) => {}
+            },
+            Self::History(widget) => match areas {
+                OverlayAreas::List(list) => widget.paint(list, canvas),
+                OverlayAreas::Dialog(_) | OverlayAreas::Banner(_) => {}
+            },
+            Self::TrackDetails(widget) => match areas {
+                OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
+                OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
+            },
             Self::Prompt(widget) => match areas {
                 OverlayAreas::Dialog(dialog) => widget.paint(dialog, canvas),
                 OverlayAreas::List(_) | OverlayAreas::Banner(_) => {}
@@ -289,14 +306,12 @@ impl<'a> OverlayWidget<'a> {
             OverlayContent::SavePlaylist(entry) => {
                 ActiveOverlay::Banner(SaveLine::new(entry), theme)
             }
-            OverlayContent::Servers(cursor) => ActiveOverlay::Servers(
-                ServersWidget::new(self.view.servers, cursor.selected(), theme)
+            OverlayContent::Servers(cursor, servers_table) => ActiveOverlay::Servers(
+                ServersWidget::new(servers_table, cursor.selected(), theme)
                     .avoid(avoid),
             ),
             OverlayContent::ConfirmRemove(server_name) => ActiveOverlay::Prompt(
-                ConfirmRemoveWidget::new(server_name, theme)
-                    .prompt()
-                    .avoid(avoid),
+                confirm_remove::prompt(server_name, theme).avoid(avoid),
             ),
         })
     }

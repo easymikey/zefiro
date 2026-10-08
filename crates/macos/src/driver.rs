@@ -10,7 +10,7 @@ use kernel::{
     cmd::{Cmd, Cmds, MacosCmd},
     domain::{percent::Percent, track::Track},
     message::{MacosError, MacosEvent, OsStatus, PlaybackRequest},
-    update::machine::{Driver, LoopEffect, Machine, Unhandled, each_handled},
+    update::machine::{Driver, LoopEffect, Machine, Unhandled},
 };
 use objc2::rc::{Retained, autoreleasepool};
 use objc2_media_player::MPMediaItemArtwork;
@@ -60,12 +60,17 @@ impl MacosDriver {
 
     fn take_cmds(&mut self, cmds: Cmds<MacosCmd>) -> Result<MacosLoopCmd, Unhandled> {
         let Cmds { cmds, at } = cmds;
+        if cmds.is_empty() {
+            return Err(Unhandled);
+        }
         let last_volume = cmds.iter().rev().find_map(volume_of);
         let publish = cmds
             .iter()
             .any(|cmd| volume_of(cmd).is_none())
             .then_some(MacosEffect::ShowNowPlaying);
-        let moved = each_handled(cmds, |cmd| self.move_now_playing(cmd, at))?;
+        let moved = cmds.into_iter().fold(Cmd::none(), |moved, cmd| {
+            moved.then(self.move_now_playing(cmd, at))
+        });
         let tail = publish
             .into_iter()
             .chain(last_volume.map(MacosEffect::SetVolume))
@@ -74,39 +79,27 @@ impl MacosDriver {
         Ok(moved.then(tail))
     }
 
-    fn move_now_playing(
-        &mut self,
-        macos_cmd: MacosCmd,
-        at: Instant,
-    ) -> Result<MacosLoopCmd, Unhandled> {
+    fn move_now_playing(&mut self, macos_cmd: MacosCmd, now: Instant) -> MacosLoopCmd {
         match macos_cmd {
             MacosCmd::NowPlaying(now_playing) => {
-                let moved = if self
-                    .artwork
-                    .shows(now_playing.as_deref().map(Track::source))
-                {
-                    Cmd::none()
-                } else {
-                    self.artwork
-                        .transition(ArtworkMessage::TrackShown(now_playing.clone()))?
-                };
+                let moved = self.artwork.show_track(now_playing.clone());
                 self.track = now_playing;
-                self.clock = self.clock.seek(Duration::ZERO, at);
-                Ok(moved)
+                self.clock = self.clock.seek(Duration::ZERO, now);
+                moved
             }
             MacosCmd::SetPlayback(playback) => {
-                self.clock = self.clock.change_playback(playback, at);
-                Ok(Cmd::none())
+                self.clock = self.clock.change_playback(playback, now);
+                Cmd::none()
             }
             MacosCmd::SetPosition(position) => {
-                self.clock = self.clock.seek(position, at);
-                Ok(Cmd::none())
+                self.clock = self.clock.seek(position, now);
+                Cmd::none()
             }
             MacosCmd::SetSpeed(speed) => {
-                self.clock = self.clock.at_speed(speed, at);
-                Ok(Cmd::none())
+                self.clock = self.clock.at_speed(speed, now);
+                Cmd::none()
             }
-            MacosCmd::SetVolume(_) => Ok(Cmd::none()),
+            MacosCmd::SetVolume(_) => Cmd::none(),
         }
     }
 

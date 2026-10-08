@@ -69,6 +69,7 @@ pub(crate) mod search {
     pub(crate) const SELECTED_MARKER: &str = "> ";
     pub(crate) const UNSELECTED_MARKER: &str = "  ";
     pub(crate) const RULE: &str = "─";
+    pub(crate) const RULE_RUN: &str = "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────";
     pub(crate) const MATCH_SINGULAR: &str = "match";
     pub(crate) const MATCH_PLURAL: &str = "matches";
     pub(crate) const OF: &str = "of";
@@ -107,12 +108,20 @@ pub(crate) mod audio_format {
     pub(crate) const SAMPLE_RATE_UNIT: &str = " kHz";
 }
 
+pub(crate) mod quote {
+    pub(crate) const QUOTE_OPEN: &str = "\"";
+    pub(crate) const QUOTE_CLOSE: &str = "\"";
+}
+
 pub(crate) mod confirm_trash {
     pub(crate) const TITLE_WORD: &str = "MOVE TO TRASH?";
     pub(crate) const HINT: &str = "[y] yes   [n] no";
-    pub(crate) const QUOTE_OPEN: &str = "\"";
-    pub(crate) const QUOTE_CLOSE: &str = "\"";
     pub(crate) const ARTIST_SEPARATOR: &str = " — ";
+}
+
+pub(crate) mod confirm_remove {
+    pub(crate) const TITLE_WORD: &str = "REMOVE SERVER?";
+    pub(crate) const HINT: &str = "Enter remove · Esc back";
 }
 
 pub(crate) mod jump_to_time {

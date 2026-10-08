@@ -12,13 +12,12 @@ use ratatui::{
 use crate::{
     overlay::{
         help::{
-            columns::{HelpColumn, select_help_columns},
+            columns::{HelpColumn, columns_width, select_help_columns},
             groups::{CHORD_GAP, COLUMN_GAP, HelpGroups},
         },
-        modal::placement::{ModalContainer, ModalPlacement, OverlayAreas},
+        modal::placement::{ModalContainer, ModalPlacement},
     },
-    pixels::numeric::small_count_u16,
-    primitive::canvas::Canvas,
+    primitive::{canvas::Canvas, list_chrome::ScrollAreas},
     theme::active_theme::ActiveTheme,
 };
 
@@ -98,14 +97,11 @@ impl<'a> HelpWidget<'a> {
     }
 
     #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::List(self.placement().areas(screen))
+    pub(crate) fn areas(&self, screen: Rect) -> ScrollAreas {
+        self.placement().areas(screen)
     }
 
-    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        let OverlayAreas::List(areas) = areas else {
-            return;
-        };
+    pub(crate) fn paint(&self, areas: ScrollAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         self.placement().paint(
             areas,
@@ -129,15 +125,11 @@ impl<'a> HelpWidget<'a> {
 
     fn placement(&self) -> ModalPlacement<'a> {
         let columns = &self.help_columns.columns;
-        let gaps = small_count_u16(columns.len().saturating_sub(1));
         ModalPlacement {
             container: ModalContainer::Floating(self.avoid),
             border_title: Line::default(),
             modal_title: TITLE,
-            content_width: Cells(
-                columns.iter().map(|column| column.width.0).sum::<u16>()
-                    + self.help_columns.column_gap_width.0 * gaps,
-            ),
+            content_width: columns_width(columns, self.help_columns.column_gap_width),
             content_rows: columns
                 .iter()
                 .map(|column| column.height)

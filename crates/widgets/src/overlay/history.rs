@@ -21,7 +21,6 @@ use crate::{
         placement::{
             ModalContainer,
             ModalPlacement,
-            OverlayAreas,
             column_width,
             indented,
             leading_cells,
@@ -34,7 +33,7 @@ use crate::{
         list_chrome::{ScrollAreas, Scrollbar, paint_scrollbar, scroll_offset},
         span::{line, text},
         time_text::relative_time_text,
-        truncate::truncate,
+        truncate::truncate_owned,
     },
     theme::{active_theme::ActiveTheme, colors::Colors},
 };
@@ -87,14 +86,11 @@ impl<'a> HistoryWidget<'a> {
 
 impl HistoryWidget<'_> {
     #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::List(self.placement().areas(screen))
+    pub(crate) fn areas(&self, screen: Rect) -> ScrollAreas {
+        self.placement().areas(screen)
     }
 
-    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        let OverlayAreas::List(areas) = areas else {
-            return;
-        };
+    pub(crate) fn paint(&self, areas: ScrollAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         self.placement().paint(
             areas,
@@ -324,12 +320,11 @@ fn entry_row(
 
 fn entry_cells(entry_row: &EntryRow<'_>, now: Moment) -> [String; 2] {
     let columns = entry_row.columns;
-    let cell = |value: &str, width: Cells| truncate(value, width.count()).into_owned();
     [
         indented(entry_row.label, Cells(entry_row.lead), columns.label_width),
-        cell(
-            &when_label(entry_row.history_entry, now),
-            columns.when_width,
+        truncate_owned(
+            when_label(entry_row.history_entry, now),
+            columns.when_width.count(),
         ),
     ]
 }

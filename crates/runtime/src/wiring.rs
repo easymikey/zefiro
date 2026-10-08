@@ -184,15 +184,13 @@ pub(crate) mod tests {
         domain::driver::DriverName,
         message::{DriverEvent, Message},
     };
-    use library::dirs::LibraryDirs;
 
     use crate::{
         driver_thread::{Congestion, DriverThread, SendError, send},
         latest::{LatestSenders, latest_channels},
         port::{Port, Ports},
         registry,
-        spawn::tests::{idle_spawners, spawn_idle},
-        spawn_setup::StartupPaths,
+        spawn::tests::{idle_spawners, spawn_idle, stub_paths},
         wiring::Wiring,
     };
 
@@ -203,29 +201,15 @@ pub(crate) mod tests {
         spawn_idle(registry::row(driver_name), inbox).unwrap()
     }
 
-    pub(crate) fn stub_paths() -> StartupPaths {
-        StartupPaths {
-            config_paths: config::driver::paths::ConfigPaths {
-                config_path: std::path::PathBuf::new(),
-                appearance_path: std::path::PathBuf::new(),
-                themes_dir: std::path::PathBuf::new(),
-                default_music_dir: None,
-                theme_name: None,
-                seen_texts: config::driver::paths::SeenTexts::default(),
-            },
-            library_dirs: LibraryDirs::under(std::path::Path::new("")),
-        }
-    }
-
     fn idle_library_thread(
         inbox: &Sender<Message>,
-        spectrum_sender: Sender<LibraryCmd>,
+        library_cmd_sender: Sender<LibraryCmd>,
     ) -> DriverThread<LibraryCmd> {
         let (cmd_sender, cmd_receiver) = crossbeam_channel::unbounded();
         let inbox = inbox.clone();
         let handle = std::thread::spawn(move || {
             for cmd in &cmd_receiver {
-                if spectrum_sender.send(cmd).is_err() {
+                if library_cmd_sender.send(cmd).is_err() {
                     break;
                 }
             }
@@ -250,7 +234,8 @@ pub(crate) mod tests {
     impl Wiring {
         pub(crate) fn idle() -> (Self, Receiver<LibraryCmd>, LatestSenders) {
             let (inbox, inbox_receiver) = crossbeam_channel::unbounded();
-            let (library_tap, library_cmd_receiver) = crossbeam_channel::unbounded();
+            let (library_cmd_sender, library_cmd_receiver) =
+                crossbeam_channel::unbounded();
             let (latest_senders, latest_receivers, doorbell) = latest_channels();
 
             let ports = Ports {
@@ -260,7 +245,7 @@ pub(crate) mod tests {
                 ),
                 library: Port::spawned(
                     DriverName::Library,
-                    idle_library_thread(&inbox, library_tap),
+                    idle_library_thread(&inbox, library_cmd_sender),
                 ),
                 config: Port::spawned(
                     DriverName::Config,
@@ -276,7 +261,7 @@ pub(crate) mod tests {
                 ),
             };
 
-            let paths = stub_paths();
+            let paths = stub_paths(std::path::Path::new(""));
 
             let wiring = Self {
                 inbox_receiver,

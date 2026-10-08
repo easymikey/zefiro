@@ -59,7 +59,7 @@ mod tests {
     #[test]
     #[ignore = "hardware: MacosDriver reads CoreAudio devices"]
     fn the_kept_sender_reaches_a_restarted_driver() {
-        let paths = crate::wiring::tests::stub_paths();
+        let paths = crate::spawn::tests::stub_paths(std::path::Path::new(""));
         let channel = MacosChannel::new();
         let (inbox, inbox_receiver) = crossbeam_channel::unbounded::<Message>();
         let first = spawn_on(&channel, &paths, &inbox);

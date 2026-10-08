@@ -194,7 +194,7 @@ pub fn appearance_patch(
 ) -> Option<AppearancePatch> {
     Some(match field {
         AppearanceField::Preset => {
-            AppearancePatch::from(preset_appearance(*PRESETS.get(option_index.get())?))
+            AppearancePatch::from(preset_appearance(option_at(PRESETS, option_index)?))
         }
         AppearanceField::CoverMode => AppearancePatch {
             cover_mode: Some(option_at(COVER_MODES, option_index)?),

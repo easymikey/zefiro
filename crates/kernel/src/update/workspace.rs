@@ -140,13 +140,16 @@ impl Workspace {
     }
 
     fn config_recovered(&mut self, name: &ConfigName) -> Cmd {
-        let cleared = self
+        let Some(text) = self
             .config_errors
             .clear(name)
-            .map(|error| error.to_string());
+            .map(|error| error.to_string())
+        else {
+            return Cmd::none();
+        };
         let before = self.toasts.len();
         self.toasts
-            .retain(|toast| cleared.is_none() || toast.text != cleared);
+            .retain(|toast| toast.text.as_deref() != Some(text.as_str()));
         if self.toasts.len() < before {
             Cue::ToastDismissed.into()
         } else {

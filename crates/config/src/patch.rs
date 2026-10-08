@@ -324,9 +324,7 @@ mod tests {
     #[case::an_empty_patch_changes_nothing(
         "empty_patch",
         COMMENTED_UI,
-        AppearancePatch {
-            ..AppearancePatch::default()
-        }
+        AppearancePatch::default()
     )]
     #[case::minimal_sections_on_an_empty_document(
         "minimal_sections",
@@ -469,9 +467,7 @@ mod tests {
         fn an_untouched_appearance_patch_leaves_the_document_unchanged(
             text in base_appearance_texts(),
         ) {
-            let written = patched_appearance_text(text, AppearancePatch {
-                ..AppearancePatch::default()
-            }).unwrap();
+            let written = patched_appearance_text(text, AppearancePatch::default()).unwrap();
             prop_assert_eq!(written, text);
         }
 
@@ -592,9 +588,7 @@ mod tests {
     #[case::an_empty_patch_changes_nothing(
         "empty_patch",
         COMMENTED_CONFIG,
-        ConfigPatch {
-            ..ConfigPatch::default()
-        }
+        ConfigPatch::default()
     )]
     #[case::minimal_sections_on_an_empty_document(
         "minimal_sections",

@@ -11,9 +11,9 @@ const MIN_WIDTH: Cells = Cells(24);
 #[must_use]
 fn sentence(track: &Track) -> [&str; 5] {
     [
-        glyphs::confirm_trash::QUOTE_OPEN,
+        glyphs::quote::QUOTE_OPEN,
         track.title(),
-        glyphs::confirm_trash::QUOTE_CLOSE,
+        glyphs::quote::QUOTE_CLOSE,
         glyphs::confirm_trash::ARTIST_SEPARATOR,
         track.tags().artist.as_deref().unwrap_or(""),
     ]

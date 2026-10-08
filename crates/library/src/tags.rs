@@ -1,7 +1,7 @@
 use std::{borrow::Cow, path::Path};
 
 use kernel::{
-    domain::track::{Decibels, Hertz, Kbps, Track, TrackParts},
+    domain::track::{AudioFormat, Decibels, Hertz, Kbps, Tags, Track, TrackParts},
     message::LibrarySubject,
 };
 use lofty::{
@@ -39,7 +39,7 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
     let properties = tagged.properties();
     let duration = properties.duration();
     let tag = main_tag(&tagged);
-    let audio_format = kernel::domain::track::AudioFormat {
+    let audio_format = AudioFormat {
         format: Some(format!("{:?}", tagged.file_type())),
         sample_rate: properties.sample_rate().map(Hertz),
         bitrate: properties.audio_bitrate().map(Kbps),
@@ -49,7 +49,7 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
             .and_then(|tag| tag.get_string(ItemKey::ReplayGainTrackGain))
             .and_then(parse_decibels),
     };
-    let tags = tag.map_or_else(kernel::domain::track::Tags::default, tags_from);
+    let tags = tag.map_or_else(Tags::default, tags_from);
     Ok(Track::new(TrackParts {
         path: path.into(),
         duration,
@@ -58,8 +58,8 @@ pub(crate) fn read_track(path: &Path) -> Result<Track, Error> {
     }))
 }
 
-fn tags_from(tag: &Tag) -> kernel::domain::track::Tags {
-    kernel::domain::track::Tags {
+fn tags_from(tag: &Tag) -> Tags {
+    Tags {
         title: tag_text(tag.title()),
         artist: tag_text(tag.artist()),
         album: tag_text(tag.album()),

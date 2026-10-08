@@ -241,9 +241,13 @@ impl RemoteDriver {
         });
         self.play_reports
             .retain(|play_report| play_report.server_name != account.server_name);
-        self.remote_errors
-            .retain(|remote_error| *remote_error.server_name() != account.server_name);
+        self.end_streak(&account.server_name);
         self.queue(RemoteJob::Forget(account)).then(self.save())
+    }
+
+    fn end_streak(&mut self, server_name: &ServerName) {
+        self.remote_errors
+            .retain(|remote_error| remote_error.server_name() != server_name);
     }
 
     fn push(&mut self, signed_report: SignedReport) -> <Self as Machine>::Effect {
@@ -316,8 +320,7 @@ impl RemoteDriver {
         let answer = match result {
             Ok(()) => {
                 self.reporting_server_name = None;
-                self.remote_errors
-                    .retain(|remote_error| *remote_error.server_name() != server_name);
+                self.end_streak(&server_name);
                 self.advance()
             }
             Err(error) if error.is_refusal() => {
@@ -329,8 +332,7 @@ impl RemoteDriver {
                     self.signed_reports.remove(index);
                 }
                 self.reporting_server_name = None;
-                self.remote_errors
-                    .retain(|remote_error| *remote_error.server_name() != server_name);
+                self.end_streak(&server_name);
                 Cmd::message(RemoteEvent::Error(error)).then(self.advance())
             }
             Err(error) => {
@@ -338,19 +340,13 @@ impl RemoteDriver {
                     signed_report.play_report.server_name != server_name
                         || played(&signed_report.play_report)
                 });
-                let (failed, others): (Vec<_>, Vec<_>) =
-                    mem::take(&mut self.signed_reports).into_iter().partition(
-                        |signed_report| {
-                            signed_report.play_report.server_name == server_name
-                        },
-                    );
-                self.signed_reports = others.into_iter().chain(failed).collect();
+                self.signed_reports.sort_by_key(|signed_report| {
+                    signed_report.play_report.server_name == server_name
+                });
                 let event = if self.remote_errors.contains(&error) {
                     Cmd::none()
                 } else {
-                    self.remote_errors.retain(|remote_error| {
-                        remote_error.server_name() != error.server_name()
-                    });
+                    self.end_streak(error.server_name());
                     self.remote_errors.push(error.clone());
                     Cmd::message(RemoteEvent::Error(error))
                 };
@@ -427,8 +423,7 @@ impl RemoteDriver {
             .ok_or(Unhandled)?;
         let answer = match result {
             Ok(session) => {
-                self.remote_errors
-                    .retain(|remote_error| *remote_error.server_name() != server_name);
+                self.end_streak(&server_name);
                 RemoteEvent::Connected {
                     server_name,
                     session,

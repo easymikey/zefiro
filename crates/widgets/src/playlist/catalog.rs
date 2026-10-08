@@ -28,7 +28,7 @@ use crate::{
         marker::MARKERS_WIDTH,
         span::{StyledText, line, text},
         time_text::duration_text,
-        track_row::{Playing, Selected, TrackRow, track_row_line},
+        track_row::{Playing, Selected, TrackRow, row_style, track_row_line},
         truncate::{blanks, truncate_line},
     },
     theme::{active_theme::ActiveTheme, colors::Colors},
@@ -57,13 +57,16 @@ impl<'a> CatalogWidget<'a> {
     #[must_use]
     pub(crate) fn areas(&self, pane: Rect) -> PlaylistAreas {
         let body = pane_block(None, Color::Reset).inner(pane);
-        let header = match &self.catalog_view.server.server_status {
-            ServerStatus::Offline(_) => body.height.min(1),
-            ServerStatus::Connecting | ServerStatus::Online(_) => 0,
+        let banner = Rect {
+            height: match &self.catalog_view.server.server_status {
+                ServerStatus::Offline(_) => body.height.min(1),
+                ServerStatus::Connecting | ServerStatus::Online(_) => 0,
+            },
+            ..body
         };
         let listed = Rect {
-            y: body.y.saturating_add(header),
-            height: body.height - header,
+            y: body.y.saturating_add(banner.height),
+            height: body.height - banner.height,
             ..body
         };
         let scroll_areas = scroll_areas(pane, listed);
@@ -78,6 +81,7 @@ impl<'a> CatalogWidget<'a> {
             cursor_band(scroll_areas.rows, window, level.cursor.index());
         PlaylistAreas {
             pane,
+            banner,
             scroll_areas,
             window,
             selected_area,
@@ -100,14 +104,8 @@ impl<'a> CatalogWidget<'a> {
         let listed = areas.scroll_areas.content;
         match &server.server_status {
             ServerStatus::Offline(_) => {
-                let body = pane_block(None, Color::Reset).inner(pane);
-                Paragraph::new(offline_banner(server, &colors)).render(
-                    Rect {
-                        height: body.height.min(1),
-                        ..body
-                    },
-                    buffer,
-                );
+                Paragraph::new(offline_banner(server, &colors))
+                    .render(areas.banner, buffer);
             }
             ServerStatus::Connecting | ServerStatus::Online(_)
                 if level.catalog_rows.is_empty() =>
@@ -165,11 +163,7 @@ impl<'a> CatalogWidget<'a> {
                 };
                 match catalog_row {
                     CatalogRow::Album(server_album) => {
-                        let row_style = Style::default().fg(match selected {
-                            Selected::Yes => colors.selection_foreground,
-                            Selected::No => colors.foreground,
-                        });
-                        album_row(server_album, row_width, row_style)
+                        album_row(server_album, row_width, row_style(selected, &colors))
                     }
                     CatalogRow::Track(track) => track_row_line(
                         &TrackRow {

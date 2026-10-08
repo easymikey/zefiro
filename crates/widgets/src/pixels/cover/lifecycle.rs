@@ -424,6 +424,45 @@ mod tests {
         assert_eq!(reds.first(), Some(&Some(20)));
     }
 
+    #[test]
+    fn a_cover_change_mid_fade_starts_the_next_fade_from_the_blended_cover() {
+        let mut sources = sources();
+        sources.model.player = playing("/music/a.flac");
+        let mut cover_lifecycle = CoverLifecycle::new(PixmapSource::Plain, cell());
+        cover_lifecycle.set_cover(cover_image("/music/a.flac"));
+        cover_lifecycle.refresh(&sources.scene(), Some(rect()));
+        sources.model.player = playing("/music/b.flac");
+        cover_lifecycle.set_cover(CoverImage {
+            path: PathBuf::from("/music/b.flac"),
+            image: Arc::new(RgbaImage::from_pixel(4, 4, Rgba([20, 100, 50, 255]))),
+        });
+        let first_fade_reds: Vec<u8> = (0..=12)
+            .filter_map(|tick| {
+                sources.since_first_paint = Duration::from_millis(25 * tick);
+                let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
+                painted_pixel(&update.frame).map(|Rgba([red, ..])| red)
+            })
+            .collect();
+        let blended = first_fade_reds.last().copied();
+        assert!(blended.is_some_and(|red| (21..200).contains(&red)));
+        sources.model.player = playing("/music/c.flac");
+        cover_lifecycle.set_cover(CoverImage {
+            path: PathBuf::from("/music/c.flac"),
+            image: Arc::new(RgbaImage::from_pixel(4, 4, Rgba([250, 100, 50, 255]))),
+        });
+        let next_fade_red = (12..=36).find_map(|tick| {
+            sources.since_first_paint = Duration::from_millis(25 * tick);
+            let update = cover_lifecycle.refresh(&sources.scene(), Some(rect()));
+            painted_pixel(&update.frame).map(|Rgba([red, ..])| red)
+        });
+        assert!(
+            blended
+                .zip(next_fade_red)
+                .is_some_and(|(blended, red)| blended < red && red < 250),
+            "blended {blended:?}, first repaint of the next fade {next_fade_red:?}"
+        );
+    }
+
     fn vinyl_repaints_over(
         change: fn(&mut SceneSources, &mut CoverLifecycle),
     ) -> usize {

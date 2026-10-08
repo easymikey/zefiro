@@ -281,7 +281,7 @@ mod tests {
         panic!("transition publishes nothing: {path:?}");
     }
 
-    fn driver() -> LibraryDriver<fn(CoverDecoded)> {
+    pub(crate) fn driver() -> LibraryDriver<fn(CoverDecoded)> {
         LibraryDriver::new(
             LibraryDirs {
                 cache_dir: Path::new("/data").join("cache"),
@@ -293,7 +293,7 @@ mod tests {
         )
     }
 
-    fn cmds(library_cmds: Vec<LibraryCmd>) -> LibraryMessage {
+    pub(crate) fn cmds(library_cmds: Vec<LibraryCmd>) -> LibraryMessage {
         LibraryMessage::from(Cmds {
             cmds: library_cmds,
             at: Instant::now(),
@@ -308,25 +308,25 @@ mod tests {
         }])
     }
 
-    fn cover(path: &str) -> LibraryMessage {
+    pub(crate) fn cover(path: &str) -> LibraryMessage {
         cover_sized(path, 64)
     }
 
-    fn cover_sized(path: &str, side: u32) -> LibraryMessage {
+    pub(crate) fn cover_sized(path: &str, side: u32) -> LibraryMessage {
         cmds(vec![LibraryCmd::DecodeCover(kernel::cmd::CoverJob {
             path: PathBuf::from(path),
             side: Pixels(side),
         })])
     }
 
-    fn prefetch(path: &str) -> LibraryMessage {
+    pub(crate) fn prefetch(path: &str) -> LibraryMessage {
         cmds(vec![LibraryCmd::PrefetchCover(kernel::cmd::CoverJob {
             path: PathBuf::from(path),
             side: Pixels(64),
         })])
     }
 
-    fn decoded(path: &str, issued: usize) -> LibraryMessage {
+    pub(crate) fn decoded(path: &str, issued: usize) -> LibraryMessage {
         LibraryMessage::CoverDecoded {
             revision: (0..issued)
                 .fold(Revision::default(), |revision, _| revision.next()),
@@ -338,7 +338,7 @@ mod tests {
         }
     }
 
-    fn failed(path: &str, issued: usize) -> LibraryMessage {
+    pub(crate) fn failed(path: &str, issued: usize) -> LibraryMessage {
         LibraryMessage::CoverDecoded {
             revision: (0..issued)
                 .fold(Revision::default(), |revision, _| revision.next()),
@@ -349,7 +349,7 @@ mod tests {
         }
     }
 
-    fn cover_state(driver: &LibraryDriver<fn(CoverDecoded)>) -> String {
+    pub(crate) fn cover_state(driver: &LibraryDriver<fn(CoverDecoded)>) -> String {
         format!(
             "{:?} {:?} {:?} {:?} {:?}",
             driver.library_watch,
@@ -430,7 +430,7 @@ mod tests {
         }
     }
 
-    fn describe(library_loop_cmd: LibraryLoopCmd) -> String {
+    pub(crate) fn describe(library_loop_cmd: LibraryLoopCmd) -> String {
         let (effects, events) = library_loop_cmd.into_parts();
         let described: Vec<String> = effects
             .iter()
@@ -448,10 +448,10 @@ mod tests {
         }
     }
 
-    struct LibraryRow {
-        library_messages: Vec<LibraryMessage>,
-        message: LibraryMessage,
-        cmd: &'static str,
+    pub(crate) struct LibraryRow {
+        pub(crate) library_messages: Vec<LibraryMessage>,
+        pub(crate) message: LibraryMessage,
+        pub(crate) cmd: &'static str,
     }
 
     #[rstest]
@@ -566,123 +566,6 @@ mod tests {
         message: LibraryMessage::Error(Error::NoUserDirs),
         cmd: "tell error",
     })]
-    #[case::a_cover_while_idle_decodes(LibraryRow {
-        library_messages: Vec::new(),
-        message: cover("/music/one.flac"),
-        cmd: "decode /music/one.flac @ 64",
-    })]
-    #[case::a_decoded_cover_is_published(LibraryRow {
-        library_messages: vec![cover("/music/one.flac")],
-        message: decoded("/music/one.flac", 1),
-        cmd: "publish /music/one.flac @ 64 missing",
-    })]
-    #[case::a_failed_cover_is_published_missing_and_told(LibraryRow {
-        library_messages: vec![cover("/music/one.flac")],
-        message: failed("/music/one.flac", 1),
-        cmd: "publish /music/one.flac @ 64 missing; tell error",
-    })]
-    #[case::a_failed_cover_is_decoded_again_when_wanted_again(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            failed("/music/one.flac", 1),
-            cover("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        message: cover("/music/one.flac"),
-        cmd: "decode /music/one.flac @ 64",
-    })]
-    #[case::a_remembered_cover_is_published_without_a_decode(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            cover("/music/two.flac"),
-        ],
-        message: cover("/music/one.flac"),
-        cmd: "publish /music/one.flac @ 64 missing",
-    })]
-    #[case::a_batch_keeps_its_handled_commands_when_a_prefetch_is_refused(LibraryRow {
-        library_messages: Vec::new(),
-        message: cmds(vec![
-            LibraryCmd::PrefetchCover(kernel::cmd::CoverJob {
-                path: PathBuf::from("/music/two.flac"),
-                side: Pixels(64),
-            }),
-            LibraryCmd::Disk(DiskCmd::LoadFavorites),
-        ]),
-        cmd: "execute load_favorites",
-    })]
-    #[case::a_cover_wanted_while_its_prefetch_decodes_waits_for_it(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-        ],
-        message: cover("/music/two.flac"),
-        cmd: "nothing",
-    })]
-    #[case::a_prefetch_uses_the_remembered_side(LibraryRow {
-        library_messages: vec![
-            cover_sized("/music/one.flac", 96),
-            LibraryMessage::CoverDecoded {
-                revision: Revision::default().next(),
-                decoded: Ok(CoverDecoded {
-                    path: PathBuf::from("/music/one.flac"),
-                    side: Pixels(96),
-                    cover_lookup: CoverLookup::Missing,
-                }),
-            },
-        ],
-        message: prefetch("/music/two.flac"),
-        cmd: "decode /music/two.flac @ 96",
-    })]
-    #[case::a_cover_at_a_new_side_while_it_decodes_restarts(LibraryRow {
-        library_messages: vec![cover_sized("/music/one.flac", 64)],
-        message: cover_sized("/music/one.flac", 96),
-        cmd: "decode /music/one.flac @ 96",
-    })]
-    #[case::a_decoded_prefetch_is_remembered_not_published(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-        ],
-        message: decoded("/music/two.flac", 2),
-        cmd: "nothing",
-    })]
-    #[case::a_cover_wanted_while_its_prefetch_decodes_is_published(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            cover("/music/two.flac"),
-        ],
-        message: decoded("/music/two.flac", 2),
-        cmd: "publish /music/two.flac @ 64 missing",
-    })]
-    #[case::a_prefetched_cover_is_published_from_memory(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        message: cover("/music/two.flac"),
-        cmd: "publish /music/two.flac @ 64 missing",
-    })]
-    #[case::a_stale_decoded_cover_is_remembered_not_published(LibraryRow {
-        library_messages: vec![cover("/music/one.flac"), cover("/music/two.flac")],
-        message: decoded("/music/one.flac", 1),
-        cmd: "nothing",
-    })]
-    #[case::a_stale_decoded_cover_is_published_from_memory(LibraryRow {
-        library_messages: vec![
-            cover("/music/one.flac"),
-            cover("/music/two.flac"),
-            decoded("/music/one.flac", 1),
-        ],
-        message: cover("/music/one.flac"),
-        cmd: "publish /music/one.flac @ 64 missing",
-    })]
     fn a_row_steps_the_driver_and_names_its_cmd(#[case] row: LibraryRow) {
         let mut driver = driver();
         for message in row.library_messages {
@@ -721,66 +604,6 @@ mod tests {
     #[case::a_second_change_while_armed_is_refused(
         vec![scan("/music", ScanMode::Cached), LibraryMessage::Changed(Ok(()))],
         LibraryMessage::Changed(Ok(()))
-    )]
-    #[case::a_prefetch_before_any_cover_is_refused(
-        Vec::new(),
-        prefetch("/music/two.flac")
-    )]
-    #[case::a_prefetch_while_a_cover_decodes_is_refused(
-        vec![cover("/music/one.flac")],
-        prefetch("/music/two.flac")
-    )]
-    #[case::a_prefetch_of_a_remembered_cover_is_refused(
-        vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        prefetch("/music/two.flac")
-    )]
-    #[case::a_prefetch_of_the_oldest_remembered_cover_is_refused(
-        vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        prefetch("/music/one.flac")
-    )]
-    #[case::a_stale_failed_cover(
-        vec![cover("/music/one.flac"), cover("/music/two.flac")],
-        failed("/music/one.flac", 1)
-    )]
-    #[case::the_same_cover_while_it_decodes(
-        vec![cover("/music/one.flac")],
-        cover("/music/one.flac")
-    )]
-    #[case::a_duplicate_cover_after_its_decode(
-        vec![cover("/music/one.flac"), decoded("/music/one.flac", 1)],
-        cover("/music/one.flac")
-    )]
-    #[case::a_duplicate_cover_after_a_prefetch(
-        vec![
-            cover("/music/one.flac"),
-            decoded("/music/one.flac", 1),
-            prefetch("/music/two.flac"),
-            decoded("/music/two.flac", 2),
-        ],
-        cover("/music/one.flac")
-    )]
-    #[case::a_batch_whose_commands_are_all_rejected(
-        vec![cover("/music/one.flac")],
-        cmds(vec![
-            LibraryCmd::DecodeCover(kernel::cmd::CoverJob {
-                path: PathBuf::from("/music/one.flac"),
-                side: Pixels(64),
-            }),
-            LibraryCmd::DecodeCover(kernel::cmd::CoverJob {
-                path: PathBuf::from("/music/one.flac"),
-                side: Pixels(64),
-            }),
-        ])
     )]
     fn a_refused_row_is_unhandled(
         #[case] library_messages: Vec<LibraryMessage>,

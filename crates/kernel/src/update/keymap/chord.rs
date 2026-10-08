@@ -15,12 +15,31 @@ pub struct KeyBinding {
     pub key_context: KeyContext,
 }
 
+pub(crate) fn row(
+    key_context: KeyContext,
+) -> impl Fn(Action, Chord, Message) -> KeyBinding {
+    move |action, chord, message| KeyBinding {
+        pattern: KeyPattern::Chord(chord),
+        message,
+        action: Some(action),
+        key_context,
+    }
+}
+
 pub(crate) fn key(character: char) -> Chord {
     bare(KeyCode::Char(character))
 }
 
 pub(crate) fn bare(code: KeyCode) -> Chord {
     Chord::Key(Key::plain(code))
+}
+
+pub(crate) fn letter(character: char) -> KeyPattern {
+    KeyPattern::Chord(key(character))
+}
+
+pub(crate) fn plain(code: KeyCode) -> KeyPattern {
+    KeyPattern::Chord(bare(code))
 }
 
 pub(crate) fn shifted(code: KeyCode) -> Chord {

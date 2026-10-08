@@ -1,19 +1,18 @@
 mod channels;
 mod growing;
+pub(crate) mod serve;
 mod source;
 
 use std::{
-    panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
-        atomic::{AtomicU32, AtomicU64, Ordering, fence},
+        atomic::{AtomicU32, AtomicU64, Ordering},
     },
-    thread,
     time::Duration,
 };
 
 use channels::map_channels;
-use crossbeam_channel::{Receiver, RecvError, RecvTimeoutError, Sender, TrySendError};
+use crossbeam_channel::{SendError, Sender, TrySendError};
 use kernel::{cmd::Playback, domain::revision::Revision, message::AudioError};
 use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 
@@ -29,8 +28,6 @@ use crate::{
 };
 
 const FEED_SECONDS: Duration = Duration::from_millis(1_500);
-const FEED_PERIOD: Duration = Duration::from_millis(20);
-const FEED_LINGER: Duration = Duration::from_millis(100);
 const CHUNK_COUNT: usize = 8;
 const SEEK_SPARES: usize = 2;
 const PRIME_CHUNKS: usize = 2;
@@ -198,23 +195,31 @@ impl Feed {
     }
 
     fn refill(&mut self, chunk: Chunk) {
-        let seek = self.due_seek().is_some();
-        if !seek
+        let due = self.due_seek();
+        if due.is_none()
             && (self.phase != FeedPhase::Decoding
-                || self.spare_chunks.len() < SEEK_SPARES
-                || self.stalled())
+                || self.spare_chunks.len() < SEEK_SPARES)
         {
+            self.spare_chunks.push(chunk);
+            return;
+        }
+        if due.is_none() && !self.has_margin() {
+            self.phase = FeedPhase::Buffering;
+            self.buffering_wake = Wake::Pending;
             self.spare_chunks.push(chunk);
             return;
         }
         let mut next = Some(chunk);
         while let Some(mut current) = next {
-            self.fill(&mut current);
+            self.fill(
+                &mut current,
+                due.filter(|generation| *generation != self.sought),
+            );
             match self.full_producer.push(current) {
                 Ok(()) | Err(PushError::Full(_)) => {}
             }
             next = match self.phase {
-                FeedPhase::Decoding if seek && self.has_margin() => {
+                FeedPhase::Decoding if due.is_some() && self.has_margin() => {
                     self.spare_chunks.pop()
                 }
                 FeedPhase::Decoding | FeedPhase::Buffering | FeedPhase::Drained => None,
@@ -222,8 +227,8 @@ impl Feed {
         }
     }
 
-    fn fill(&mut self, chunk: &mut Chunk) {
-        chunk.mark = self.seek();
+    fn fill(&mut self, chunk: &mut Chunk, due: Option<u32>) {
+        chunk.mark = self.seek(due);
         chunk.generation = self.generation;
         chunk.first_frame = self.frames.0;
         chunk.rate = self.decoder.sample_rate();
@@ -285,8 +290,8 @@ impl Feed {
         }
     }
 
-    fn seek(&mut self) -> ChunkMark {
-        let Some(generation) = self.due_seek() else {
+    fn seek(&mut self, due: Option<u32>) -> ChunkMark {
+        let Some(generation) = due else {
             return ChunkMark::Samples;
         };
         self.sought = generation;
@@ -323,6 +328,12 @@ impl Feed {
         ChunkMark::Samples
     }
 
+    fn report(&self, message: EngineMessage) {
+        match self.callback_sender.try_send(AudioMessage::Engine(message)) {
+            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
+        }
+    }
+
     fn wake(&mut self) {
         let raised = Signals(self.envelope_readout.flags.load(Ordering::Acquire));
         if self.wake == Wake::Pending || raised.0 & !self.signals.0 != 0 {
@@ -346,8 +357,8 @@ pub(crate) fn play(
     let revision = feed.revision;
     let envelope_readout = Arc::clone(&feed.envelope_readout);
     feed.prime();
-    if let Err(unserved) = feed_sender.send(FeedCmd::Serve(Box::new(feed))) {
-        drop(unserved.into_inner());
+    match feed_sender.send(FeedCmd::Serve(Box::new(feed))) {
+        Ok(()) | Err(SendError(_)) => {}
     }
     let format = OutputFormat {
         channels: source.channels(),
@@ -356,62 +367,12 @@ pub(crate) fn play(
     envelope(format, revision, envelope_readout)
 }
 
-pub(crate) fn serve(receiver: &Receiver<FeedCmd>) {
-    let mut feeds: Vec<Feed> = Vec::new();
-    let mut inbox = Some(receiver);
-    let mut playback = Playback::Playing;
-    let mut wait = Some(FEED_PERIOD);
-    while inbox.is_some() || !feeds.is_empty() {
-        let received = match (inbox, wait) {
-            (Some(open), Some(timeout)) if !feeds.is_empty() => {
-                open.recv_timeout(timeout)
-            }
-            (Some(open), _) => open
-                .recv()
-                .map_err(|RecvError| RecvTimeoutError::Disconnected),
-            (None, _) => {
-                thread::sleep(FEED_PERIOD);
-                Err(RecvTimeoutError::Timeout)
-            }
-        };
-        wait = received.is_ok().then_some(FEED_LINGER);
-        match received {
-            Ok(FeedCmd::Serve(feed)) => feeds.push(*feed),
-            Ok(FeedCmd::Pace(next_playback)) => playback = next_playback,
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => inbox = None,
-        }
-        if playback == Playback::Playing {
-            wait = Some(FEED_PERIOD);
-        }
-        feeds.retain_mut(|feed| {
-            if feed.empty_consumer.is_abandoned() {
-                fence(Ordering::Acquire);
-                feed.wake();
-                return feed.wake == Wake::Pending;
-            }
-            feed.wake();
-            feed.buffer();
-            catch_unwind(AssertUnwindSafe(|| {
-                if let Some(spare) = feed.spare_chunks.pop() {
-                    feed.refill(spare);
-                }
-                while let Ok(chunk) = feed.empty_consumer.pop() {
-                    feed.refill(chunk);
-                }
-            }))
-            .is_ok()
-        });
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
-    use std::{io::Write, thread, time::Duration};
+    use std::{io::Write, time::Duration};
 
     use crossbeam_channel::{Sender, TryRecvError};
     use kernel::{
-        cmd::Playback,
         domain::revision::Revision,
         message::{AudioError, DecodeError},
     };
@@ -419,20 +380,16 @@ pub(crate) mod tests {
 
     use crate::{
         deck::{
-            event::DeckEvent,
             feed::{
                 CHUNK_COUNT,
                 ChunkMark,
-                FEED_PERIOD,
                 FEED_SECONDS,
                 Feed,
-                FeedCmd,
                 FeedSource,
                 SEEK_SPARES,
                 UNDERRUN_FRAMES,
                 feed_channel,
                 play,
-                serve,
             },
             source::{
                 DecodedTrack,
@@ -443,7 +400,7 @@ pub(crate) mod tests {
         engine::message::{AudioMessage, EngineMessage},
     };
 
-    fn fed(
+    pub(crate) fn fed(
         file: &NamedTempFile,
         callback_sender: Sender<AudioMessage>,
     ) -> (FeedSource, Feed) {
@@ -456,12 +413,12 @@ pub(crate) mod tests {
         feed_channel(decoded_track, channels, callback_sender)
     }
 
-    fn opened(file: &NamedTempFile) -> (FeedSource, Feed) {
+    pub(crate) fn opened(file: &NamedTempFile) -> (FeedSource, Feed) {
         let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(4);
         fed(file, callback_sender)
     }
 
-    fn pulled(source: &mut FeedSource, samples: usize) -> Vec<f32> {
+    pub(crate) fn pulled(source: &mut FeedSource, samples: usize) -> Vec<f32> {
         let mut out = vec![0.0; samples];
         let read = source.read(&mut out);
         out.truncate(read);
@@ -531,7 +488,7 @@ pub(crate) mod tests {
         let (mut source, mut feed) = opened(&file);
         source.seek(Duration::from_secs(1));
         let mut chunk = feed.empty_consumer.pop().unwrap();
-        feed.fill(&mut chunk);
+        feed.fill(&mut chunk, feed.due_seek());
         assert_eq!(chunk.generation, 1);
         assert_eq!(chunk.samples.first(), expected.get(8_000));
     }
@@ -573,7 +530,7 @@ pub(crate) mod tests {
         let mut filled = Vec::new();
         let mut lengths = Vec::new();
         while chunk.mark == ChunkMark::Samples {
-            feed.fill(&mut chunk);
+            feed.fill(&mut chunk, feed.due_seek());
             lengths.push(chunk.len % 2);
             filled.extend_from_slice(&chunk.samples[..chunk.len]);
         }
@@ -607,7 +564,7 @@ pub(crate) mod tests {
         let mut chunk = feed.empty_consumer.pop().unwrap();
         let mut filled = 0;
         while chunk.mark == ChunkMark::Samples {
-            feed.fill(&mut chunk);
+            feed.fill(&mut chunk, feed.due_seek());
             filled += chunk.len;
         }
         assert_eq!(filled, 8 * 1_152);
@@ -623,7 +580,7 @@ pub(crate) mod tests {
         let (callback_sender, callback_receiver) = crossbeam_channel::bounded(4);
         let (_source, mut feed) = fed(&file, callback_sender);
         let mut chunk = feed.empty_consumer.pop().unwrap();
-        feed.fill(&mut chunk);
+        feed.fill(&mut chunk, feed.due_seek());
         assert_eq!(chunk.mark, ChunkMark::End);
         assert!(matches!(
             callback_receiver.try_recv(),
@@ -665,134 +622,5 @@ pub(crate) mod tests {
         let pulled =
             crate::deck::tests::pulled(&mut source, &mut envelope, expected.len() + 1);
         assert_eq!(pulled, expected);
-    }
-
-    #[test]
-    fn serve_keeps_two_sources_supplied_and_returns_once_they_are_gone() {
-        let first = ramp_file(2, 70_000);
-        let second = ramp_file(1, 150_000);
-        let (feed_sender, feed_receiver) = crossbeam_channel::bounded(4);
-        let (done_sender, done_receiver) = crossbeam_channel::bounded(1);
-        thread::scope(|scope| {
-            scope.spawn(|| {
-                serve(&feed_receiver);
-                done_sender.send(()).unwrap();
-            });
-            let (mut first_source, first_feed) = opened(&first);
-            let (mut second_source, second_feed) = opened(&second);
-            feed_sender
-                .send(FeedCmd::Serve(Box::new(first_feed)))
-                .unwrap();
-            feed_sender
-                .send(FeedCmd::Serve(Box::new(second_feed)))
-                .unwrap();
-            let mut first_pulled = Vec::new();
-            let mut second_pulled = Vec::new();
-            loop {
-                let first_block = pulled(&mut first_source, 64);
-                let second_block = pulled(&mut second_source, 64);
-                if first_block.is_empty() && second_block.is_empty() {
-                    break;
-                }
-                first_pulled
-                    .extend(first_block.into_iter().filter(|sample| *sample != 0.0));
-                second_pulled
-                    .extend(second_block.into_iter().filter(|sample| *sample != 0.0));
-            }
-            let first_expected = decoded(&first);
-            let second_expected = decoded(&second);
-            assert_eq!(
-                (first_pulled.len(), second_pulled.len()),
-                (first_expected.len(), second_expected.len())
-            );
-            assert!(first_pulled == first_expected && second_pulled == second_expected);
-            drop(first_source);
-            drop(second_source);
-            drop(feed_sender);
-            assert_eq!(done_receiver.recv_timeout(Duration::from_secs(10)), Ok(()));
-        });
-    }
-
-    #[test]
-    fn a_source_pulls_without_locking_while_serve_waits() {
-        let file = ramp_file(1, 16_000);
-        let (feed_sender, feed_receiver) = crossbeam_channel::bounded(1);
-        let (mut source, mut feed) = opened(&file);
-        let chunk_len = feed.empty_consumer.peek().unwrap().samples.len();
-        feed.prime();
-        thread::scope(|scope| {
-            scope.spawn(|| serve(&feed_receiver));
-            feed_sender.send(FeedCmd::Serve(Box::new(feed))).unwrap();
-            while source.full_consumer.slots() < CHUNK_COUNT {
-                thread::yield_now();
-            }
-            assert_eq!(pulled(&mut source, 4 * chunk_len).len(), 4 * chunk_len);
-            drop(source);
-            drop(feed_sender);
-        });
-    }
-
-    #[test]
-    fn a_dropped_source_gets_no_more_chunks() {
-        let file = corrupt_file(24, 0);
-        let (callback_sender, callback_receiver) = crossbeam_channel::bounded(4);
-        let (source, feed) = fed(&file, callback_sender);
-        let (feed_sender, feed_receiver) = crossbeam_channel::bounded(1);
-        drop(source);
-        feed_sender.send(FeedCmd::Serve(Box::new(feed))).unwrap();
-        drop(feed_sender);
-        serve(&feed_receiver);
-        assert!(matches!(
-            callback_receiver.try_recv(),
-            Err(TryRecvError::Disconnected)
-        ));
-    }
-
-    #[test]
-    fn a_raised_signal_reaches_the_driver_through_the_feeder() {
-        let file = ramp_file(1, 100);
-        let revision = Revision::default().next();
-        thread::scope(|scope| {
-            let (callback_sender, callback_receiver) = crossbeam_channel::bounded(1);
-            let deck_event = DeckEvent::Woke(Revision::default());
-            deck_event.wake(&callback_sender).unwrap();
-            let (feed_sender, feed_receiver) = crossbeam_channel::bounded(4);
-            scope.spawn(move || serve(&feed_receiver));
-            let decoder = decode(file.path()).unwrap();
-            let decoded_track = DecodedTrack { revision, decoder };
-            let (mut source, feed) = feed_channel(decoded_track, 1, callback_sender);
-            let (mut envelope, _control) = play(&source, feed, &feed_sender);
-            let pulled = crate::deck::tests::pulled(&mut source, &mut envelope, 200);
-            assert_eq!(pulled.len(), 100);
-            thread::sleep(3 * FEED_PERIOD);
-            assert!(callback_receiver.try_recv().is_ok());
-            assert!(matches!(
-                callback_receiver.recv_timeout(Duration::from_secs(1)),
-                Ok(AudioMessage::Deck(DeckEvent::Woke(woke))) if woke == revision
-            ));
-        });
-    }
-
-    #[test]
-    fn a_paused_feeder_waits_for_its_next_command() {
-        let file = ramp_file(1, 40_000);
-        thread::scope(|scope| {
-            let (feed_sender, feed_receiver) = crossbeam_channel::bounded(4);
-            scope.spawn(move || serve(&feed_receiver));
-            let (mut source, feed) = opened(&file);
-            let chunk_len = feed.empty_consumer.peek().unwrap().samples.len();
-            feed_sender.send(FeedCmd::Serve(Box::new(feed))).unwrap();
-            feed_sender.send(FeedCmd::Pace(Playback::Paused)).unwrap();
-            while source.full_consumer.slots() < CHUNK_COUNT {
-                thread::yield_now();
-            }
-            thread::sleep(10 * FEED_PERIOD);
-            assert_eq!(pulled(&mut source, chunk_len + 1).len(), chunk_len + 1);
-            thread::sleep(5 * FEED_PERIOD);
-            assert_eq!(source.full_consumer.slots(), CHUNK_COUNT - 2);
-            feed_sender.send(FeedCmd::Pace(Playback::Playing)).unwrap();
-            thread::sleep(3 * FEED_PERIOD);
-            assert_eq!(source.full_consumer.slots(), CHUNK_COUNT - 1);
-        });
     }
 }

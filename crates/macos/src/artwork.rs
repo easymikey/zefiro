@@ -5,10 +5,7 @@ use std::{io, iter, ptr::NonNull, sync::Arc};
 use block2::RcBlock;
 use kernel::{
     cmd::Cmd,
-    domain::{
-        revision::Revision,
-        track::{Track, TrackSource},
-    },
+    domain::{revision::Revision, track::Track},
     message::{MacosError, MacosEvent},
     update::machine::{LoopEffect, Machine, Unhandled},
 };
@@ -42,14 +39,29 @@ pub(crate) struct Artwork {
 }
 
 impl Artwork {
-    pub(crate) fn shows(&self, source: Option<&TrackSource>) -> bool {
-        self.track.as_deref().map(Track::source) == source
+    pub(crate) fn show_track(&mut self, track: Option<Arc<Track>>) -> MacosLoopCmd {
+        if self.track.as_deref().map(Track::source)
+            == track.as_deref().map(Track::source)
+        {
+            return Cmd::none();
+        }
+        self.revision = self.revision.next();
+        let revision = self.revision;
+        let read = track.as_deref().and_then(Track::local_path).map(|path| {
+            LoopEffect::Run(MacosJob::ReadArtwork {
+                path: path.to_path_buf(),
+                revision,
+            })
+        });
+        self.track = track;
+        iter::once(LoopEffect::Execute(MacosEffect::ClearArtwork))
+            .chain(read)
+            .collect()
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ArtworkMessage {
-    TrackShown(Option<Arc<Track>>),
     ReadDone(ArtworkBytes),
 }
 
@@ -62,50 +74,27 @@ impl Machine for Artwork {
         message: ArtworkMessage,
     ) -> Result<Self::Effect, Unhandled> {
         match message {
-            ArtworkMessage::TrackShown(track)
-                if self.shows(track.as_deref().map(Track::source)) =>
-            {
-                Err(Unhandled)
-            }
-            ArtworkMessage::TrackShown(track) => {
-                self.revision = self.revision.next();
-                let revision = self.revision;
-                let read = track.as_deref().and_then(Track::local_path).map(|path| {
-                    LoopEffect::Run(MacosJob::ReadArtwork {
-                        path: path.to_path_buf(),
-                        revision,
-                    })
-                });
-                self.track = track;
-                Ok(iter::once(LoopEffect::Execute(MacosEffect::ClearArtwork))
-                    .chain(read)
-                    .collect())
-            }
-            ArtworkMessage::ReadDone(ArtworkBytes {
-                revision,
-                bytes: _bytes,
-            }) if revision != self.revision => Err(Unhandled),
-            ArtworkMessage::ReadDone(ArtworkBytes {
-                bytes: Ok(bytes),
-                revision: _revision,
-            }) if bytes.is_empty() => Err(Unhandled),
-            ArtworkMessage::ReadDone(ArtworkBytes {
-                bytes: Err(MacosError::ReadArtwork(error)),
-                revision: _revision,
-            }) if error == io::ErrorKind::NotFound.into() => Err(Unhandled),
-            ArtworkMessage::ReadDone(ArtworkBytes {
-                bytes: Ok(bytes),
-                revision: _revision,
-            }) => Ok(
-                [MacosEffect::ShowArtwork(bytes), MacosEffect::ShowNowPlaying]
+            ArtworkMessage::ReadDone(ArtworkBytes { revision, bytes }) => {
+                if revision != self.revision {
+                    return Err(Unhandled);
+                }
+                match bytes {
+                    Ok(bytes) if bytes.is_empty() => Err(Unhandled),
+                    Ok(bytes) => Ok([
+                        MacosEffect::ShowArtwork(bytes),
+                        MacosEffect::ShowNowPlaying,
+                    ]
                     .into_iter()
                     .map(LoopEffect::Execute)
-                    .collect(),
-            ),
-            ArtworkMessage::ReadDone(ArtworkBytes {
-                bytes: Err(error),
-                revision: _revision,
-            }) => Ok(Cmd::message(MacosEvent::Error(error))),
+                    .collect()),
+                    Err(MacosError::ReadArtwork(error))
+                        if error == io::ErrorKind::NotFound.into() =>
+                    {
+                        Err(Unhandled)
+                    }
+                    Err(error) => Ok(Cmd::message(MacosEvent::Error(error))),
+                }
+            }
         }
     }
 }
@@ -202,28 +191,59 @@ mod tests {
         jobs: Vec<MacosJob>,
     }
 
+    struct ShowRow {
+        artwork: Artwork,
+        track: Option<Arc<Track>>,
+        next: Artwork,
+        cmd: Cmd<MacosEffect, MacosEvent>,
+        jobs: Vec<MacosJob>,
+    }
+
     #[rstest]
-    #[case::first_track_reads_its_artwork(Row {
+    #[case::first_track_reads_its_artwork(ShowRow {
         artwork: Artwork::default(),
-        message: ArtworkMessage::TrackShown(Some(track("a.flac"))),
+        track: Some(track("a.flac")),
         next: holding(Some("a.flac"), 1),
-        cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
+        cmd: Cmd::effect(MacosEffect::ClearArtwork),
         jobs: vec![read("a.flac", 1)],
     })]
-    #[case::the_same_track_is_refused(Row {
+    #[case::the_same_track_reads_nothing(ShowRow {
         artwork: holding(Some("a.flac"), 1),
-        message: ArtworkMessage::TrackShown(Some(track("a.flac"))),
+        track: Some(track("a.flac")),
         next: holding(Some("a.flac"), 1),
-        cmd: Err(Unhandled),
+        cmd: Cmd::none(),
         jobs: vec![],
     })]
-    #[case::a_new_track_clears_and_reads(Row {
+    #[case::a_new_track_clears_and_reads(ShowRow {
         artwork: holding(Some("a.flac"), 1),
-        message: ArtworkMessage::TrackShown(Some(track("b.flac"))),
+        track: Some(track("b.flac")),
         next: holding(Some("b.flac"), 2),
-        cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
+        cmd: Cmd::effect(MacosEffect::ClearArtwork),
         jobs: vec![read("b.flac", 2)],
     })]
+    #[case::cleared_clears(ShowRow {
+        artwork: holding(Some("a.flac"), 1),
+        track: None,
+        next: holding(None, 2),
+        cmd: Cmd::effect(MacosEffect::ClearArtwork),
+        jobs: vec![],
+    })]
+    fn a_shown_track_clears_and_reads_its_artwork_unless_already_shown(
+        #[case] show_row: ShowRow,
+    ) {
+        let ShowRow {
+            mut artwork,
+            track,
+            next,
+            cmd,
+            jobs,
+        } = show_row;
+        let (effects, events) = cmd.into_parts();
+        assert_eq!(placed(artwork.show_track(track)), (effects, jobs, events));
+        assert_eq!(artwork, next);
+    }
+
+    #[rstest]
     #[case::the_artwork_read_shows_it(Row {
         artwork: holding(Some("a.flac"), 1),
         message: bytes_of(1, b"art"),
@@ -262,13 +282,6 @@ mod tests {
         }),
         next: holding(Some("a.flac"), 1),
         cmd: Err(Unhandled),
-        jobs: vec![],
-    })]
-    #[case::cleared_clears(Row {
-        artwork: holding(Some("a.flac"), 1),
-        message: ArtworkMessage::TrackShown(None),
-        next: holding(None, 2),
-        cmd: Ok(Cmd::effect(MacosEffect::ClearArtwork)),
         jobs: vec![],
     })]
     #[case::a_track_without_artwork_shows_nothing(Row {

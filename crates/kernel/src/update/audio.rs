@@ -87,7 +87,29 @@ pub(crate) fn update(
             playback_parts.transport.buffering_revision = None;
             Ok(Cmd::none())
         }
+        AudioEvent::PreloadCancelled => preload_cancelled(playback_parts),
+        AudioEvent::PreloadKept => playback_parts
+            .player
+            .preloaded()
+            .map(|_track| Cmd::none())
+            .ok_or(Unhandled),
     }
+}
+
+fn preload_cancelled(playback_parts: &mut PlaybackParts<'_>) -> Result<Cmd, Unhandled> {
+    let Player::Playing {
+        track,
+        playhead: _playhead,
+        preloaded: preloaded @ Some(_),
+    } = &mut *playback_parts.player
+    else {
+        return Err(Unhandled);
+    };
+    *preloaded = None;
+    playback_parts
+        .downloads
+        .retain(|download| track.holds(&download.media_fetch));
+    Ok(Cmd::none())
 }
 
 fn fell_back(

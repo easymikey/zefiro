@@ -134,8 +134,8 @@ impl Live {
     }
 
     pub(crate) fn gain(&self) -> Gain {
-        let gain = self.phase.current().and_then(|current| current.decibels);
-        replay_gain_factor(self.settings.replay_gain, gain)
+        let decibels = self.phase.current().and_then(|current| current.decibels);
+        replay_gain_factor(self.settings.replay_gain, decibels)
     }
 }
 

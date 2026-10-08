@@ -1,14 +1,13 @@
-use std::{num::NonZeroU32, time::Duration};
+use std::time::Duration;
 
 use kernel::domain::{
     bounded::Bounded,
-    geometry::Cells,
     playhead::Playhead,
     speed::Speed,
     time::Moment,
 };
 use rstest::rstest;
-use widgets::repaint::{ProgressScale, next_clock_second, next_progress_step};
+use widgets::repaint::next_clock_second;
 
 fn playhead(offset_secs: f64, speed_factor: f32) -> Playhead {
     Playhead::anchored(
@@ -16,52 +15,6 @@ fn playhead(offset_secs: f64, speed_factor: f32) -> Playhead {
         Moment::default(),
         Speed::clamped(speed_factor),
     )
-}
-
-fn hundred_steps() -> ProgressScale {
-    ProgressScale {
-        steps: NonZeroU32::new(100).unwrap_or(NonZeroU32::MIN),
-        duration: Duration::from_secs(100),
-    }
-}
-
-#[rstest]
-#[case::unity_speed(10.2, 1.0, Some(801))]
-#[case::double_speed(10.2, 2.0, Some(401))]
-#[case::quarter_speed(10.2, 0.25, Some(3201))]
-#[case::exactly_on_a_boundary(10.0, 1.0, Some(1001))]
-#[case::last_step(99.5, 1.0, Some(501))]
-#[case::past_the_end(100.0, 1.0, None)]
-fn next_progress_step_lands_on_the_next_boundary(
-    #[case] offset_secs: f64,
-    #[case] speed_factor: f32,
-    #[case] expected_millis: Option<u64>,
-) {
-    let playhead = playhead(offset_secs, speed_factor);
-    let now = Moment::default();
-    let result = next_progress_step(hundred_steps(), playhead, now);
-    let millis = result.map(|moment| {
-        u64::try_from(moment.since_epoch().as_millis()).unwrap_or(u64::MAX)
-    });
-    assert_eq!(millis, expected_millis);
-}
-
-#[rstest]
-#[case::quarter_speed(0.25)]
-#[case::half_speed(0.5)]
-#[case::unity_speed(1.0)]
-#[case::one_and_a_half_speed(1.5)]
-#[case::double_speed(2.0)]
-#[case::quadruple_speed(4.0)]
-fn the_returned_moment_really_crosses(#[case] speed_factor: f32) {
-    let scale = hundred_steps();
-    let playhead = playhead(7.37, speed_factor);
-    let now = Moment::default();
-    let step_before = playhead.position_at(now).as_secs();
-    let result = next_progress_step(scale, playhead, now).unwrap_or(now);
-    assert!(result > now, "expected a moment strictly after now");
-    let step_after = playhead.position_at(result).as_secs();
-    assert_eq!(step_after, step_before + 1);
 }
 
 #[rstest]
@@ -79,17 +32,4 @@ fn the_next_clock_second_lands_on_the_following_whole_second_at_any_speed(
     let result = next_clock_second(playhead, now);
     let millis = u64::try_from(result.since_epoch().as_millis()).unwrap_or(u64::MAX);
     assert_eq!(millis, expected_millis);
-}
-
-#[rstest]
-#[case::zero_width(0, 100, None)]
-#[case::zero_length(40, 0, None)]
-#[case::forty_columns(40, 100, Some(80))]
-fn a_text_bar_has_two_steps_per_column_unless_empty(
-    #[case] width: u16,
-    #[case] length_secs: u64,
-    #[case] expected_steps: Option<u32>,
-) {
-    let scale = ProgressScale::text_bar(Cells(width), Duration::from_secs(length_secs));
-    assert_eq!(scale.map(|scale| scale.steps.get()), expected_steps);
 }

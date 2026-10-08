@@ -399,6 +399,26 @@ mod tests {
     }
 
     #[test]
+    fn horizontal_preset_output_is_left_right_symmetric() {
+        let loud = [1.0; 16];
+        let mut stepped_field = MilkdropField::new(10, 8);
+        stepped_field.advance(&input(&loud, Playback::Playing, (1, 9)));
+
+        for row in 0..stepped_field.height {
+            for column in 0..stepped_field.width {
+                assert_eq!(
+                    stepped_field.cell(CellPosition { column, row }),
+                    stepped_field.cell(CellPosition {
+                        column: stepped_field.width - 1 - column,
+                        row
+                    }),
+                    "not left-right symmetric at ({column}, {row})"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn loud_bands_leave_the_top_and_bottom_rows_below_the_bright_band() {
         let loud = [1.0; 16];
         for seed in 0..3 {

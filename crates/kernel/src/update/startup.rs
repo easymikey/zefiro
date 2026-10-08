@@ -162,12 +162,15 @@ mod tests {
     use crate::{
         cmd::{Effect, LibraryCmd, RemoteCmd},
         domain::{
+            appearance::AppearanceSettings,
             bounded::Bounded,
             catalog::Catalog,
+            config::{ConfigError, ConfigName, Diagnostic},
             crossfade::Crossfade,
             device::{DeviceName, OutputDevice},
             driver::DriverName,
             index::ViewIndex,
+            io_error::IoError,
             keymap::{Action, KeyOverride, KeymapOverrides},
             model::Model,
             percent::Percent,
@@ -186,10 +189,12 @@ mod tests {
             sleep_presets::SleepPresets,
             startup::{Shuffle, Startup},
             theme::{ThemeChoice, ThemeName},
+            toast::ToastLevel,
             track::{Track, TrackSource},
         },
         update::{
             drained,
+            machine::Unhandled,
             startup::{startup, startup_cmd, startup_model},
         },
     };
@@ -283,8 +288,7 @@ mod tests {
                 ),
                 sleep_presets: SleepPresets::from_minutes(&[15, 30]).unwrap(),
             },
-            appearance_settings: crate::domain::appearance::AppearanceSettings::default(
-            ),
+            appearance_settings: AppearanceSettings::default(),
             theme_choice: ThemeChoice::Named(ThemeName::from_static("dark")),
             volume: Percent::clamped(42),
             keymap_overrides: KeymapOverrides::default(),
@@ -300,27 +304,19 @@ mod tests {
     #[test]
     fn startup_errors_raise_one_toast_with_the_first_error() {
         let mut model = Model::default();
-        let broken_error = crate::domain::config::ConfigError::from(
-            crate::domain::config::Diagnostic::from_error(&std::io::Error::other(
-                "broken",
-            )),
-        );
-        let unreadable_error = crate::domain::config::ConfigError::Read {
-            name: crate::domain::config::ConfigName::Appearance,
-            error: crate::domain::io_error::IoError::Other,
+        let broken_error =
+            ConfigError::from(Diagnostic::from_error(&std::io::Error::other("broken")));
+        let unreadable_error = ConfigError::Read {
+            name: ConfigName::Appearance,
+            error: IoError::Other,
         };
         let startup = Startup {
             errors: vec![
                 (
-                    crate::domain::config::ConfigName::Theme(ThemeName::from_static(
-                        "ghost",
-                    )),
+                    ConfigName::Theme(ThemeName::from_static("ghost")),
                     broken_error.clone(),
                 ),
-                (
-                    crate::domain::config::ConfigName::Appearance,
-                    unreadable_error.clone(),
-                ),
+                (ConfigName::Appearance, unreadable_error.clone()),
             ],
             ..stock_startup()
         };
@@ -333,28 +329,20 @@ mod tests {
             .iter()
             .map(|toast| (toast.level, toast.text.clone()))
             .collect();
+        assert_eq!(texts, [(ToastLevel::Error, Some(broken_error.to_string()))]);
         assert_eq!(
-            texts,
-            [(
-                crate::domain::toast::ToastLevel::Error,
-                Some(broken_error.to_string())
-            )]
+            model
+                .workspace
+                .config_errors
+                .replace(ConfigName::Appearance, unreadable_error),
+            Err(Unhandled)
         );
         assert_eq!(
             model.workspace.config_errors.replace(
-                crate::domain::config::ConfigName::Appearance,
-                unreadable_error
-            ),
-            Err(crate::update::machine::Unhandled)
-        );
-        assert_eq!(
-            model.workspace.config_errors.replace(
-                crate::domain::config::ConfigName::Theme(ThemeName::from_static(
-                    "ghost"
-                )),
+                ConfigName::Theme(ThemeName::from_static("ghost")),
                 broken_error
             ),
-            Err(crate::update::machine::Unhandled)
+            Err(Unhandled)
         );
     }
 

@@ -208,14 +208,13 @@ fn control_reads_the_appearance_row_of_its_field() {
     let count = OptionCount::new(4).unwrap();
 
     assert_eq!(
-        SettingRow::Appearance(AppearanceField::CoverMode).control(),
-        Some(AppearanceControl::Cycle(count))
+        AppearanceField::CoverMode.row().control,
+        AppearanceControl::Cycle(count)
     );
     assert_eq!(
-        SettingRow::Appearance(AppearanceField::Animations).control(),
-        Some(AppearanceControl::Toggle)
+        AppearanceField::Animations.row().control,
+        AppearanceControl::Toggle
     );
-    assert_eq!(SettingRow::Theme.control(), None);
     assert!(SettingRow::Appearance(AppearanceField::Animations).activates());
     assert!(SettingRow::ReplayGain.activates());
     assert!(!SettingRow::Crossfade.activates());

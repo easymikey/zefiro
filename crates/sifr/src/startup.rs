@@ -4,34 +4,22 @@ use clap::Parser;
 use config::{
     config_file::TomlSettings,
     driver::paths::{ConfigPaths, SeenTexts},
-    embedded_theme::{STOCK_THEME, theme_name},
+    embedded_theme::{STOCK_THEME, STOCK_THEME_TEXT, theme_name},
     file_name::{APPEARANCE_FILE_NAME, CONFIG_FILE_NAME},
     load::{Loaded, load},
-    theme_file::{DEFAULT_SCANNING_LABEL, TomlColors, TomlTheme},
+    theme_file::{TomlTheme, parse_theme},
 };
 use kernel::domain::{
-    appearance::Rgb,
     bounded::Bounded,
     percent::Percent,
     playlist::{PlaylistFileName, PlaylistSource},
     server::Account,
     startup::{Shuffle, Startup},
-    theme::{ThemeChoice, ThemeName},
+    theme::ThemeChoice,
 };
 use library::dirs::LibraryDirs;
 
 use crate::error::Error;
-
-const FALLBACK_COLORS: TomlColors = TomlColors {
-    background: Rgb([0, 0, 0]),
-    muted_foreground: Rgb([0xff, 0xff, 0xff]),
-    foreground: Rgb([0xff, 0xff, 0xff]),
-    accent: Rgb([0xff, 0xff, 0xff]),
-    green: Rgb([0, 0xff, 0]),
-    yellow: Rgb([0xff, 0xff, 0]),
-    red: Rgb([0xff, 0, 0]),
-    window_background: None,
-};
 
 pub(crate) struct Launch {
     pub(crate) startup: Startup,
@@ -87,22 +75,8 @@ fn config_paths(config_dir: &Path, theme_choice: Option<&ThemeChoice>) -> Config
     }
 }
 
-pub(crate) fn fallback_theme() -> TomlTheme {
-    TomlTheme {
-        name: ThemeName::from_static("fallback"),
-        colors: FALLBACK_COLORS,
-        scanning_label: DEFAULT_SCANNING_LABEL.to_owned(),
-    }
-}
-
 fn stock_theme() -> Result<TomlTheme, Error> {
-    config::embedded_theme::embedded_theme(STOCK_THEME).map_or_else(
-        || Ok(fallback_theme()),
-        |text| {
-            config::theme_file::parse_theme(text, STOCK_THEME)
-                .map_err(Error::StockTheme)
-        },
-    )
+    parse_theme(STOCK_THEME_TEXT, STOCK_THEME).map_err(Error::StockTheme)
 }
 
 fn resolved_music_dir(
@@ -221,7 +195,7 @@ mod tests {
         percent::Percent,
         playlist::{PlaylistFileName, PlaylistSource},
         startup::{Shuffle, Startup},
-        theme::ThemeName,
+        theme::{ThemeChoice, ThemeName},
     };
     use library::dirs::LibraryDirs;
     use rstest::rstest;
@@ -285,14 +259,20 @@ mod tests {
             expected.to_appearance_settings()
         );
         assert_eq!(launched.appearance, expected.to_appearance());
+        assert!(
+            launched
+                .startup
+                .errors
+                .iter()
+                .all(|(_, error)| matches!(error, ConfigError::Parse(_))),
+            "{:?}",
+            launched.startup.errors
+        );
         let names: Vec<_> = launched
             .startup
             .errors
             .iter()
-            .map(|(name, error)| {
-                assert!(matches!(error, ConfigError::Parse(_)), "{error:?}");
-                name.clone()
-            })
+            .map(|(name, _)| name.clone())
             .collect();
         assert_eq!(names, failed_config_names);
         assert!(!launched.theme.name.as_str().is_empty());
@@ -330,6 +310,25 @@ mod tests {
                 .as_ref()
                 .map(ThemeName::as_str),
             Some("ghost")
+        );
+    }
+
+    #[rstest]
+    #[case::flag(Some("noir"), "noir")]
+    #[case::no_flag(None, "ghost")]
+    fn a_cli_theme_wins_over_the_config_theme(
+        #[case] flag: Option<&str>,
+        #[case] expected: &'static str,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("config.toml"), "theme = \"ghost\"\n")
+            .unwrap();
+
+        let launched = launched(directory.path(), flag);
+
+        assert_eq!(
+            launched.startup.theme_choice,
+            ThemeChoice::Named(ThemeName::from_static(expected))
         );
     }
 

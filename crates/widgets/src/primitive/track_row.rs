@@ -55,6 +55,14 @@ pub(crate) struct TrackRow<'a> {
 }
 
 #[must_use]
+pub(crate) fn row_style(selected: Selected, colors: &Colors<Color>) -> Style {
+    Style::default().fg(match selected {
+        Selected::Yes => colors.selection_foreground,
+        Selected::No => colors.foreground,
+    })
+}
+
+#[must_use]
 pub(crate) fn track_row_line<'a>(
     track_row: &TrackRow<'a>,
     colors: &Colors<Color>,
@@ -65,27 +73,25 @@ pub(crate) fn track_row_line<'a>(
     let playing = playing_marker(track_row.playing);
     let markers_width = usize::from(MARKERS_WIDTH);
     let body_width = track_row.row_width.count().saturating_sub(markers_width);
-    let chip = track_row
-        .queued_number
-        .into_iter()
-        .flat_map(QueueNumber::chip);
+    let queued_number = match track_row.playing {
+        Playing::Yes => None,
+        Playing::No => track_row.queued_number,
+    };
+    let chip = queued_number.into_iter().flat_map(QueueNumber::chip);
     let chip_width: usize = chip.clone().map(UnicodeWidthStr::width).sum();
-    let title_width = match track_row.queued_number {
+    let title_width = match queued_number {
         Some(_) => body_width
             .saturating_sub(chip_width)
             .saturating_sub(CHIP_GAP),
         None => body_width,
     };
     let title = truncate(track_row.title, title_width);
-    let gap = if track_row.queued_number.is_none() || title.is_empty() {
+    let gap = if queued_number.is_none() || title.is_empty() {
         0
     } else {
         CHIP_GAP
     };
-    let row_style = match track_row.selected {
-        Selected::Yes => Style::default().fg(colors.selection_foreground),
-        Selected::No => Style::default().fg(colors.foreground),
-    };
+    let row_style = row_style(track_row.selected, colors);
     let fixed = [
         text(fav).fg(colors.favorite),
         text(blanks(column_padding(fav, favorite_width))).style(row_style),

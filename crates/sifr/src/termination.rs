@@ -29,23 +29,9 @@ const TERMINATING_SIGNALS: [std::ffi::c_int; 3] = [
     signal_hook::consts::SIGINT,
 ];
 
-#[cfg(unix)]
-pub(crate) enum ThreadStop {
-    Signals(signal_hook::iterator::Handle),
-}
-
-#[cfg(unix)]
-impl ThreadStop {
-    fn raise(&self) {
-        match self {
-            Self::Signals(handle) => handle.close(),
-        }
-    }
-}
-
 pub(crate) struct JoinOnDrop {
     #[cfg(unix)]
-    pub(crate) stop: ThreadStop,
+    pub(crate) signals: signal_hook::iterator::Handle,
     #[cfg(unix)]
     pub(crate) thread: Option<JoinHandle<()>>,
 }
@@ -53,7 +39,7 @@ pub(crate) struct JoinOnDrop {
 #[cfg(unix)]
 impl Drop for JoinOnDrop {
     fn drop(&mut self) {
-        self.stop.raise();
+        self.signals.close();
         if let Some(Err(_panic)) = self.thread.take().map(JoinHandle::join) {
             WORKER_PANICKED.store(true, Ordering::Release);
         }
@@ -62,7 +48,16 @@ impl Drop for JoinOnDrop {
 
 #[cfg(unix)]
 pub(crate) fn install(sender: Sender<ShellInput>) -> Result<JoinOnDrop, Error> {
-    install_with(sender, terminating_signals()?)
+    let signals = terminating_signals()?;
+    TERMINATE_SENDER
+        .set(sender)
+        .map_err(|_refused| Error::SignalHandlerInstalled)?;
+    let handle = signals.handle();
+    let thread = thread::spawn(move || forward(signals));
+    Ok(JoinOnDrop {
+        signals: handle,
+        thread: Some(thread),
+    })
 }
 
 #[cfg(not(unix))]
@@ -89,24 +84,8 @@ fn terminating_signals() -> Result<signal_hook::iterator::Signals, Error> {
 }
 
 #[cfg(unix)]
-fn install_with(
-    sender: Sender<ShellInput>,
-    mut signals: signal_hook::iterator::Signals,
-) -> Result<JoinOnDrop, Error> {
-    TERMINATE_SENDER
-        .set(sender)
-        .map_err(|_refused| Error::SignalHandlerInstalled)?;
-    let handle = signals.handle();
-    let thread = thread::spawn(move || forward(signals.forever()));
-    Ok(JoinOnDrop {
-        stop: ThreadStop::Signals(handle),
-        thread: Some(thread),
-    })
-}
-
-#[cfg(unix)]
-fn forward(signals: impl IntoIterator<Item = std::ffi::c_int>) {
-    if signals.into_iter().next().is_some() {
+fn forward(mut signals: signal_hook::iterator::Signals) {
+    if signals.forever().next().is_some() {
         terminate_if_listening();
     }
 }
@@ -159,7 +138,7 @@ mod tests {
         shell::shell_input::ShellInput,
         termination::{
             forward,
-            install_with,
+            install,
             remember_input_error,
             remember_worker_panic,
             take_input_error,
@@ -167,11 +146,6 @@ mod tests {
             terminate_if_listening,
         },
     };
-
-    fn no_signals() -> signal_hook::iterator::Signals {
-        signal_hook::iterator::Signals::new(std::iter::empty::<std::ffi::c_int>())
-            .unwrap()
-    }
 
     static TERMINATE_SENDER_IN_USE: Mutex<()> = Mutex::new(());
 
@@ -210,8 +184,12 @@ mod tests {
         let (first, first_receiver) = bounded(1);
         let (second, _second_receiver) = bounded(1);
 
-        let watch = install_with(first, no_signals()).unwrap();
-        forward([signal_hook::consts::SIGINT]);
+        let watch = install(first).unwrap();
+        let signals =
+            signal_hook::iterator::Signals::new([signal_hook::consts::SIGUSR1])
+                .unwrap();
+        signal_hook::low_level::raise(signal_hook::consts::SIGUSR1).unwrap();
+        forward(signals);
 
         assert!(matches!(
             first_receiver.try_recv(),
@@ -223,7 +201,7 @@ mod tests {
         assert!(matches!(first_receiver.recv(), Ok(ShellInput::Terminate)));
         blocked.join().unwrap();
         assert!(matches!(
-            install_with(second, no_signals()),
+            install(second),
             Err(Error::SignalHandlerInstalled)
         ));
         drop(watch);

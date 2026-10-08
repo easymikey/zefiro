@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-pub(crate) const FETCH_RETRY: Duration = Duration::from_secs(5);
+const FETCH_RETRY: Duration = Duration::from_secs(5);
 
 pub(crate) fn fetched(
     server_parts: ServerParts<'_>,
@@ -98,10 +98,9 @@ fn progress(download: &mut Download, player: &Player, fetched: Fetched) -> Cmd {
 
 pub(crate) fn forget(
     downloads: &mut Vec<Download>,
-    player: &mut Player,
+    player: &Player,
     server_name: &ServerName,
 ) -> Cmd {
-    downloads.retain(|download| download.media_fetch.server_name != *server_name);
     let served = |track: &Arc<Track>| {
         matches!(
             track.source(),
@@ -111,20 +110,18 @@ pub(crate) fn forget(
             } if playing == server_name
         )
     };
-    if player.current().is_some_and(served) {
+    let stops = player.current().is_some_and(served);
+    let cancelled = player.preloaded().filter(|track| !stops && served(track));
+    downloads.retain(|download| {
+        download.media_fetch.server_name != *server_name
+            || cancelled.is_some_and(|track| track.holds(&download.media_fetch))
+    });
+    if stops {
         return Cmd::message(Message::Playback(PlaybackRequest::Stop));
     }
-    if let Player::Playing {
-        preloaded,
-        track: _track,
-        playhead: _playhead,
-    } = player
-        && preloaded.as_ref().is_some_and(served)
-    {
-        *preloaded = None;
-        return Cmd::effect(Effect::Audio(AudioCmd::CancelPreload));
-    }
-    Cmd::none()
+    cancelled.map_or_else(Cmd::none, |_track| {
+        Cmd::effect(Effect::Audio(AudioCmd::CancelPreload))
+    })
 }
 
 #[cfg(test)]

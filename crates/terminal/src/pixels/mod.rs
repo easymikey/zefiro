@@ -15,6 +15,7 @@ use widgets::{
     },
     scene::Scene,
     screen::frame_layout::FrameLayout,
+    toast::Placement,
 };
 
 use crate::pixels::cover::Cover;
@@ -94,7 +95,7 @@ impl CoverPainter {
 
 fn is_hidden_by_overlay(rect: Rect, layout: &FrameLayout<'_>) -> bool {
     let overlay = layout.overlay_areas.map(OverlayAreas::outer);
-    let toast = layout.toast;
+    let toast = layout.toast_placement.as_ref().map(Placement::area);
     [overlay, toast]
         .into_iter()
         .flatten()

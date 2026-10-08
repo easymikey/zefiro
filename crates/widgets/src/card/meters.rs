@@ -1,7 +1,7 @@
 use kernel::domain::{appearance::ProgressTime, geometry::Cells};
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Rect},
+    layout::Alignment,
     style::Color,
     text::{Line, Span},
     widgets::{Paragraph, Widget},
@@ -68,31 +68,22 @@ fn paint_time_row(
         },
     );
     let elapsed_span: Span<'_> =
-        truncated_span(elapsed_total, fit.elapsed_budget, dim_color);
-    let time_line = Line::from_iter(
-        std::iter::once(elapsed_span).chain(
-            speed_spans
-                .into_iter()
-                .filter(|_| left_width <= fit.elapsed_budget),
-        ),
-    );
+        span::text(truncate_owned(elapsed_total, fit.elapsed_budget))
+            .fg(dim_color)
+            .dim()
+            .into();
+    let speed_spans = if left_width <= fit.elapsed_budget {
+        speed_spans
+    } else {
+        Vec::new()
+    };
+    let time_line = Line::from_iter(std::iter::once(elapsed_span).chain(speed_spans));
     Paragraph::new(time_line).render(time_row, buffer);
     if let Some(line) = fit.line {
-        paint_format_chips_row(buffer, time_row, line);
+        Paragraph::new(line)
+            .alignment(Alignment::Right)
+            .render(time_row, buffer);
     }
-}
-
-fn truncated_span(text: String, budget: usize, color: Color) -> Span<'static> {
-    span::text(truncate_owned(text, budget))
-        .fg(color)
-        .dim()
-        .into()
-}
-
-fn paint_format_chips_row(buffer: &mut Buffer, time_row: Rect, line: Line<'static>) {
-    Paragraph::new(line)
-        .alignment(Alignment::Right)
-        .render(time_row, buffer);
 }
 
 fn paint_progress_row(

@@ -32,17 +32,12 @@ pub(crate) fn spawn_library(
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc, time::Duration};
+    use std::{path::Path, sync::Arc};
 
     use crossbeam_channel::{Receiver, unbounded};
     use kernel::{
         cmd::{CoverJob, LibraryCmd, ScanMode},
-        domain::{
-            driver::DriverName,
-            revision::Revision,
-            startup::Startup,
-            track::Track,
-        },
+        domain::{driver::DriverName, revision::Revision, track::Track},
         message::{LibraryEvent, Message},
     };
     use library::cover::{CoverDecoded, CoverLookup};
@@ -51,13 +46,10 @@ mod tests {
         driver_thread::DriverThread,
         latest::LatestReceivers,
         spawn::{
-            SpawnSetup,
             library_thread::spawn_library,
-            tests::{RECV_TIMEOUT, stub_paths},
+            tests::{RECV_TIMEOUT, SETTLE_TIMEOUT, drain, spawned_with, stub_paths},
         },
     };
-
-    const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
 
     struct LibraryRun {
         thread: DriverThread<LibraryCmd>,
@@ -68,20 +60,9 @@ mod tests {
 
     impl LibraryRun {
         fn start(dir: &Path) -> Self {
-            let paths = stub_paths(dir);
             let (inbox, inbox_receiver) = unbounded();
-            let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-            let (latest_senders, latest_receivers, doorbell) =
-                crate::latest::latest_channels();
-            let thread = spawn_library(&SpawnSetup {
-                audio_settings: &model.settings.audio_settings,
-                paths: &paths,
-                inbox: &inbox,
-                latest_senders: &latest_senders,
-                #[cfg(target_os = "macos")]
-                macos_channel: &crate::spawn_setup::MacosChannel::new(),
-            })
-            .unwrap();
+            let (thread, latest_receivers, doorbell) =
+                spawned_with(spawn_library, &stub_paths(dir), &inbox);
             Self {
                 thread,
                 inbox_receiver,
@@ -122,14 +103,6 @@ mod tests {
             self.thread.handle.join().unwrap();
             self.inbox_receiver
         }
-    }
-
-    fn drain<T>(receiver: &Receiver<T>) -> Vec<T> {
-        let mut collected = vec![receiver.recv_timeout(RECV_TIMEOUT).unwrap()];
-        collected.extend(std::iter::from_fn(|| {
-            receiver.recv_timeout(SETTLE_TIMEOUT).ok()
-        }));
-        collected
     }
 
     fn listed_tracks(message: Message) -> Option<Vec<Arc<Track>>> {

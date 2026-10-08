@@ -26,7 +26,9 @@ use crate::{
     },
     message::{BrowseRequest, Message, QueueRequest},
     update::{
+        audio,
         machine::{Unhandled, replace},
+        overlay::search,
         player::{self, events::PlaybackParts},
         server,
     },
@@ -189,7 +191,7 @@ fn play_selected(
     let track = album_playlist.current().cloned().ok_or(Unhandled)?;
     let cmd = match player::start(&mut parts.playback_parts, track, now) {
         Ok(cmd) => cmd,
-        Err(refusal) => return Ok(refusal),
+        Err(offline_toast) => return Ok(offline_toast),
     };
     relist(
         album_playlist.tracks,
@@ -271,7 +273,6 @@ fn playlist(
     request: BrowseRequest,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let len = parts.playback_parts.playlist.tracks.len();
     let workspace = &mut *parts.playback_parts.workspace;
     match request {
         BrowseRequest::CursorBy { .. }
@@ -303,11 +304,10 @@ fn playlist(
             );
             Ok(Cmd::none())
         }
-        BrowseRequest::ToggleFavorite if len == 0 => Err(Unhandled),
         BrowseRequest::ToggleFavorite => toggle_favorite(&mut parts),
         BrowseRequest::PlaySelected => {
             let selected = workspace.browse.selected();
-            crate::update::audio::jump_to(&mut parts.playback_parts, selected, now)
+            audio::jump_to(&mut parts.playback_parts, selected, now)
         }
         BrowseRequest::Rescan => full_scan(&mut parts),
         BrowseRequest::SavePlaylist(name) => {
@@ -543,6 +543,6 @@ pub(crate) fn relist(
     playlist.play_order = mem::take(&mut playlist.play_order).without_order();
     workspace.browse.cursor = workspace.browse.cursor.resize(playlist.tracks.len());
     if let Some(Overlay::Search(search)) = workspace.overlay.as_mut() {
-        crate::update::overlay::search::rerank(search, &playlist.tracks);
+        search::rerank(search, &playlist.tracks);
     }
 }

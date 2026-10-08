@@ -37,6 +37,7 @@ pub struct RowWindow {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlaylistAreas {
     pub pane: Rect,
+    pub banner: Rect,
     pub scroll_areas: ScrollAreas,
     pub window: RowWindow,
     pub selected_area: Option<Rect>,
@@ -138,8 +139,7 @@ fn build_line<'a>(
         Selected::No
     };
     let favorite = view.favorites.favorite(track.source());
-    let playing_index = view.playing_index;
-    let playing = if playing_index == Some(index) {
+    let playing = if view.playing_index == Some(index) {
         Playing::Yes
     } else {
         Playing::No
@@ -149,11 +149,7 @@ fn build_line<'a>(
         selected,
         favorite,
         playing,
-        queued_number: playlist_row_parts
-            .positions
-            .get(track.source())
-            .copied()
-            .filter(|_| playing_index != Some(index)),
+        queued_number: playlist_row_parts.positions.get(track.source()).copied(),
         row_width: playlist_row_parts.row_width,
     };
     track_row::track_row_line(&track_row, &playlist_row_parts.colors)

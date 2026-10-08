@@ -116,43 +116,40 @@ fn candidates(
     keymap_overrides: &KeymapOverrides,
     default_bindings: &[DefaultBinding],
 ) -> (Vec<Candidate>, Vec<KeymapError>) {
-    let (candidates, errors): (Vec<Candidate>, Vec<Option<KeymapError>>) =
-        Action::iter()
-            .flat_map(|action| {
-                contexts(default_bindings, action)
-                    .into_iter()
-                    .enumerate()
-                    .map(move |(index, key_context)| {
-                        let default_chords: Vec<Chord> = default_bindings
-                            .iter()
-                            .filter(|default| {
-                                default.action == action
-                                    && default.key_context == key_context
-                            })
-                            .map(|default| default.chord)
-                            .collect();
-                        let (configured, error) = match keymap_overrides
-                            .get(action)
-                            .filter(|_| index == 0)
-                            .map(|key_override| parsed(key_override, key_context))
-                            .transpose()
-                        {
-                            Ok(configured) => (configured, None),
-                            Err(error) => (None, Some(error)),
-                        };
-                        (
-                            Candidate {
-                                action,
-                                key_context,
-                                default_chords,
-                                binding: configured,
-                            },
-                            error,
-                        )
-                    })
-            })
-            .unzip();
-    (candidates, errors.into_iter().flatten().collect())
+    let mut candidates = Vec::new();
+    let mut errors = Vec::new();
+    for action in Action::iter() {
+        let contexts = contexts(default_bindings, action);
+        let home = contexts.first();
+        for &key_context in &contexts {
+            let default_chords: Vec<Chord> = default_bindings
+                .iter()
+                .filter(|default| {
+                    default.action == action && default.key_context == key_context
+                })
+                .map(|default| default.chord)
+                .collect();
+            let configured = match keymap_overrides
+                .get(action)
+                .filter(|_| Some(&key_context) == home)
+                .map(|key_override| parsed(key_override, key_context))
+                .transpose()
+            {
+                Ok(configured) => configured,
+                Err(error) => {
+                    errors.push(error);
+                    None
+                }
+            };
+            candidates.push(Candidate {
+                action,
+                key_context,
+                default_chords,
+                binding: configured,
+            });
+        }
+    }
+    (candidates, errors)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

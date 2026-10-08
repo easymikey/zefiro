@@ -17,9 +17,9 @@ pub(crate) mod time_text;
 pub(crate) mod track_row;
 pub(crate) mod truncate;
 
-struct CharCount(usize);
+struct CellCount(usize);
 
-impl Write for CharCount {
+impl Write for CellCount {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         self.0 += text.width();
         Ok(())
@@ -28,6 +28,6 @@ impl Write for CharCount {
 
 #[must_use]
 pub(crate) fn display_width(text: &impl Display) -> usize {
-    let mut count = CharCount(0);
+    let mut count = CellCount(0);
     write!(count, "{text}").map_or(0, |()| count.0)
 }

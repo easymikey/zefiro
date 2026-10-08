@@ -1,6 +1,6 @@
 use std::{f32::consts::FRAC_PI_2, time::Duration};
 
-use kernel::domain::settings::ReplayGain;
+use kernel::domain::{settings::ReplayGain, track::Decibels};
 
 use crate::gain::Gain;
 
@@ -17,7 +17,7 @@ pub(crate) fn equal_power_out(fraction: f32) -> f32 {
 #[must_use]
 pub(crate) fn replay_gain_factor(
     replay_gain: ReplayGain,
-    decibels: Option<kernel::domain::track::Decibels>,
+    decibels: Option<Decibels>,
 ) -> Gain {
     if matches!(replay_gain, ReplayGain::On) {
         decibels.map_or(Gain::UNITY, Gain::from_decibels)
@@ -38,7 +38,7 @@ pub(crate) fn fade_start(
 mod tests {
     use std::time::Duration;
 
-    use kernel::domain::settings::ReplayGain;
+    use kernel::domain::{settings::ReplayGain, track::Decibels};
     use proptest::prelude::{prop_assert, proptest};
     use rstest::rstest;
 
@@ -51,7 +51,7 @@ mod tests {
 
     struct ReplayGainRow {
         replay_gain: ReplayGain,
-        decibels: Option<kernel::domain::track::Decibels>,
+        decibels: Option<Decibels>,
         expected: f32,
     }
 
@@ -63,12 +63,12 @@ mod tests {
     })]
     #[case::replay_gain_disabled_ignores_the_gain(ReplayGainRow {
         replay_gain: ReplayGain::Off,
-        decibels: Some(kernel::domain::track::Decibels(-6.0)),
+        decibels: Some(Decibels(-6.0)),
         expected: 1.0,
     })]
     #[case::replay_gain_applies_decibels_as_a_linear_factor(ReplayGainRow {
         replay_gain: ReplayGain::On,
-        decibels: Some(kernel::domain::track::Decibels(-6.0)),
+        decibels: Some(Decibels(-6.0)),
         expected: 0.501_187,
     })]
     fn replay_gain_factor_turns_decibels_into_a_linear_factor(

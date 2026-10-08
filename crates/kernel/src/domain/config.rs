@@ -11,12 +11,11 @@ pub enum ConfigName {
 
 impl std::fmt::Display for ConfigName {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let name = match self {
-            ConfigName::Appearance => "the appearance file",
-            ConfigName::Config => "the config file",
-            ConfigName::Theme(name) => return write!(formatter, "the theme {name}"),
-        };
-        formatter.write_str(name)
+        match self {
+            ConfigName::Appearance => formatter.write_str("the appearance file"),
+            ConfigName::Config => formatter.write_str("the config file"),
+            ConfigName::Theme(name) => write!(formatter, "the theme {name}"),
+        }
     }
 }
 

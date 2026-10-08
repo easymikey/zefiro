@@ -13,7 +13,7 @@ pub(crate) fn spawn_remote(
     setup: &SpawnSetup<'_>,
 ) -> Result<DriverThread<RemoteCmd>, SpawnError> {
     let media_dir = setup.paths.library_dirs.media_dir();
-    let reports_path = media_dir.with_file_name("reports.json");
+    let reports_path = setup.paths.library_dirs.reports_path();
     let run_job = |job: RemoteJob| job.run(&remote::http::agent());
     DriverLoop::<RemoteDriver, RemoteJob> {
         row: registry::row(DriverName::Remote),

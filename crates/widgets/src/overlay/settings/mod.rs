@@ -17,7 +17,6 @@ use crate::{
         modal::placement::{
             ModalContainer,
             ModalPlacement,
-            OverlayAreas,
             column_width,
             leading_cells,
         },
@@ -101,14 +100,11 @@ impl SettingsTable {
 
 impl<'a> SettingsWidget<'a> {
     #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::List(self.placement().areas(screen))
+    pub(crate) fn areas(&self, screen: Rect) -> ScrollAreas {
+        self.placement().areas(screen)
     }
 
-    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        let OverlayAreas::List(areas) = areas else {
-            return;
-        };
+    pub(crate) fn paint(&self, areas: ScrollAreas, canvas: Canvas<'_>) {
         let Canvas { area, buffer } = canvas;
         self.placement().paint(
             areas,
@@ -232,10 +228,7 @@ pub(crate) mod tests {
     use ratatui::layout::Rect;
 
     use crate::{
-        overlay::{
-            modal::placement::OverlayAreas,
-            settings::{SettingsTable, SettingsWidget, view::SettingsView},
-        },
+        overlay::settings::{SettingsTable, SettingsWidget, view::SettingsView},
         primitive::canvas::tests::find_text,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
@@ -253,13 +246,6 @@ pub(crate) mod tests {
             output_device_name: None,
             output_devices: &[],
             appearance_settings: AppearanceSettings::default(),
-        }
-    }
-
-    fn outer_rect(widget: &SettingsWidget<'_>, screen: Rect) -> Option<Rect> {
-        match widget.areas(screen) {
-            OverlayAreas::List(areas) => Some(areas.outer),
-            OverlayAreas::Dialog(_) | OverlayAreas::Banner(_) => None,
         }
     }
 
@@ -363,10 +349,10 @@ pub(crate) mod tests {
         let gruvbox_widget =
             SettingsWidget::new(with_gruvbox, &gruvbox_table, active_theme);
 
-        let outer_noir = outer_rect(&noir_widget, screen);
-        let outer_gruvbox = outer_rect(&gruvbox_widget, screen);
-        assert!(outer_noir.is_some());
-        assert_eq!(outer_noir, outer_gruvbox);
+        assert_eq!(
+            noir_widget.areas(screen).outer,
+            gruvbox_widget.areas(screen).outer
+        );
     }
 
     #[test]

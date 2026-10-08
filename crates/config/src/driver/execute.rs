@@ -1,4 +1,4 @@
-use std::{io, path::Path};
+use std::{ffi::OsStr, fs::ReadDir, io, path::Path};
 
 use kernel::{
     domain::{
@@ -67,36 +67,15 @@ fn read(config_name: ConfigName, path: &Path) -> ConfigMessage {
 
 fn list(dir: &Path) -> ConfigMessage {
     match std::fs::read_dir(dir) {
-        Ok(mut entries) => entries
-            .try_fold(
-                (Vec::new(), Vec::new()),
-                |(mut theme_names, mut refused), entry| {
-                    let path = entry?.path();
-                    if path.extension().and_then(|extension| extension.to_str())
-                        == Some(THEME_EXTENSION)
-                    {
-                        let stem = || {
-                            path.file_stem().map_or_else(String::new, |stem| {
-                                stem.to_string_lossy().into_owned()
-                            })
-                        };
-                        match ThemeName::new(stem()) {
-                            Ok(name) => theme_names.push(name),
-                            Err(_) => refused.push(stem()),
-                        }
-                    }
-                    Ok::<_, io::Error>((theme_names, refused))
-                },
-            )
-            .map_or_else(
-                |error| list_failed(&error),
-                |(theme_names, refused)| {
-                    ConfigMessage::Watch(ConfigWatchMessage::Listed {
-                        theme_names,
-                        refused,
-                    })
-                },
-            ),
+        Ok(entries) => theme_stems(entries).map_or_else(
+            |error| list_failed(&error),
+            |(theme_names, refused)| {
+                ConfigMessage::Watch(ConfigWatchMessage::Listed {
+                    theme_names,
+                    refused,
+                })
+            },
+        ),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             ConfigMessage::Watch(ConfigWatchMessage::Listed {
                 theme_names: Vec::new(),
@@ -105,6 +84,26 @@ fn list(dir: &Path) -> ConfigMessage {
         }
         Err(error) => list_failed(&error),
     }
+}
+
+fn theme_stems(mut entries: ReadDir) -> io::Result<(Vec<ThemeName>, Vec<String>)> {
+    entries.try_fold(
+        (Vec::new(), Vec::new()),
+        |(mut theme_names, mut refused), entry| {
+            let path = entry?.path();
+            let Some(stem) = path
+                .file_stem()
+                .filter(|_| path.extension() == Some(OsStr::new(THEME_EXTENSION)))
+            else {
+                return Ok((theme_names, refused));
+            };
+            match ThemeName::new(stem.to_string_lossy().into_owned()) {
+                Ok(name) => theme_names.push(name),
+                Err(_) => refused.push(stem.to_string_lossy().into_owned()),
+            }
+            Ok((theme_names, refused))
+        },
+    )
 }
 
 fn list_failed(error: &io::Error) -> ConfigMessage {

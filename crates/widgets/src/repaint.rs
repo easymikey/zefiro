@@ -30,14 +30,13 @@ pub struct OnScreen {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ProgressScale {
-    pub steps: NonZeroU32,
-    pub duration: Duration,
+struct ProgressScale {
+    steps: NonZeroU32,
+    duration: Duration,
 }
 
 impl ProgressScale {
-    #[must_use]
-    pub fn text_bar(width: Cells, duration: Duration) -> Option<Self> {
+    fn text_bar(width: Cells, duration: Duration) -> Option<Self> {
         if width == Cells(0) || duration.is_zero() {
             return None;
         }
@@ -46,8 +45,7 @@ impl ProgressScale {
     }
 }
 
-#[must_use]
-pub fn next_progress_step(
+fn next_progress_step(
     scale: ProgressScale,
     playhead: Playhead,
     now: Moment,
@@ -121,7 +119,7 @@ fn wall_moment(playhead: Playhead, target_position: Duration) -> Moment {
 
 #[cfg(test)]
 mod tests {
-    use std::{sync::Arc, time::Duration};
+    use std::{num::NonZeroU32, sync::Arc, time::Duration};
 
     use kernel::domain::{
         bounded::Bounded,
@@ -134,7 +132,12 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::repaint::{next_sleep_minute, progress_frame_due};
+    use crate::repaint::{
+        ProgressScale,
+        next_progress_step,
+        next_sleep_minute,
+        progress_frame_due,
+    };
 
     fn track(duration: Duration) -> Arc<Track> {
         Arc::new(Track::new(TrackParts {
@@ -154,6 +157,21 @@ mod tests {
                 Speed::clamped(speed_factor),
             ),
             preloaded: None,
+        }
+    }
+
+    fn playhead(offset_secs: f64, speed_factor: f32) -> Playhead {
+        Playhead::anchored(
+            Duration::from_secs_f64(offset_secs),
+            Moment::default(),
+            Speed::clamped(speed_factor),
+        )
+    }
+
+    fn hundred_steps() -> ProgressScale {
+        ProgressScale {
+            steps: NonZeroU32::new(100).unwrap_or(NonZeroU32::MIN),
+            duration: Duration::from_secs(100),
         }
     }
 
@@ -236,5 +254,58 @@ mod tests {
             next_sleep_minute(Moment::new(Duration::from_secs(999)), now),
             None
         );
+    }
+
+    #[rstest]
+    #[case::unity_speed(10.2, 1.0, Some(801))]
+    #[case::double_speed(10.2, 2.0, Some(401))]
+    #[case::quarter_speed(10.2, 0.25, Some(3201))]
+    #[case::exactly_on_a_boundary(10.0, 1.0, Some(1001))]
+    #[case::last_step(99.5, 1.0, Some(501))]
+    #[case::past_the_end(100.0, 1.0, None)]
+    fn next_progress_step_lands_on_the_next_boundary(
+        #[case] offset_secs: f64,
+        #[case] speed_factor: f32,
+        #[case] expected_millis: Option<u64>,
+    ) {
+        let playhead = playhead(offset_secs, speed_factor);
+        let now = Moment::default();
+        let result = next_progress_step(hundred_steps(), playhead, now);
+        let millis = result.map(|moment| {
+            u64::try_from(moment.since_epoch().as_millis()).unwrap_or(u64::MAX)
+        });
+        assert_eq!(millis, expected_millis);
+    }
+
+    #[rstest]
+    #[case::quarter_speed(0.25)]
+    #[case::half_speed(0.5)]
+    #[case::unity_speed(1.0)]
+    #[case::one_and_a_half_speed(1.5)]
+    #[case::double_speed(2.0)]
+    #[case::quadruple_speed(4.0)]
+    fn the_returned_moment_really_crosses(#[case] speed_factor: f32) {
+        let scale = hundred_steps();
+        let playhead = playhead(7.37, speed_factor);
+        let now = Moment::default();
+        let step_before = playhead.position_at(now).as_secs();
+        let result = next_progress_step(scale, playhead, now).unwrap_or(now);
+        assert!(result > now, "expected a moment strictly after now");
+        let step_after = playhead.position_at(result).as_secs();
+        assert_eq!(step_after, step_before + 1);
+    }
+
+    #[rstest]
+    #[case::zero_width(0, 100, None)]
+    #[case::zero_length(40, 0, None)]
+    #[case::forty_columns(40, 100, Some(80))]
+    fn a_text_bar_has_two_steps_per_column_unless_empty(
+        #[case] width: u16,
+        #[case] length_secs: u64,
+        #[case] expected_steps: Option<u32>,
+    ) {
+        let scale =
+            ProgressScale::text_bar(Cells(width), Duration::from_secs(length_secs));
+        assert_eq!(scale.map(|scale| scale.steps.get()), expected_steps);
     }
 }

@@ -2,9 +2,10 @@ use std::{mem::discriminant, path::PathBuf, sync::Arc, time::Duration};
 
 use image::{Rgba, RgbaImage};
 use kernel::domain::{
-    appearance::{CoverMode, Rgb},
+    appearance::{Breakpoints, CoverMode, Rgb},
     geometry::{Cells, Pixels},
     time::Moment,
+    toast::Toast,
 };
 use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 use ratatui_image::picker::{Picker, ProtocolType};
@@ -13,6 +14,7 @@ use terminal::{capabilities::Capabilities, pixels::CoverPainter};
 use widgets::{
     animation::stage::{AnimationStage, animation_frame_due},
     card::CardCover,
+    overlay::modal::placement::OverlayAreas,
     pixels::cover::{CoverImage, pixmap::CellPixels},
     screen::{breakpoint::Breakpoint, frame_layout::FrameLayout},
     theme::{
@@ -67,7 +69,7 @@ fn layout_with_cover(cover_area: Option<Rect>) -> FrameLayout<'static> {
         search_bounds: Rect::default(),
         overlay_areas: None,
         overlay_content: None,
-        toast: None,
+        toast_placement: None,
     }
 }
 
@@ -350,16 +352,49 @@ fn a_theme_change_installs_the_new_image_at_once(
 
 #[rstest]
 #[case::no_toast(None, true)]
-#[case::a_toast_over_the_rect(Some(Rect::new(4, 0, 4, 1)), false)]
+#[case::a_toast_over_the_rect(Some(Rect::new(0, 0, 8, 1)), false)]
 #[case::a_toast_away_from_the_rect(Some(Rect::new(0, 10, 8, 1)), true)]
 fn a_toast_overlapping_the_cover_rect_hides_it(
-    #[case] toast: Option<Rect>,
+    #[case] toast_screen: Option<Rect>,
+    #[case] visible: bool,
+    mut painter: CoverPainter,
+) {
+    let mut scenery = scenery::get(CoverMode::Vinyl, capabilities());
+    scenery.model.workspace.toasts = vec![Toast::info("Queued")];
+    scenery.appearance.breakpoints = Breakpoints {
+        full_min_width: Cells(u16::MAX),
+        full_min_height: Cells(u16::MAX),
+        compact_min_width: Cells(u16::MAX),
+        compact_min_height: Cells(u16::MAX),
+        min_width: Cells(0),
+        min_height: Cells(0),
+    };
+    let scene = scenery.scene();
+    let layout = FrameLayout {
+        toast_placement: toast_screen
+            .and_then(|screen| FrameLayout::from_scene(&scene, screen).toast_placement),
+        ..layout_with_cover(Some(cover_rect()))
+    };
+    painter.refresh(&scene, layout.cover_area);
+
+    let mut buffer = Buffer::empty(cover_rect());
+    painter.paint(&mut buffer, &layout);
+    assert_eq!(painted(&buffer, cover_rect()), visible);
+}
+
+#[rstest]
+#[case::an_overlay_over_the_rect(Rect::new(2, 1, 4, 2), false)]
+#[case::an_overlay_away_from_the_rect(Rect::new(0, 10, 8, 4), true)]
+fn an_open_overlay_over_the_cover_rect_hides_it(
+    #[case] overlay_outer: Rect,
     #[case] visible: bool,
     mut painter: CoverPainter,
 ) {
     let scenery = scenery::get(CoverMode::Vinyl, capabilities());
-    let mut layout = layout_with_cover(Some(cover_rect()));
-    layout.toast = toast;
+    let layout = FrameLayout {
+        overlay_areas: Some(OverlayAreas::Banner(overlay_outer)),
+        ..layout_with_cover(Some(cover_rect()))
+    };
     painter.refresh(&scenery.scene(), layout.cover_area);
 
     let mut buffer = Buffer::empty(cover_rect());

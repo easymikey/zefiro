@@ -1,15 +1,19 @@
 #![cfg(test)]
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 
 use kernel::domain::{
-    appearance::Rgb,
+    appearance::{Breakpoints, Rgb},
     geometry::Cells,
     model::Model,
     player::Player,
     playhead::Playhead,
     speed::Speed,
     time::Moment,
+    toast::Toast,
 };
 use ratatui::{
     buffer::Buffer,
@@ -33,7 +37,7 @@ use widgets::{
 
 pub(crate) mod fixtures;
 
-use fixtures::track;
+use fixtures::{SceneSources, track};
 
 pub(crate) const AREA: Rect = Rect {
     x: 0,
@@ -178,7 +182,7 @@ pub(crate) fn card_metrics(
 }
 
 pub(crate) fn playlist_areas(selected_area: Option<Rect>) -> PlaylistAreas {
-    let sources = fixtures::SceneSources::new(fixtures::model_with_tracks(1));
+    let sources = SceneSources::new(fixtures::model_with_tracks(1));
     let layout = FrameLayout::from_scene(&sources.scene(), Rect::new(0, 0, 120, 40));
     PlaylistAreas {
         window: RowWindow::default(),
@@ -256,26 +260,57 @@ pub(crate) enum ToastPresence {
     Hidden,
 }
 
+const TOAST_CARD_SCREEN: Rect = Rect {
+    x: 12,
+    y: 0,
+    width: 12,
+    height: 6,
+};
+
+fn toast_sources(toast: Toast, full_min: Cells) -> SceneSources {
+    let mut model = Model::default();
+    model.workspace.toasts = vec![toast];
+    let mut sources = SceneSources::new(model);
+    sources.appearance_mut().breakpoints = Breakpoints {
+        full_min_width: full_min,
+        full_min_height: full_min,
+        compact_min_width: full_min,
+        compact_min_height: full_min,
+        min_width: Cells(0),
+        min_height: Cells(0),
+    };
+    sources
+}
+
+static TOAST_LINE_SOURCES: LazyLock<SceneSources> =
+    LazyLock::new(|| toast_sources(Toast::info("Queued"), Cells(u16::MAX)));
+
+static TOAST_CARD_SOURCES: LazyLock<SceneSources> = LazyLock::new(|| {
+    toast_sources(Toast::info("Saved").with_text("one two"), Cells(0))
+});
+
+fn toast_layout(sources: &'static SceneSources, screen: Rect) -> FrameLayout<'static> {
+    FrameLayout {
+        toast_placement: FrameLayout::from_scene(&sources.scene(), screen)
+            .toast_placement,
+        ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
+    }
+}
+
 pub(crate) fn toast_backdrop(presence: ToastPresence) -> Backdrop<'static> {
-    let toast = match presence {
-        ToastPresence::Shown => Some(AREA),
-        ToastPresence::Hidden => None,
+    let layout = match presence {
+        ToastPresence::Shown => toast_layout(&TOAST_LINE_SOURCES, AREA),
+        ToastPresence::Hidden => FrameLayout::empty(Rect::default(), Breakpoint::Full),
     };
     Backdrop {
-        layout: FrameLayout {
-            toast,
-            ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
-        },
+        layout,
         ..quiet_backdrop()
     }
 }
 
 pub(crate) fn toast_card_backdrop() -> Backdrop<'static> {
     Backdrop {
-        layout: FrameLayout {
-            toast: Some(TOAST_CARD),
-            ..FrameLayout::empty(Rect::default(), Breakpoint::Full)
-        },
+        layout: toast_layout(&TOAST_CARD_SOURCES, TOAST_CARD_SCREEN),
         ..quiet_backdrop()
     }
 }

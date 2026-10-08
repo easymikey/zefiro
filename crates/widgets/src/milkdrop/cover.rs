@@ -390,6 +390,32 @@ mod tests {
     }
 
     #[test]
+    fn a_gap_longer_than_four_steps_advances_four_and_drops_the_rest() {
+        let mut sources = SceneSources::new(model_with_tracks(1));
+        sources.model.player = playing("/music/b.flac");
+        sources.spectrum.fill(0.6);
+        let area = Some(Rect::new(0, 0, 24, 12));
+        let mut stalled_cover = MilkdropCover::default();
+        let mut stepwise_cover = MilkdropCover::default();
+        let mut scene = sources.scene();
+        stalled_cover.refresh(&scene, area);
+        for millis in [0, 33, 66, 99, 132] {
+            scene.presentation.since_first_paint = Duration::from_millis(millis);
+            stepwise_cover.refresh(&scene, area);
+        }
+        scene.presentation.since_first_paint = Duration::from_millis(330);
+        let stalled_lines = text(stalled_cover.refresh(&scene, area));
+        assert_eq!(stalled_lines, stepwise_cover.lines);
+        assert_eq!(
+            stalled_cover
+                .installed
+                .as_ref()
+                .map(|(_, stamp)| stamp.since_first_paint),
+            Some(Duration::from_millis(330))
+        );
+    }
+
+    #[test]
     fn a_theme_change_while_paused_keeps_the_field_and_recolours_it() {
         let mut sources = SceneSources::new(model_with_tracks(1));
         sources.model.player = playing("/music/a.flac");

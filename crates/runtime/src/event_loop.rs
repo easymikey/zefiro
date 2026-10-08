@@ -131,9 +131,8 @@ where
         let Some(first) = first else {
             return;
         };
-        let inbox_receiver = self.runtime.wiring.inbox_receiver.clone();
-        let doorbell = self.runtime.wiring.doorbell.clone();
-        let rang = matches!(first, Arrival::Doorbell) || ready(&doorbell).count() > 0;
+        let rang = matches!(first, Arrival::Doorbell)
+            || ready(&self.runtime.wiring.doorbell).count() > 0;
         let mut inputs = mem::take(&mut self.inputs);
         let mut messages = mem::take(&mut self.messages);
         inputs.clear();
@@ -144,7 +143,7 @@ where
             Arrival::Doorbell => {}
         }
         inputs.extend(ready(self.input_receiver));
-        messages.extend(ready(&inbox_receiver));
+        messages.extend(ready(&self.runtime.wiring.inbox_receiver));
         let arrivals = inputs
             .drain(..)
             .map(Arrival::Input)
@@ -274,7 +273,7 @@ pub(crate) mod tests {
         Effect(ShellEffect),
     }
 
-    pub(crate) struct Scripted {
+    pub(crate) struct ScriptedShell {
         key_sender: Sender<Key>,
         quit_after: usize,
         key: Option<Key>,
@@ -288,7 +287,7 @@ pub(crate) mod tests {
         pub(crate) pending_errors: Vec<kernel::message::PaintError>,
     }
 
-    impl Scripted {
+    impl ScriptedShell {
         pub(crate) fn new(key_sender: Sender<Key>, quit_after: usize) -> Self {
             Self {
                 key_sender,
@@ -306,7 +305,7 @@ pub(crate) mod tests {
         }
     }
 
-    impl Shell for Scripted {
+    impl Shell for ScriptedShell {
         type Input = Key;
         type Error = Infallible;
 
@@ -388,15 +387,14 @@ pub(crate) mod tests {
         let mut fixture = fixture();
         let (keys, input) = unbounded();
         keys.send(Key::Quit).unwrap();
-        let mut shell_scripted = Scripted::new(keys, usize::MAX);
+        let mut shell = ScriptedShell::new(keys, usize::MAX);
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        assert!(shell_scripted.toasts.is_empty());
+        assert!(shell.toasts.is_empty());
         assert_eq!(
-            shell_scripted.shell_effects,
+            shell.shell_effects,
             vec![ShellEffect::WindowColors(WindowColorsCmd::Reset)]
         );
         fixture.runtime.drain();
@@ -408,9 +406,8 @@ pub(crate) mod tests {
         fixture.runtime.model.workspace.chord_prefix = Some(ChordPrefix::G);
         let (_keys, input) = unbounded();
         let (keys, _receiver) = unbounded();
-        let mut shell_scripted = Scripted::new(keys, 1);
-        let mut event_loop =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input);
+        let mut shell = ScriptedShell::new(keys, 1);
+        let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
         event_loop.repaint = Repaint::Settled;
         let key = KernelKey {
             code: KeyCode::Char('w'),
@@ -437,10 +434,9 @@ pub(crate) mod tests {
         let mut fixture = fixture();
         let (keys, input) = unbounded::<Key>();
         drop(keys);
-        let mut shell_scripted = Scripted::new(unbounded().0, usize::MAX);
+        let mut shell = ScriptedShell::new(unbounded().0, usize::MAX);
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Err(Error::InputClosed)));
         fixture.runtime.drain();
@@ -462,15 +458,14 @@ pub(crate) mod tests {
             .schedule(Instant::now(), Timer::Toast(generation));
         fixture.runtime.take_shell_effects();
         let (keys, input) = unbounded();
-        let mut shell_scripted = Scripted::new(keys, 1);
+        let mut shell = ScriptedShell::new(keys, 1);
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        assert_eq!(shell_scripted.toasts, vec![Some("hello".to_owned())]);
+        assert_eq!(shell.toasts, vec![Some("hello".to_owned())]);
         assert!(
-            !shell_scripted
+            !shell
                 .shell_effects
                 .contains(&ShellEffect::Animate(Cue::ToastDismissed))
         );
@@ -481,17 +476,16 @@ pub(crate) mod tests {
     fn a_frame_due_paint_asks_once_per_iteration_with_no_empty_iteration() {
         let mut fixture = fixture();
         let (keys, input) = unbounded();
-        let mut shell_scripted = Scripted::new(keys, 4);
-        shell_scripted.key = None;
-        shell_scripted.frame_duration = Some(FRAME_INTERVAL);
+        let mut shell = ScriptedShell::new(keys, 4);
+        shell.key = None;
+        shell.frame_duration = Some(FRAME_INTERVAL);
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        assert_eq!(shell_scripted.painted_moments.len(), 4);
-        let mut asked_moments = shell_scripted.asked_moments.take();
-        asked_moments.retain(|at| !shell_scripted.painted_moments.contains(at));
+        assert_eq!(shell.painted_moments.len(), 4);
+        let mut asked_moments = shell.asked_moments.take();
+        asked_moments.retain(|at| !shell.painted_moments.contains(at));
         assert!(
             asked_moments.len() <= 1,
             "asked between paints: {asked_moments:?}"
@@ -510,15 +504,14 @@ pub(crate) mod tests {
             .status = DriverStatus::Stopped;
         let (keys, input) = unbounded();
         keys.send(Key::Stray).unwrap();
-        let mut shell_scripted = Scripted::new(keys, 1);
+        let mut shell = ScriptedShell::new(keys, 1);
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        assert_eq!(shell_scripted.toasts, vec![None]);
+        assert_eq!(shell.toasts, vec![None]);
         assert_eq!(
-            shell_scripted.shell_effects,
+            shell.shell_effects,
             vec![ShellEffect::WindowColors(WindowColorsCmd::Reset)]
         );
         assert_eq!(
@@ -548,15 +541,14 @@ pub(crate) mod tests {
         };
         let (keys, input) = unbounded();
         keys.send(Key::Ping).unwrap();
-        let mut shell_scripted = Scripted::new(keys, 2);
-        shell_scripted.key = Some(Key::Ping);
-        shell_scripted.cover_side = Some(Pixels(64));
+        let mut shell = ScriptedShell::new(keys, 2);
+        shell.key = Some(Key::Ping);
+        shell.cover_side = Some(Pixels(64));
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        assert_eq!(shell_scripted.toasts.len(), 2);
+        assert_eq!(shell.toasts.len(), 2);
         fixture.runtime.drain();
         let decodes = fixture
             .library_cmd_receiver
@@ -571,13 +563,12 @@ pub(crate) mod tests {
         let mut fixture = fixture();
         let (keys, input) = unbounded();
         keys.send(Key::Resize).unwrap();
-        let mut shell_scripted = Scripted::new(keys, 1);
+        let mut shell = ScriptedShell::new(keys, 1);
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
-        assert_eq!(shell_scripted.toasts, vec![None]);
+        assert_eq!(shell.toasts, vec![None]);
         fixture.runtime.drain();
     }
 
@@ -612,17 +603,16 @@ pub(crate) mod tests {
             .send(Message::Config(event))
             .unwrap();
         let (keys, input) = unbounded();
-        let mut shell_scripted = Scripted::new(keys, 1);
+        let mut shell = ScriptedShell::new(keys, 1);
 
-        let ended =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input).drive();
+        let ended = EventLoop::new(&mut fixture.runtime, &mut shell, &input).drive();
 
         assert!(matches!(ended, Ok(())));
         assert_eq!(
             fixture.runtime.model.revisions.theme.get(),
             before.next().get()
         );
-        let animated_at = shell_scripted
+        let animated_at = shell
             .orders
             .iter()
             .position(|order| {
@@ -632,7 +622,7 @@ pub(crate) mod tests {
                 )
             })
             .unwrap();
-        let reloaded_at = shell_scripted
+        let reloaded_at = shell
             .orders
             .iter()
             .position(|order| matches!(order, Order::Reloaded))
@@ -655,16 +645,13 @@ pub(crate) mod tests {
 
     fn toasts_in_one_iteration(runtime: &mut Runtime) -> usize {
         let (_keys, input) = unbounded::<Key>();
-        let mut shell_scripted = Scripted::new(unbounded().0, usize::MAX);
-        let mut event_loop = EventLoop::new(runtime, &mut shell_scripted, &input);
+        let mut shell = ScriptedShell::new(unbounded().0, usize::MAX);
+        let mut event_loop = EventLoop::new(runtime, &mut shell, &input);
         let first = event_loop.wait(Some(Instant::now())).unwrap();
         event_loop.gather(first);
         event_loop.report_congestion();
-        let effects = event_loop.runtime.take_shell_effects();
-        for effect in effects {
-            event_loop.shell.effect(effect);
-        }
-        shell_scripted
+        event_loop.run_shell_effects();
+        shell
             .shell_effects
             .iter()
             .filter(|effect| matches!(effect, ShellEffect::Animate(Cue::ToastRaised)))
@@ -745,9 +732,8 @@ pub(crate) mod tests {
         }
         let (keys, input) = unbounded();
         keys.send(Key::Quit).unwrap();
-        let mut shell_scripted = Scripted::new(unbounded().0, usize::MAX);
-        let mut event_loop =
-            EventLoop::new(&mut fixture.runtime, &mut shell_scripted, &input);
+        let mut shell = ScriptedShell::new(unbounded().0, usize::MAX);
+        let mut event_loop = EventLoop::new(&mut fixture.runtime, &mut shell, &input);
 
         let first = event_loop.wait(None).unwrap();
         event_loop.gather(first);

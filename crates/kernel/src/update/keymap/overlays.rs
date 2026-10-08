@@ -15,35 +15,11 @@ use crate::{
         SettingRowRequest,
         TextRequest,
     },
-    update::keymap::chord::{KeyBinding, bare, key},
+    update::keymap::chord::{KeyBinding, bare, key, letter, plain, row},
 };
-
-fn plain(code: KeyCode) -> KeyPattern {
-    KeyPattern::Chord(bare(code))
-}
-
-fn letter(character: char) -> KeyPattern {
-    KeyPattern::Chord(key(character))
-}
 
 fn held(modifiers: Modifiers, code: KeyCode) -> KeyPattern {
     KeyPattern::Chord(Chord::Key(Key::new(code, modifiers)))
-}
-
-fn settings_bindings(
-    action: Action,
-    chords: &[Chord],
-    message: &Message,
-) -> Vec<KeyBinding> {
-    chords
-        .iter()
-        .map(|&chord| KeyBinding {
-            pattern: KeyPattern::Chord(chord),
-            message: message.clone(),
-            action: Some(action),
-            key_context: KeyContext::Settings,
-        })
-        .collect()
 }
 
 fn overlay(request: OverlayRequest) -> Message {
@@ -180,51 +156,27 @@ fn history_rows() -> Vec<KeyBinding> {
     )
 }
 
+#[rustfmt::skip]
 fn settings_rows() -> Vec<KeyBinding> {
     use SettingRowRequest::{Activate, Navigate, Step};
 
-    use crate::domain::keymap::Action::{
-        SettingsActivate,
-        SettingsClose,
-        SettingsNavigateDown,
-        SettingsNavigateUp,
-        SettingsStepDown,
-        SettingsStepUp,
-    };
+    use crate::domain::keymap::Action::{SettingsActivate, SettingsClose, SettingsNavigateDown, SettingsNavigateUp, SettingsStepDown, SettingsStepUp};
+    let row = row(KeyContext::Settings);
     let settings = |request| Message::Overlay(OverlayRequest::Settings(request));
-    [
-        settings_bindings(
-            SettingsClose,
-            &[bare(KeyCode::Esc), key('q')],
-            &Message::Overlay(OverlayRequest::Close),
-        ),
-        settings_bindings(
-            SettingsActivate,
-            &[bare(KeyCode::Enter), key(' ')],
-            &settings(Activate),
-        ),
-        settings_bindings(
-            SettingsNavigateDown,
-            &[key('j'), bare(KeyCode::Down)],
-            &settings(Navigate(Direction::Next)),
-        ),
-        settings_bindings(
-            SettingsNavigateUp,
-            &[key('k'), bare(KeyCode::Up)],
-            &settings(Navigate(Direction::Previous)),
-        ),
-        settings_bindings(
-            SettingsStepDown,
-            &[key('h'), bare(KeyCode::Left)],
-            &settings(Step(Direction::Previous)),
-        ),
-        settings_bindings(
-            SettingsStepUp,
-            &[key('l'), bare(KeyCode::Right)],
-            &settings(Step(Direction::Next)),
-        ),
+    vec![
+        row(SettingsClose, bare(KeyCode::Esc), close()),
+        row(SettingsClose, key('q'), close()),
+        row(SettingsActivate, bare(KeyCode::Enter), settings(Activate)),
+        row(SettingsActivate, key(' '), settings(Activate)),
+        row(SettingsNavigateDown, key('j'), settings(Navigate(Direction::Next))),
+        row(SettingsNavigateDown, bare(KeyCode::Down), settings(Navigate(Direction::Next))),
+        row(SettingsNavigateUp, key('k'), settings(Navigate(Direction::Previous))),
+        row(SettingsNavigateUp, bare(KeyCode::Up), settings(Navigate(Direction::Previous))),
+        row(SettingsStepDown, key('h'), settings(Step(Direction::Previous))),
+        row(SettingsStepDown, bare(KeyCode::Left), settings(Step(Direction::Previous))),
+        row(SettingsStepUp, key('l'), settings(Step(Direction::Next))),
+        row(SettingsStepUp, bare(KeyCode::Right), settings(Step(Direction::Next))),
     ]
-    .concat()
 }
 
 fn confirm_trash_rows() -> Vec<KeyBinding> {
@@ -264,6 +216,7 @@ fn track_details_rows() -> Vec<KeyBinding> {
 
 fn servers_rows() -> Vec<KeyBinding> {
     let navigate = |direction| overlay(OverlayRequest::Navigate(direction));
+    let row = row(KeyContext::Servers);
     [
         rows_in(
             KeyContext::Servers,
@@ -282,18 +235,16 @@ fn servers_rows() -> Vec<KeyBinding> {
             ],
         ),
         vec![
-            KeyBinding {
-                pattern: letter('t'),
-                message: overlay(OverlayRequest::Reconnect),
-                action: Some(Action::Reconnect),
-                key_context: KeyContext::Servers,
-            },
-            KeyBinding {
-                pattern: letter('d'),
-                message: overlay(OverlayRequest::Open(OverlayName::ConfirmRemove)),
-                action: Some(Action::Delete),
-                key_context: KeyContext::Servers,
-            },
+            row(
+                Action::Reconnect,
+                key('t'),
+                overlay(OverlayRequest::Reconnect),
+            ),
+            row(
+                Action::Delete,
+                key('d'),
+                overlay(OverlayRequest::Open(OverlayName::ConfirmRemove)),
+            ),
         ],
     ]
     .concat()

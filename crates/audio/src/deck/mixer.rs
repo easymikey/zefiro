@@ -1,7 +1,4 @@
-use std::{
-    ops::{ControlFlow, Range},
-    time::Duration,
-};
+use std::{ops::ControlFlow, time::Duration};
 
 use cpal::{FromSample, SizedSample};
 use kernel::{cmd::Playback, domain::speed::Speed};
@@ -9,9 +6,8 @@ use rtrb::{Consumer, PopError, Producer, PushError, RingBuffer};
 
 use crate::{
     deck::{
-        envelope::Envelope,
-        feed::FeedSource,
-        varispeed::{OutputFormat, VARISPEED_FRAMES, Varispeed},
+        varispeed::{OutputFormat, VARISPEED_FRAMES},
+        voice::Voice,
     },
     engine::message::SinkRole,
     tap::{SpectrumBuffers, SpectrumWriter},
@@ -19,128 +15,6 @@ use crate::{
 
 pub(crate) const MIXER_ORDERS: usize = 32;
 pub(crate) const RETIRED_SLOTS: usize = MIXER_ORDERS + 4;
-pub(crate) const DECLICK_FRAMES: u16 = 256;
-
-pub(crate) struct Voice {
-    source: FeedSource,
-    envelope: Envelope,
-    varispeed: Varispeed,
-    input: Box<[f32]>,
-    pending: Range<usize>,
-    channels: usize,
-    playback: Playback,
-    declick: u16,
-}
-
-impl std::fmt::Debug for Voice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Voice")
-            .field("playback", &self.playback)
-            .field("declick", &self.declick)
-            .finish_non_exhaustive()
-    }
-}
-
-impl Voice {
-    pub(crate) fn new(
-        source: FeedSource,
-        envelope: Envelope,
-        varispeed: Varispeed,
-    ) -> Self {
-        let channels = usize::from(source.channels().max(1));
-        Self {
-            source,
-            envelope,
-            varispeed,
-            input: vec![0.0; VARISPEED_FRAMES * channels].into_boxed_slice(),
-            pending: 0..0,
-            channels,
-            playback: Playback::Paused,
-            declick: 0,
-        }
-    }
-
-    fn seek(&mut self, target: Duration) {
-        self.source.seek(target);
-        self.envelope.seek();
-        self.varispeed.seek();
-        match self.playback {
-            Playback::Playing => {}
-            Playback::Paused => self.pending = 0..0,
-        }
-    }
-
-    fn mix(&mut self, out: &mut [f32]) -> ControlFlow<usize, usize> {
-        let frames = out.len() / self.channels;
-        let wanted = match self.playback {
-            Playback::Playing => frames,
-            Playback::Paused => frames.min(usize::from(self.declick)),
-        };
-        let (out, _) = out.split_at_mut(wanted * self.channels);
-        let flow = self.fill(out);
-        let (ControlFlow::Continue(written) | ControlFlow::Break(written)) = flow;
-        self.declick(out.split_at_mut(written * self.channels).0);
-        flow
-    }
-
-    fn fill(&mut self, out: &mut [f32]) -> ControlFlow<usize, usize> {
-        let wanted = out.len() / self.channels;
-        let mut written = 0;
-        while written < wanted {
-            if self.pending.is_empty() && self.pull() == 0 {
-                let rest = out.split_at_mut(written * self.channels).1;
-                return match self.varispeed.flush(rest) {
-                    Ok(flushed) if written + flushed == wanted => {
-                        ControlFlow::Continue(wanted)
-                    }
-                    Ok(flushed) => ControlFlow::Break(written + flushed),
-                    Err(_) => ControlFlow::Break(written),
-                };
-            }
-            let input = self.input.get(self.pending.clone()).unwrap_or(&[]);
-            let rest = out.split_at_mut(written * self.channels).1;
-            match self.varispeed.fill(input, rest) {
-                Ok((read, filled)) => {
-                    self.pending.start += read * self.channels;
-                    written += filled;
-                }
-                Err(_) => return ControlFlow::Break(written),
-            }
-        }
-        ControlFlow::Continue(written)
-    }
-
-    fn pull(&mut self) -> usize {
-        let frames = self
-            .varispeed
-            .input_frames_next()
-            .clamp(1, VARISPEED_FRAMES);
-        let input = self
-            .input
-            .get_mut(..frames * self.channels)
-            .unwrap_or(&mut []);
-        let wanted = input.len();
-        let read = self.source.read(input);
-        self.envelope.read(input.get_mut(..read).unwrap_or(&mut []));
-        let pulled = read / self.channels;
-        if read < wanted {
-            self.envelope.end();
-        }
-        self.pending = 0..pulled * self.channels;
-        pulled
-    }
-
-    fn declick(&mut self, out: &mut [f32]) {
-        for frame in out.chunks_exact_mut(self.channels) {
-            self.declick = match self.playback {
-                Playback::Playing => (self.declick + 1).min(DECLICK_FRAMES),
-                Playback::Paused => self.declick.saturating_sub(1),
-            };
-            let amplitude = f32::from(self.declick) / f32::from(DECLICK_FRAMES);
-            frame.iter_mut().for_each(|sample| *sample *= amplitude);
-        }
-    }
-}
 
 #[derive(Debug)]
 pub(crate) enum MixerOrder {
@@ -156,10 +30,25 @@ pub(crate) enum MixerOrder {
 }
 
 #[derive(Debug)]
+struct Voices {
+    current: Option<Box<Voice>>,
+    incoming: Option<Box<Voice>>,
+    outgoing: Option<Box<Voice>>,
+}
+
+impl Voices {
+    fn get(&mut self, role: SinkRole) -> &mut Option<Box<Voice>> {
+        match role {
+            SinkRole::Current => &mut self.current,
+            SinkRole::Incoming => &mut self.incoming,
+            SinkRole::Outgoing => &mut self.outgoing,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub(crate) struct Mixer {
-    current_voice: Option<Box<Voice>>,
-    incoming_voice: Option<Box<Voice>>,
-    outgoing_voice: Option<Box<Voice>>,
+    voices: Voices,
     queued_voice: Option<Box<Voice>>,
     speed: Speed,
     channels: usize,
@@ -183,11 +72,7 @@ impl Mixer {
             let len = chunk.len();
             self.block.fill(0.0);
             for role in [SinkRole::Current, SinkRole::Incoming, SinkRole::Outgoing] {
-                let voice = match role {
-                    SinkRole::Current => &mut self.current_voice,
-                    SinkRole::Incoming => &mut self.incoming_voice,
-                    SinkRole::Outgoing => &mut self.outgoing_voice,
-                };
+                let voice = self.voices.get(role);
                 let mut written = 0;
                 while let Some(playing) = voice.as_mut() {
                     let rest = self.scratch.get_mut(written..len).unwrap_or(&mut []);
@@ -225,19 +110,11 @@ impl Mixer {
         }
     }
 
-    fn voice(&mut self, role: SinkRole) -> &mut Option<Box<Voice>> {
-        match role {
-            SinkRole::Current => &mut self.current_voice,
-            SinkRole::Incoming => &mut self.incoming_voice,
-            SinkRole::Outgoing => &mut self.outgoing_voice,
-        }
-    }
-
     fn voices(&mut self) -> impl Iterator<Item = &mut Box<Voice>> {
         [
-            &mut self.current_voice,
-            &mut self.incoming_voice,
-            &mut self.outgoing_voice,
+            &mut self.voices.current,
+            &mut self.voices.incoming,
+            &mut self.voices.outgoing,
             &mut self.queued_voice,
         ]
         .into_iter()
@@ -248,7 +125,7 @@ impl Mixer {
         match order {
             MixerOrder::Attach { role, mut voice } => {
                 voice.varispeed.set_speed(self.speed);
-                let replaced = self.voice(role).replace(voice);
+                let replaced = self.voices.get(role).replace(voice);
                 retire(&mut self.retired, replaced);
             }
             MixerOrder::Queue(mut voice) => {
@@ -257,22 +134,22 @@ impl Mixer {
                 retire(&mut self.retired, replaced);
             }
             MixerOrder::Promote => {
-                if let Some(incoming_voice) = self.incoming_voice.take() {
-                    let replaced = self.current_voice.replace(incoming_voice);
+                if let Some(incoming_voice) = self.voices.incoming.take() {
+                    let replaced = self.voices.current.replace(incoming_voice);
                     retire(&mut self.retired, replaced);
                     retire(&mut self.retired, self.queued_voice.take());
                 }
             }
             MixerOrder::Retire => {
                 let replaced = std::mem::replace(
-                    &mut self.outgoing_voice,
-                    self.current_voice.take(),
+                    &mut self.voices.outgoing,
+                    self.voices.current.take(),
                 );
                 retire(&mut self.retired, replaced);
                 retire(&mut self.retired, self.queued_voice.take());
             }
             MixerOrder::Drop(role) => {
-                let dropped = self.voice(role).take();
+                let dropped = self.voices.get(role).take();
                 retire(&mut self.retired, dropped);
                 match role {
                     SinkRole::Current | SinkRole::Incoming => {
@@ -285,7 +162,7 @@ impl Mixer {
                 self.voices().for_each(|voice| voice.playback = playback);
             }
             MixerOrder::RolePlayback { role, playback } => {
-                if let Some(voice) = self.voice(role) {
+                if let Some(voice) = self.voices.get(role) {
                     voice.playback = playback;
                 }
             }
@@ -295,7 +172,7 @@ impl Mixer {
                     .for_each(|voice| voice.varispeed.set_speed(speed));
             }
             MixerOrder::Seek(target) => {
-                if let Some(voice) = self.current_voice.as_mut() {
+                if let Some(voice) = self.voices.current.as_mut() {
                     voice.seek(target);
                 }
             }
@@ -356,9 +233,11 @@ pub(crate) fn mixer_channel(
     let block = vec![0.0; VARISPEED_FRAMES * channels].into_boxed_slice();
     MixerChannel {
         mixer: Mixer {
-            current_voice: None,
-            incoming_voice: None,
-            outgoing_voice: None,
+            voices: Voices {
+                current: None,
+                incoming: None,
+                outgoing: None,
+            },
             queued_voice: None,
             speed,
             channels,
@@ -376,7 +255,7 @@ pub(crate) fn mixer_channel(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::{thread, time::Duration};
 
     use crossbeam_channel::Sender;
@@ -389,33 +268,26 @@ mod tests {
     use crate::{
         deck::{
             envelope::{EnvelopeControl, Ramp},
-            feed::{FeedCmd, feed_channel, play, serve},
-            mixer::{
-                DECLICK_FRAMES,
-                Mixer,
-                MixerChannel,
-                MixerControl,
-                MixerOrder,
-                Voice,
-                mixer_channel,
-            },
+            feed::{FeedCmd, feed_channel, play, serve::serve},
+            mixer::{Mixer, MixerChannel, MixerControl, MixerOrder, mixer_channel},
             source::{
                 DecodedTrack,
                 decode,
                 tests::{decoded, ramp_file},
             },
             varispeed::{OutputFormat, Varispeed},
+            voice::{DECLICK_FRAMES, Voice},
         },
         engine::message::SinkRole,
         tap::spectrum_channel,
     };
 
-    const MONO_8K: OutputFormat = OutputFormat {
+    pub(crate) const MONO_8K: OutputFormat = OutputFormat {
         channels: 1,
         rate: 8_000,
     };
 
-    fn served(test: impl FnOnce(&Sender<FeedCmd>)) {
+    pub(crate) fn served(test: impl FnOnce(&Sender<FeedCmd>)) {
         let (feed_sender, feed_receiver) = crossbeam_channel::unbounded();
         thread::scope(|scope| {
             scope.spawn(|| serve(&feed_receiver));
@@ -424,17 +296,12 @@ mod tests {
         });
     }
 
-    const STEREO_8K: OutputFormat = OutputFormat {
-        channels: 2,
-        rate: 8_000,
-    };
-
     const MONO_12K: OutputFormat = OutputFormat {
         channels: 1,
         rate: 12_000,
     };
 
-    fn voice(
+    pub(crate) fn voice(
         file: &NamedTempFile,
         format: OutputFormat,
         feed_sender: &Sender<FeedCmd>,
@@ -453,16 +320,20 @@ mod tests {
         (Box::new(voice), control)
     }
 
-    fn channel(format: OutputFormat) -> MixerChannel {
+    pub(crate) fn channel(format: OutputFormat) -> MixerChannel {
         let (spectrum_buffers, _spectrum_tap) = spectrum_channel();
         mixer_channel(format, Speed::default(), &spectrum_buffers)
     }
 
-    fn attach(control: &mut MixerControl, role: SinkRole, voice: Box<Voice>) {
+    pub(crate) fn attach(
+        control: &mut MixerControl,
+        role: SinkRole,
+        voice: Box<Voice>,
+    ) {
         control.order(MixerOrder::Attach { role, voice });
     }
 
-    fn mixed(mixer: &mut Mixer, frames: usize) -> Vec<f32> {
+    pub(crate) fn mixed(mixer: &mut Mixer, frames: usize) -> Vec<f32> {
         let mut out = vec![1.0_f32; frames];
         mixer.mix(&mut out);
         out
@@ -479,58 +350,6 @@ mod tests {
         let mut out = [1_i16; 64];
         mixer.mix(&mut out);
         assert_eq!(out, [0_i16; 64]);
-    }
-
-    #[test]
-    fn an_attached_playing_voice_renders_its_file_bit_exact_after_the_declick() {
-        let file = ramp_file(1, 2_000);
-        let expected = decoded(&file);
-        served(|feed_sender| {
-            let MixerChannel {
-                mut mixer,
-                mut control,
-                retired_voices: _retired_voices,
-            } = channel(MONO_8K);
-            let (current_voice, _current_control) = voice(&file, MONO_8K, feed_sender);
-            attach(&mut control, SinkRole::Current, current_voice);
-            control.order(MixerOrder::Transport(Playback::Playing));
-
-            let out = mixed(&mut mixer, 2_000);
-
-            let declick = usize::from(DECLICK_FRAMES);
-            assert_eq!(out.get(declick..), expected.get(declick..));
-            assert!(
-                out.iter()
-                    .zip(&expected)
-                    .take(declick)
-                    .all(|(sample, source)| sample.abs() <= source.abs())
-            );
-        });
-    }
-
-    #[test]
-    fn a_doubled_speed_consumes_twice_the_source_frames() {
-        let file = ramp_file(1, 16_000);
-        served(|feed_sender| {
-            let MixerChannel {
-                mut mixer,
-                mut control,
-                retired_voices: _retired_voices,
-            } = channel(MONO_8K);
-            let (current_voice, current_control) = voice(&file, MONO_8K, feed_sender);
-            attach(&mut control, SinkRole::Current, current_voice);
-            control.order(MixerOrder::Transport(Playback::Playing));
-            control.order(MixerOrder::Speed(Speed::clamped(2.0)));
-
-            mixed(&mut mixer, 1_024);
-
-            let consumed = current_control.position();
-            assert!(
-                (Duration::from_millis(256)..Duration::from_millis(320))
-                    .contains(&consumed),
-                "{consumed:?}"
-            );
-        });
     }
 
     #[test]
@@ -569,56 +388,6 @@ mod tests {
             channel.control.order(MixerOrder::Drop(SinkRole::Incoming));
             mixed(&mut channel.mixer, 64);
             assert_eq!(channel.retired_voices.count(), 1);
-        });
-    }
-
-    #[test]
-    fn a_mono_file_on_a_stereo_device_plays_each_frame_once_in_both_channels() {
-        let file = ramp_file(1, 2_000);
-        let expected: Vec<[f32; 2]> =
-            decoded(&file).iter().map(|sample| [*sample; 2]).collect();
-        served(|feed_sender| {
-            let MixerChannel {
-                mut mixer,
-                mut control,
-                retired_voices: _retired_voices,
-            } = channel(STEREO_8K);
-            let (current_voice, _current_control) =
-                voice(&file, STEREO_8K, feed_sender);
-            attach(&mut control, SinkRole::Current, current_voice);
-            control.order(MixerOrder::Transport(Playback::Playing));
-
-            let out = mixed(&mut mixer, 4_000);
-
-            let frames = out.as_chunks::<2>().0;
-            let declick = usize::from(DECLICK_FRAMES);
-            assert_eq!(frames.get(declick..), expected.get(declick..));
-        });
-    }
-
-    #[test]
-    fn a_stereo_file_on_a_mono_device_plays_the_average_of_its_channels() {
-        let file = ramp_file(2, 2_000);
-        let expected: Vec<f32> = decoded(&file)
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|[left, right]| (left + right) / 2.0)
-            .collect();
-        served(|feed_sender| {
-            let MixerChannel {
-                mut mixer,
-                mut control,
-                retired_voices: _retired_voices,
-            } = channel(MONO_8K);
-            let (current_voice, _current_control) = voice(&file, MONO_8K, feed_sender);
-            attach(&mut control, SinkRole::Current, current_voice);
-            control.order(MixerOrder::Transport(Playback::Playing));
-
-            let out = mixed(&mut mixer, 2_000);
-
-            let declick = usize::from(DECLICK_FRAMES);
-            assert_eq!(out.get(declick..), expected.get(declick..));
         });
     }
 
@@ -714,39 +483,6 @@ mod tests {
             control.order(MixerOrder::Drop(SinkRole::Current));
             mixed(&mut mixer, 64);
             assert_eq!(retired_voices.by_ref().count(), 1);
-        });
-    }
-
-    #[test]
-    fn a_paused_incoming_voice_freezes_after_the_declick() {
-        let file = ramp_file(1, 8_000);
-        served(|feed_sender| {
-            let MixerChannel {
-                mut mixer,
-                mut control,
-                retired_voices: _retired_voices,
-            } = channel(MONO_8K);
-            let (incoming_voice, incoming_control) = voice(&file, MONO_8K, feed_sender);
-            attach(&mut control, SinkRole::Incoming, incoming_voice);
-            control.order(MixerOrder::RolePlayback {
-                role: SinkRole::Incoming,
-                playback: Playback::Playing,
-            });
-            mixed(&mut mixer, 1_024);
-            assert_eq!(incoming_control.position(), Duration::from_millis(128));
-
-            control.order(MixerOrder::RolePlayback {
-                role: SinkRole::Incoming,
-                playback: Playback::Paused,
-            });
-            let out = mixed(&mut mixer, 1_024);
-            let declick = usize::from(DECLICK_FRAMES);
-            assert_eq!(incoming_control.position(), Duration::from_millis(160));
-            assert!(out.iter().take(declick - 1).all(|&sample| sample != 0.0));
-            assert!(out.iter().skip(declick).all(|&sample| sample == 0.0));
-
-            mixed(&mut mixer, 1_024);
-            assert_eq!(incoming_control.position(), Duration::from_millis(160));
         });
     }
 

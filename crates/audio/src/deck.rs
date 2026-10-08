@@ -6,6 +6,7 @@ pub(crate) mod mixer;
 pub(crate) mod output;
 pub(crate) mod source;
 pub(crate) mod varispeed;
+pub(crate) mod voice;
 
 use std::time::Duration;
 
@@ -20,9 +21,10 @@ use crate::{
     deck::{
         envelope::{EnvelopeControl, Ramp},
         feed::{FeedCmd, feed_channel, play},
-        mixer::{MixerOrder, Voice},
+        mixer::MixerOrder,
         output::{Fader, Output},
         source::{DecodedTrack, PreloadMode},
+        voice::Voice,
     },
     device::{OpenedOutput, Opening, OutputLoss, open_output},
     engine::message::{AudioMessage, DeviceOpened, EngineMessage, SinkRole},
@@ -197,12 +199,10 @@ impl Deck {
                 output_loss: &self.output_loss,
             },
         )?;
-        self.drop_preload();
         let (position, playback) = self
             .output
             .as_ref()
             .map_or((Duration::ZERO, Playback::Playing), Output::position);
-        drop(self.output.take());
         self.output = Some(Output::new(mixer_control, retired_voices, format));
         self.stream = Some(stream);
         Ok(DeviceOpened {
@@ -216,6 +216,7 @@ impl Deck {
     pub(crate) fn drop_preload(&mut self) {
         if let Some(output) = self.output.as_mut() {
             output.incoming_fader = None;
+            output.incoming_control = None;
             output
                 .mixer_control
                 .order(MixerOrder::Drop(SinkRole::Incoming));

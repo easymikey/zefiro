@@ -28,6 +28,7 @@ use crate::{
     },
     pixels::numeric::small_count_u16,
     primitive::{
+        bar::repeat_glyph,
         canvas::Canvas,
         glyphs,
         list_chrome::ScrollAreas,
@@ -214,7 +215,11 @@ impl SearchWidget<'_> {
         if rule_row.width == 0 || rule_row.height == 0 {
             return;
         }
-        let rule = glyphs::search::RULE.repeat(usize::from(rule_row.width));
+        let rule = repeat_glyph(
+            glyphs::search::RULE,
+            glyphs::search::RULE_RUN,
+            usize::from(rule_row.width),
+        );
         Paragraph::new(line([text(rule).fg(self.theme.colors().muted_foreground)]))
             .render(rule_row, buffer);
     }
@@ -604,10 +609,20 @@ mod tests {
     }
 
     #[rstest]
-    #[case::empty("empty", server_query("", Vec::new(), None))]
+    #[case::empty(
+        "empty",
+        server_query("", Vec::new(), None),
+        pane_container(Rect::new(0, 0, 60, 12))
+    )]
     #[case::searching(
         "searching",
-        server_query("moon", Vec::new(), Some(Revision::default().next()))
+        server_query("moon", Vec::new(), Some(Revision::default().next())),
+        pane_container(Rect::new(0, 0, 60, 12))
+    )]
+    #[case::no_matches(
+        "no_matches",
+        server_query("moon", Vec::new(), None),
+        pane_container(Rect::new(0, 0, 60, 12))
     )]
     #[case::found(
         "found",
@@ -620,11 +635,27 @@ mod tests {
                 CatalogRow::Track(titled_track("Moonlight Sonata")),
             ],
             None,
-        )
+        ),
+        pane_container(Rect::new(0, 0, 60, 12))
+    )]
+    #[case::found_floating(
+        "found_floating",
+        server_query(
+            "moon",
+            vec![
+                server_album("Air", "Moon Safari"),
+                server_album("Pink Floyd", "The Dark Side of the Moon"),
+                CatalogRow::Track(titled_track("Moon River")),
+                CatalogRow::Track(titled_track("Moonlight Sonata")),
+            ],
+            None,
+        ),
+        ModalContainer::Floating(&[])
     )]
     fn server_search_paints_the_search_pane_with_the_server_name_and_grouped_rows(
         #[case] label: &str,
         #[case] server_query: CursorOver<ServerQuery>,
+        #[case] container: ModalContainer<'static>,
     ) {
         let theme = noir();
         let overlay = SearchWidget::new(
@@ -633,9 +664,54 @@ mod tests {
         )
         .title(server_query.content.server_name.as_str())
         .bounds(Rect::new(0, 0, 60, 12))
-        .container(pane_container(Rect::new(0, 0, 60, 12)));
+        .container(container);
         insta::with_settings!({ snapshot_suffix => label }, {
             insta::assert_snapshot!(rendered(60, 12, |frame| frame.render_widget(&overlay, frame.area())).to_string());
         });
+    }
+
+    #[rstest]
+    #[case::searching(
+        server_query("moon", Vec::new(), Some(Revision::default().next())),
+        4
+    )]
+    #[case::albums_only(
+        server_query(
+            "moon",
+            vec![
+                server_album("Air", "Moon Safari"),
+                server_album("Pink Floyd", "The Dark Side of the Moon"),
+            ],
+            None,
+        ),
+        6
+    )]
+    #[case::albums_then_tracks(
+        server_query(
+            "moon",
+            vec![
+                server_album("Air", "Moon Safari"),
+                server_album("Pink Floyd", "The Dark Side of the Moon"),
+                CatalogRow::Track(titled_track("Moon River")),
+                CatalogRow::Track(titled_track("Moonlight Sonata")),
+            ],
+            None,
+        ),
+        9
+    )]
+    fn server_search_modal_mode_sizes_the_modal_to_its_grouped_rows(
+        #[case] server_query: CursorOver<ServerQuery>,
+        #[case] height: u16,
+    ) {
+        let theme = noir();
+        let screen = Rect::new(0, 0, 80, 28);
+        let overlay = SearchWidget::new(
+            Query::ServerSearch(&server_query),
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+        )
+        .title(server_query.content.server_name.as_str())
+        .bounds(screen)
+        .container(ModalContainer::Floating(&[]));
+        assert_eq!(overlay.areas(screen).outer().height, height);
     }
 }

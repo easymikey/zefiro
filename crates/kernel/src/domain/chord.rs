@@ -89,13 +89,14 @@ impl std::str::FromStr for Chord {
     type Err = ChordError;
 
     fn from_str(spelling: &str) -> Result<Self, ChordError> {
-        let (has_ctrl, spelling) = spelling
+        let (ctrl, spelling) = spelling
             .strip_prefix("ctrl+")
-            .map_or((false, spelling), |rest| (true, rest));
-        let (has_shift, spelling) = spelling
+            .map_or((Modifiers::NONE, spelling), |rest| (Modifiers::CTRL, rest));
+        let (shift, spelling) = spelling
             .strip_prefix("shift+")
-            .map_or((false, spelling), |rest| (true, rest));
-        if spelling == "gg" && !has_ctrl && !has_shift {
+            .map_or((Modifiers::NONE, spelling), |rest| (Modifiers::SHIFT, rest));
+        let modifiers = ctrl.with(shift);
+        if spelling == "gg" && modifiers == Modifiers::NONE {
             return Ok(Self::Sequence {
                 prefix: ChordPrefix::G,
                 key: ChordPrefix::G.key(),
@@ -119,10 +120,6 @@ impl std::str::FromStr for Chord {
                 spelling: spelling.to_string(),
             })?),
         };
-        let modifiers = [(has_ctrl, Modifiers::CTRL), (has_shift, Modifiers::SHIFT)]
-            .into_iter()
-            .filter(|&(held, _)| held)
-            .fold(Modifiers::NONE, |all, (_, flag)| all.with(flag));
         Ok(Self::Key(Key { code, modifiers }))
     }
 }

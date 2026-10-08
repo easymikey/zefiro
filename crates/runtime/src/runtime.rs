@@ -161,14 +161,12 @@ mod tests {
         cell::RefCell,
         convert::Infallible,
         io,
-        path::Path,
         sync::atomic::{AtomicUsize, Ordering},
         thread,
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
 
     use audio::tap::SpectrumTap;
-    use config::driver::paths::{ConfigPaths, SeenTexts};
     use crossbeam_channel::{Receiver, Sender, unbounded};
     use kernel::{
         cmd::{AudioCmd, LibraryCmd},
@@ -182,7 +180,6 @@ mod tests {
         message::{DriverEvent, Message},
         update::machine::Unhandled,
     };
-    use library::dirs::LibraryDirs;
     use rstest::rstest;
 
     use crate::{
@@ -195,32 +192,14 @@ mod tests {
         spawn::{
             Spawners,
             config_thread::spawn_config,
-            tests::{idle_spawners, spawn_audio_loop},
+            tests::{boom, idle_spawners, spawn_audio_loop, stub_paths},
         },
-        spawn_setup::{SpawnSetup, StartupPaths},
+        spawn_setup::SpawnSetup,
         wiring::Wiring,
     };
 
-    fn boom() -> ! {
-        panic!("boom")
-    }
-
     fn stock_startup() -> Startup {
         Startup::default()
-    }
-
-    fn start_paths(dir: &Path) -> StartupPaths {
-        StartupPaths {
-            config_paths: ConfigPaths {
-                config_path: dir.join("config.toml"),
-                appearance_path: dir.join("sifr-ui.toml"),
-                themes_dir: dir.join("themes"),
-                default_music_dir: None,
-                theme_name: None,
-                seen_texts: SeenTexts::default(),
-            },
-            library_dirs: LibraryDirs::under(dir),
-        }
     }
 
     struct QuitShell;
@@ -304,7 +283,7 @@ mod tests {
         let startup = stock_startup();
         let (spawners, cmd_receiver) = recording_spawners();
         let runtime =
-            Runtime::start(startup, &start_paths(directory.path()), &spawners).unwrap();
+            Runtime::start(startup, &stub_paths(directory.path()), &spawners).unwrap();
         let (keys, input) = unbounded();
         keys.send(()).unwrap();
         let mut shell = QuitShell;
@@ -352,7 +331,7 @@ mod tests {
     #[test]
     fn drain_on_stop_writes_the_pending_config_save() {
         let directory = tempfile::tempdir().unwrap();
-        let paths = start_paths(directory.path());
+        let paths = stub_paths(directory.path());
         let config_path = paths.config_paths.config_path.clone();
         let startup = stock_startup();
         let spawners = Spawners {
@@ -406,7 +385,7 @@ mod tests {
     #[test]
     fn a_paint_failure_still_writes_the_pending_config_save() {
         let directory = tempfile::tempdir().unwrap();
-        let paths = start_paths(directory.path());
+        let paths = stub_paths(directory.path());
         let config_path = paths.config_paths.config_path.clone();
         let startup = stock_startup();
         let spawners = Spawners {
@@ -446,7 +425,7 @@ mod tests {
         };
         let asked = Instant::now();
         let runtime =
-            Runtime::start(stock_startup(), &start_paths(directory.path()), &spawners)
+            Runtime::start(stock_startup(), &stub_paths(directory.path()), &spawners)
                 .unwrap();
         let (keys, input) = unbounded();
         keys.send(()).unwrap();
@@ -513,7 +492,7 @@ mod tests {
         let startup = stock_startup();
         let runtime = Runtime::start(
             startup,
-            &start_paths(directory.path()),
+            &stub_paths(directory.path()),
             &panicking_spawners(),
         )
         .unwrap();
@@ -560,7 +539,7 @@ mod tests {
             ..idle_spawners()
         };
         let mut runtime =
-            Runtime::start(stock_startup(), &start_paths(directory.path()), &spawners)
+            Runtime::start(stock_startup(), &stub_paths(directory.path()), &spawners)
                 .unwrap();
 
         let died = runtime

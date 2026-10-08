@@ -21,12 +21,17 @@ const EMPTY_PLACEHOLDER: &str = "No servers · u adds one";
 const MARKER: &str = "> ";
 const MIN_WIDTH: Cells = Cells(44);
 
-#[derive(Debug)]
-pub(crate) struct ServersWidget<'a> {
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServersTable<'a> {
     rows: Vec<[Span<'a>; 5]>,
-    selected: ViewIndex,
     starts: [usize; 5],
     content_width: Cells,
+}
+
+#[derive(Debug)]
+pub(crate) struct ServersWidget<'a> {
+    servers_table: &'a ServersTable<'a>,
+    selected: ViewIndex,
     avoid: &'a [Rect],
     theme: ActiveTheme<'a>,
 }
@@ -56,12 +61,12 @@ fn status(
     }
 }
 
-impl<'a> ServersWidget<'a> {
+impl<'a> ServersTable<'a> {
     #[must_use]
     pub(crate) fn new(
         servers: &'a [Server],
         selected: ViewIndex,
-        active_theme: ActiveTheme<'a>,
+        active_theme: &ActiveTheme<'_>,
     ) -> Self {
         let colors = active_theme.colors();
         let widths = servers.iter().map(columns).fold(
@@ -99,7 +104,7 @@ impl<'a> ServersWidget<'a> {
                     name,
                     host,
                     user,
-                    status(&server.server_status, &active_theme).into(),
+                    status(&server.server_status, active_theme).into(),
                 ]
             })
             .collect::<Vec<_>>();
@@ -112,10 +117,23 @@ impl<'a> ServersWidget<'a> {
             .max(TITLE.width());
         Self {
             rows,
-            selected,
             starts,
             content_width: MIN_WIDTH
                 .max(u16::try_from(widest).map_or(MIN_WIDTH, Cells)),
+        }
+    }
+}
+
+impl<'a> ServersWidget<'a> {
+    #[must_use]
+    pub(crate) fn new(
+        servers_table: &'a ServersTable<'a>,
+        selected: ViewIndex,
+        active_theme: ActiveTheme<'a>,
+    ) -> Self {
+        Self {
+            servers_table,
+            selected,
             avoid: &[],
             theme: active_theme,
         }
@@ -133,8 +151,8 @@ impl<'a> ServersWidget<'a> {
             title: TITLE,
             size: ModalSize::Dialog {
                 min_width: MIN_WIDTH,
-                content_width: self.content_width,
-                content_rows: u16::try_from(self.rows.len().max(1))
+                content_width: self.servers_table.content_width,
+                content_rows: u16::try_from(self.servers_table.rows.len().max(1))
                     .map_or(Cells(u16::MAX), Cells),
             },
             hint: Some(line([text(HINT).fg(colors.muted_foreground)])),
@@ -152,7 +170,7 @@ impl<'a> ServersWidget<'a> {
         let buffer = canvas.buffer;
         self.modal().paint(areas, buffer);
         let body = areas.body;
-        if self.rows.is_empty() && body.height != 0 {
+        if self.servers_table.rows.is_empty() && body.height != 0 {
             buffer.set_stringn(
                 body.x,
                 body.y,
@@ -166,22 +184,28 @@ impl<'a> ServersWidget<'a> {
 
     fn paint_rows(&self, body: Rect, buffer: &mut Buffer) {
         let colors = self.theme.colors();
+        let starts = self.servers_table.starts;
         let place = |start: usize| {
             u16::try_from(start)
                 .ok()
                 .map(|start| body.x.saturating_add(start))
                 .filter(|x| *x < body.right())
         };
-        for (index, (row, y)) in self.rows.iter().zip(body.y..body.bottom()).enumerate()
+        for (index, (row, y)) in self
+            .servers_table
+            .rows
+            .iter()
+            .zip(body.y..body.bottom())
+            .enumerate()
         {
-            for (span, start) in row.iter().zip(self.starts) {
+            for (span, start) in row.iter().zip(starts) {
                 if let Some(x) = place(start) {
                     buffer.set_span(x, y, span, body.right() - x);
                 }
             }
             if index == self.selected.get() {
                 let [.., status] = row;
-                let [.., start] = self.starts;
+                let [.., start] = starts;
                 let row_width = u16::try_from(start + status.width())
                     .map_or(body.width, |width| width.min(body.width));
                 buffer.set_style(
@@ -219,7 +243,7 @@ mod tests {
     };
 
     use crate::{
-        overlay::servers::ServersWidget,
+        overlay::servers::{ServersTable, ServersWidget},
         primitive::canvas::Canvas,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
@@ -235,11 +259,10 @@ mod tests {
 
     fn frame(servers: &[Server]) -> String {
         let theme = noir();
-        let widget = ServersWidget::new(
-            servers,
-            ViewIndex::new(1),
-            ActiveTheme::new(&theme, ColorDepth::TrueColor),
-        );
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let selected = ViewIndex::new(1);
+        let servers_table = ServersTable::new(servers, selected, &active_theme);
+        let widget = ServersWidget::new(&servers_table, selected, active_theme);
         rendered(100, 20, |frame| {
             let area = frame.area();
             widget.paint(

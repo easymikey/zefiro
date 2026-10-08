@@ -49,6 +49,7 @@ impl PlaylistWidget<'_> {
             cursor_band(scroll_areas.rows, window, self.view.selected.get());
         PlaylistAreas {
             pane,
+            banner: Rect::default(),
             scroll_areas,
             window,
             selected_area,

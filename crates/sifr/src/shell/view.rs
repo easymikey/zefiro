@@ -30,6 +30,10 @@ mod tests {
     use std::time::Duration;
 
     use audio::tap::SpectrumTap;
+    use config::{
+        embedded_theme::{STOCK_THEME, STOCK_THEME_TEXT},
+        theme_file::parse_theme,
+    };
     use kernel::domain::{model::Model, time::Moment};
     use ratatui::layout::Rect;
     use runtime::shell::Frame;
@@ -39,13 +43,10 @@ mod tests {
         theme::rgb::ColorDepth,
     };
 
-    use crate::{
-        shell::{
-            motion::Motion,
-            presentation::{ShellPresentation, theme},
-            view::scene,
-        },
-        startup::fallback_theme,
+    use crate::shell::{
+        motion::Motion,
+        presentation::{ShellPresentation, theme},
+        view::scene,
     };
 
     #[test]
@@ -56,7 +57,7 @@ mod tests {
         let spectrum_tap = SpectrumTap::silent();
         let area = Rect::new(0, 0, 80, 24);
         let presentation = ShellPresentation::new(
-            theme(fallback_theme()),
+            theme(parse_theme(STOCK_THEME_TEXT, STOCK_THEME).unwrap()),
             PixelPath::Halfblocks,
             ColorDepth::TrueColor,
         );

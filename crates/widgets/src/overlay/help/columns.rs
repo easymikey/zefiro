@@ -184,7 +184,7 @@ fn available_width(full: Rect) -> Cells {
     list_capacity(full, Hint::Hidden).width
 }
 
-fn columns_width(columns: &[HelpColumn], column_gap_width: Cells) -> Cells {
+pub(crate) fn columns_width(columns: &[HelpColumn], column_gap_width: Cells) -> Cells {
     let content = columns
         .iter()
         .fold(0u16, |total, column| total.saturating_add(column.width.0));

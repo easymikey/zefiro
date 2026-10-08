@@ -19,11 +19,13 @@ use crate::{
         help::HelpColumns,
         history::HistoryMeasures,
         modal::placement::OverlayAreas,
+        servers::ServersTable,
         settings::SettingsTable,
         track_details::TrackDetailsRow,
     },
     playlist::row::PlaylistAreas,
     screen::breakpoint::Breakpoint,
+    toast::Placement,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,7 +41,7 @@ pub enum OverlayContent<'a> {
     TrackDetails(Vec<TrackDetailsRow<'a>>),
     MusicDir(&'a TextEntry<MusicDirError>),
     AddServer(&'a ServerPrompt),
-    Servers(&'a CursorOver<()>),
+    Servers(&'a CursorOver<()>, ServersTable<'a>),
     ConfirmRemove(&'a ServerName),
 }
 
@@ -59,7 +61,7 @@ pub struct FrameLayout<'a> {
     pub search_bounds: Rect,
     pub overlay_areas: Option<OverlayAreas>,
     pub overlay_content: Option<OverlayContent<'a>>,
-    pub toast: Option<Rect>,
+    pub toast_placement: Option<Placement<'a>>,
 }
 
 impl FrameLayout<'_> {
@@ -80,7 +82,7 @@ impl FrameLayout<'_> {
             search_bounds: Rect::default(),
             overlay_areas: None,
             overlay_content: None,
-            toast: None,
+            toast_placement: None,
         }
     }
 

@@ -169,8 +169,8 @@ mod tests {
         deck::{
             Deck,
             envelope::EnvelopeControl,
-            feed::serve,
-            mixer::{DECLICK_FRAMES, Mixer, RETIRED_SLOTS},
+            feed::serve::serve,
+            mixer::{Mixer, RETIRED_SLOTS},
             output::{Fader, Output, tests::mixed_output},
             source::{
                 DecodedTrack,
@@ -178,6 +178,7 @@ mod tests {
                 tests::{decoded, ramp_file},
             },
             tests::{deck_with_detached_output, played, pulled, track},
+            voice::DECLICK_FRAMES,
         },
         engine::{
             effect::EngineEffect,
@@ -501,6 +502,23 @@ mod tests {
                 }),
             );
         }
+    }
+
+    #[test]
+    fn a_dropped_gapless_preload_leaves_no_incoming_control() {
+        let mut deck = deck_with_detached_output();
+        let (
+            _incoming_file,
+            _incoming_source,
+            _incoming_envelope,
+            incoming,
+            _incoming_feed,
+        ) = played(100, Revision::default().next());
+        deck.output.as_mut().unwrap().incoming_control = Some(incoming);
+
+        assert!(execute(EngineEffect::DropPreload, &mut deck).is_none());
+
+        assert!(deck.output.as_ref().unwrap().incoming_control.is_none());
     }
 
     #[rstest]

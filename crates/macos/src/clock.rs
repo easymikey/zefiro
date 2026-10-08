@@ -4,93 +4,77 @@ use std::time::{Duration, Instant};
 
 use kernel::{cmd::Playback, domain::speed::Speed};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum NowPlayingClock {
-    Paused {
-        offset: Duration,
-        speed: Speed,
-    },
-    Playing {
-        offset: Duration,
-        started_at: Instant,
-        speed: Speed,
-    },
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct NowPlayingClock {
+    offset: Duration,
+    speed: Speed,
+    run: Run,
 }
 
-impl Default for NowPlayingClock {
-    fn default() -> Self {
-        Self::Paused {
-            offset: Duration::ZERO,
-            speed: Speed::default(),
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+enum Run {
+    #[default]
+    Paused,
+    Playing(Instant),
+}
+
+impl Run {
+    fn restarted(self, now: Instant) -> Self {
+        match self {
+            Self::Paused => Self::Paused,
+            Self::Playing(_) => Self::Playing(now),
         }
     }
 }
 
 impl NowPlayingClock {
     pub(crate) fn playback(self) -> Playback {
-        match self {
-            Self::Paused { .. } => Playback::Paused,
-            Self::Playing { .. } => Playback::Playing,
+        match self.run {
+            Run::Paused => Playback::Paused,
+            Run::Playing(_) => Playback::Playing,
         }
     }
 
     pub(crate) fn speed(self) -> Speed {
-        match self {
-            Self::Paused {
-                speed,
-                offset: _offset,
-            } => speed,
-            Self::Playing {
-                speed,
-                offset: _offset,
-                started_at: _started_at,
-            } => speed,
-        }
+        self.speed
     }
 
     pub(crate) fn elapsed(self, now: Instant) -> Duration {
-        match self {
-            Self::Paused {
-                offset,
-                speed: _speed,
-            } => offset,
-            Self::Playing {
-                offset,
-                started_at,
-                speed,
-            } => offset.saturating_add(
+        match self.run {
+            Run::Paused => self.offset,
+            Run::Playing(started_at) => self.offset.saturating_add(
                 now.saturating_duration_since(started_at)
-                    .mul_f32(speed.get()),
+                    .mul_f32(self.speed.get()),
             ),
         }
     }
 
     pub(crate) fn seek(self, to: Duration, now: Instant) -> Self {
-        Self::Paused {
+        Self {
             offset: to,
-            speed: self.speed(),
+            speed: self.speed,
+            run: self.run.restarted(now),
         }
-        .change_playback(self.playback(), now)
     }
 
     pub(crate) fn change_playback(self, playback: Playback, now: Instant) -> Self {
-        let (offset, speed) = (self.elapsed(now), self.speed());
-        match playback {
-            Playback::Paused => Self::Paused { offset, speed },
-            Playback::Playing => Self::Playing {
-                offset,
-                started_at: now,
-                speed,
-            },
+        let run = match playback {
+            Playback::Paused => Run::Paused,
+            Playback::Playing => Run::Playing(now),
+        };
+        Self {
+            offset: self.elapsed(now),
+            speed: self.speed,
+            run,
         }
     }
 
     pub(crate) fn at_speed(self, speed: Speed, now: Instant) -> Self {
-        Self::Paused {
+        Self {
             offset: self.elapsed(now),
             speed,
+            run: self.run.restarted(now),
         }
-        .change_playback(self.playback(), now)
     }
 }
 

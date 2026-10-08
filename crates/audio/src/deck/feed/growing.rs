@@ -2,24 +2,15 @@ use std::{sync::atomic::Ordering, time::Duration};
 
 use crossbeam_channel::TrySendError;
 
-use crate::{
-    deck::{
-        event::DeckEvent,
-        feed::{Feed, FeedPhase, Wake},
-        source::GrowingDownload,
-    },
-    engine::message::{AudioMessage, EngineMessage},
+use crate::deck::{
+    event::DeckEvent,
+    feed::{Feed, FeedPhase, Wake},
+    source::GrowingDownload,
 };
 
 const READ_MARGIN: u64 = 256 * 1024;
 
 impl Feed {
-    pub(crate) fn report(&self, message: EngineMessage) {
-        match self.callback_sender.try_send(AudioMessage::Engine(message)) {
-            Ok(()) | Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {}
-        }
-    }
-
     pub(crate) fn due_seek(&self) -> Option<u32> {
         let generation = self.seek_target.generation.load(Ordering::Acquire);
         let target = Duration::from_nanos(
@@ -42,15 +33,6 @@ impl Feed {
         self.decoder.download.as_ref().is_none_or(|download| {
             buffered(download, download.read_byte.load(Ordering::Acquire))
         })
-    }
-
-    pub(crate) fn stalled(&mut self) -> bool {
-        let stalled = !self.has_margin();
-        if stalled {
-            self.phase = FeedPhase::Buffering;
-            self.buffering_wake = Wake::Pending;
-        }
-        stalled
     }
 
     pub(crate) fn buffer(&mut self) {
@@ -171,11 +153,11 @@ mod tests {
         source.seek(Duration::from_secs(30));
         let due_before_grow = feed.due_seek();
         let mut kept = feed.empty_consumer.pop().unwrap();
-        feed.fill(&mut kept);
+        feed.fill(&mut kept, due_before_grow);
         downloaded.store(byte_len, Ordering::Release);
         let due_after_grow = feed.due_seek();
         let mut landed = feed.empty_consumer.pop().unwrap();
-        feed.fill(&mut landed);
+        feed.fill(&mut landed, due_after_grow);
 
         assert_eq!((due_before_grow, due_after_grow), (None, Some(1)));
         assert_eq!(

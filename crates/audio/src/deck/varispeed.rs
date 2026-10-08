@@ -296,13 +296,14 @@ mod tests {
     use crate::{
         deck::{
             feed::{FeedCmd, feed_channel, play},
-            mixer::{MixerChannel, MixerOrder, Voice, mixer_channel},
+            mixer::{MixerChannel, MixerOrder, mixer_channel},
             source::{
                 DecodedTrack,
                 decode,
                 tests::{decoded, ramp_file},
             },
             varispeed::{Conversion, OutputFormat, Varispeed},
+            voice::Voice,
         },
         engine::message::SinkRole,
         tap::spectrum_channel,

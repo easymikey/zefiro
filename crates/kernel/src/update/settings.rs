@@ -52,22 +52,23 @@ fn step_appearance(
     let row = field.row();
     let option = field_choice(field, settings.appearance_settings)
         .stepped(row.control, direction);
-    let patch = appearance_patch(field, option);
-    if let Some(patch) = patch {
-        settings.appearance_settings = settings.appearance_settings.patched(patch);
-    }
-    let setting =
-        patch.map(|patch| Cmd::from(Effect::Config(ConfigCmd::SetAppearance(patch))));
-    let theme = (field == AppearanceField::Preset)
-        .then(|| preset_of(settings.appearance_settings))
-        .flatten()
-        .and_then(AppearancePreset::theme)
-        .map(|name| select_theme(themes, name));
-    let cue = row.cue.map(Cmd::from);
-    [setting, theme, cue]
-        .into_iter()
-        .flatten()
-        .fold(Cmd::none(), Cmd::then)
+    let setting = match appearance_patch(field, option) {
+        Some(patch) => {
+            settings.appearance_settings = settings.appearance_settings.patched(patch);
+            Cmd::from(Effect::Config(ConfigCmd::SetAppearance(patch)))
+        }
+        None => Cmd::none(),
+    };
+    let theme = if field == AppearanceField::Preset
+        && let Some(name) =
+            preset_of(settings.appearance_settings).and_then(AppearancePreset::theme)
+    {
+        select_theme(themes, name)
+    } else {
+        Cmd::none()
+    };
+    let cue = row.cue.map_or_else(Cmd::none, Cmd::from);
+    setting.then(theme).then(cue)
 }
 
 fn step_theme(themes: &mut Themes, direction: Direction) -> Result<Cmd, Unhandled> {

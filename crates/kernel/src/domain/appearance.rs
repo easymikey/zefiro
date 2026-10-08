@@ -3,6 +3,7 @@ use std::{fmt, str::FromStr};
 use strum::{EnumIter, EnumString, IntoEnumIterator, VariantNames};
 
 use crate::domain::{
+    config::Diagnostic,
     geometry::{Cells, Pixels},
     theme::ThemeName,
 };
@@ -267,7 +268,7 @@ struct HexError(String);
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ColorError {
     #[error("{0}")]
-    Malformed(crate::domain::config::Diagnostic),
+    Malformed(Diagnostic),
 }
 
 #[must_use]
@@ -302,9 +303,9 @@ impl FromStr for Rgb {
                 ]))
             })
             .ok_or_else(|| {
-                ColorError::Malformed(crate::domain::config::Diagnostic::from_error(
-                    &HexError(spelling.into()),
-                ))
+                ColorError::Malformed(Diagnostic::from_error(&HexError(
+                    spelling.into(),
+                )))
             })
     }
 }

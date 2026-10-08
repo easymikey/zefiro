@@ -56,30 +56,32 @@ pub struct LatestSenders {
     pub(crate) cover_sender: LatestSender<CoverDecoded>,
 }
 
+fn cell<T>(doorbell_sender: Sender<()>) -> (LatestSender<T>, LatestReceiver<T>) {
+    let value = Arc::new(ArcSwapOption::empty());
+    (
+        LatestSender {
+            value: Arc::clone(&value),
+            doorbell_sender,
+        },
+        LatestReceiver { value },
+    )
+}
+
 #[must_use]
 pub fn latest_channels() -> (LatestSenders, LatestReceivers, Receiver<()>) {
     let (doorbell_sender, doorbell) = bounded(1);
-    let theme = Arc::new(ArcSwapOption::empty());
-    let appearance = Arc::new(ArcSwapOption::empty());
-    let cover = Arc::new(ArcSwapOption::empty());
+    let (theme_sender, theme_receiver) = cell(doorbell_sender.clone());
+    let (appearance_sender, appearance_receiver) = cell(doorbell_sender.clone());
+    let (cover_sender, cover_receiver) = cell(doorbell_sender);
     let latest_senders = LatestSenders {
-        theme_sender: LatestSender {
-            value: Arc::clone(&theme),
-            doorbell_sender: doorbell_sender.clone(),
-        },
-        appearance_sender: LatestSender {
-            value: Arc::clone(&appearance),
-            doorbell_sender: doorbell_sender.clone(),
-        },
-        cover_sender: LatestSender {
-            value: Arc::clone(&cover),
-            doorbell_sender,
-        },
+        theme_sender,
+        appearance_sender,
+        cover_sender,
     };
     let latest_receivers = LatestReceivers {
-        theme_receiver: LatestReceiver { value: theme },
-        appearance_receiver: LatestReceiver { value: appearance },
-        cover_receiver: LatestReceiver { value: cover },
+        theme_receiver,
+        appearance_receiver,
+        cover_receiver,
     };
     (latest_senders, latest_receivers, doorbell)
 }
@@ -89,28 +91,12 @@ mod tests {
     use crossbeam_channel::bounded;
     use library::cover::{CoverDecoded, CoverLookup};
 
-    use crate::latest::{LatestReceiver, LatestSender};
-
-    fn pair<T>() -> (
-        LatestSender<T>,
-        LatestReceiver<T>,
-        crossbeam_channel::Receiver<()>,
-    ) {
-        let (doorbell_sender, doorbell) = bounded(1);
-        let value = std::sync::Arc::new(arc_swap::ArcSwapOption::empty());
-        (
-            LatestSender {
-                value: std::sync::Arc::clone(&value),
-                doorbell_sender,
-            },
-            LatestReceiver { value },
-            doorbell,
-        )
-    }
+    use crate::latest::cell;
 
     #[test]
     fn a_reading_sees_only_the_latest_value() {
-        let (latest_sender, reading, _doorbell) = pair::<i32>();
+        let (doorbell_sender, _doorbell) = bounded(1);
+        let (latest_sender, reading) = cell::<i32>(doorbell_sender);
         latest_sender.publish(1);
         latest_sender.publish(2);
         latest_sender.publish(3);
@@ -128,7 +114,8 @@ mod tests {
 
     #[test]
     fn a_cover_cell_keeps_the_latest_decode() {
-        let (latest_sender, reading, _doorbell) = pair::<CoverDecoded>();
+        let (doorbell_sender, _doorbell) = bounded(1);
+        let (latest_sender, reading) = cell::<CoverDecoded>(doorbell_sender);
         latest_sender.publish(stub_decoded("first.mp3"));
         latest_sender.publish(stub_decoded("second.mp3"));
         let installed = reading.take().unwrap();
@@ -138,7 +125,8 @@ mod tests {
 
     #[test]
     fn a_full_doorbell_is_success() {
-        let (latest_sender, _reading, doorbell) = pair::<i32>();
+        let (doorbell_sender, doorbell) = bounded(1);
+        let (latest_sender, _reading) = cell::<i32>(doorbell_sender);
         latest_sender.publish(1);
         latest_sender.publish(2);
         assert_eq!(doorbell.try_iter().count(), 1);

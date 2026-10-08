@@ -21,6 +21,7 @@ use crate::{
     },
     overlay::modal::placement::OverlayAreas,
     playlist::row::favorite_cell,
+    toast::Placement,
 };
 
 impl AnimationStage {
@@ -40,7 +41,7 @@ impl AnimationStage {
         let layout = &backdrop.layout;
         self.vacated_areas = VacatedAreas {
             overlay: layout.overlay_areas.map(OverlayAreas::outer),
-            toast: layout.toast,
+            toast: layout.toast_placement.as_ref().map(Placement::area),
             selected_row: layout
                 .playlist_areas
                 .and_then(|playlist| playlist.selected_area),
@@ -59,7 +60,10 @@ impl AnimationStage {
             }
             Cue::OverlayClosed => self.stage_at(modal_reveal(), vacated.overlay),
             Cue::ToastRaised => {
-                self.stage_at(toast_slide_in(backdrop.style.background), layout.toast);
+                self.stage_at(
+                    toast_slide_in(backdrop.style.background),
+                    layout.toast_placement.as_ref().map(Placement::area),
+                );
             }
             Cue::ToastDismissed => {
                 self.stage_at(

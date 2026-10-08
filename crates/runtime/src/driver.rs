@@ -163,16 +163,14 @@ pub(crate) mod tests {
         time::{Duration, Instant},
     };
 
-    use audio::{AudioDriver, FeedChannel, engine::message::AudioMessage};
     use crossbeam_channel::{Receiver, Sender, bounded, never, unbounded};
     use kernel::{
-        cmd::{AudioCmd, Cmd, Cmds},
+        cmd::{Cmd, Cmds},
         domain::{
             driver::{DriverError, DriverName},
             io_error::IoError,
-            settings::AudioSettings,
         },
-        message::{AudioEvent, DriverEvent, Message},
+        message::{DriverEvent, Message},
         update::machine::{Driver, LoopCmd, LoopEffect, Machine, Unhandled},
     };
 
@@ -183,7 +181,6 @@ pub(crate) mod tests {
         registry,
         runtime::Runtime,
         spawn::tests::spawn_idle,
-        spawn_setup::{CALLBACK_SLOTS, FEED_SLOTS},
         timers::Timers,
         watcher::FileStream,
     };
@@ -573,70 +570,6 @@ pub(crate) mod tests {
                 event: DriverEvent::Died(DriverError::Panicked)
             })
         );
-        drop(thread.cmd_sender);
-        thread.handle.join().unwrap();
-    }
-
-    fn start_audio_driver() -> (DriverThread<AudioCmd>, Receiver<Message>) {
-        let (inbox, sent) = unbounded();
-        let (callback_sender, callback_receiver) = bounded(CALLBACK_SLOTS);
-        let (feed_sender, feed_receiver) = bounded(FEED_SLOTS);
-        let feed_channel = FeedChannel {
-            feed_sender,
-            feed_receiver,
-        };
-        let settings = AudioSettings::default();
-        let row = registry::row(DriverName::Audio);
-        let run_job = audio::deck::job::AudioJob::run;
-        let thread = DriverLoop::<AudioDriver, _> {
-            row,
-            inbox,
-            callback_receiver,
-            message: Some(AudioMessage::Started),
-            run_job,
-        }
-        .spawn(move || AudioDriver::new(settings, callback_sender, feed_channel).0)
-        .unwrap();
-        (thread, sent)
-    }
-
-    fn is_devices_answer(message: &Result<Message, impl Sized>) -> bool {
-        matches!(
-            message,
-            Ok(Message::Audio(
-                AudioEvent::DevicesListed(_) | AudioEvent::Error(_)
-            ))
-        )
-    }
-
-    #[test]
-    #[ignore = "hardware: opens the output device"]
-    fn a_listed_devices_answer_comes_back_through_the_deck_inbox() {
-        let (thread, sent) = start_audio_driver();
-
-        thread.cmd_sender.send(AudioCmd::ListDevices).unwrap();
-        assert!(is_devices_answer(
-            &sent.recv_timeout(Duration::from_secs(5))
-        ));
-        assert!(sent.try_recv().is_err());
-
-        drop(thread.cmd_sender);
-        thread.handle.join().unwrap();
-    }
-
-    #[test]
-    #[ignore = "hardware: opens the output device"]
-    fn a_muted_start_reports_nothing_until_a_cmd_arrives() {
-        let (thread, sent) = start_audio_driver();
-
-        thread::sleep(Duration::from_millis(250));
-        assert!(sent.try_recv().is_err());
-
-        thread.cmd_sender.send(AudioCmd::ListDevices).unwrap();
-        assert!(is_devices_answer(
-            &sent.recv_timeout(Duration::from_secs(5))
-        ));
-
         drop(thread.cmd_sender);
         thread.handle.join().unwrap();
     }

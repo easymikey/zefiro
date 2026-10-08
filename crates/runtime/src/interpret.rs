@@ -12,51 +12,41 @@ fn shuffle_order(len: usize) -> Vec<ViewIndex> {
 
 impl Runtime {
     pub(crate) fn interpret(&mut self, effects: Vec<Effect>) -> Vec<Message> {
-        effects
-            .into_iter()
-            .filter_map(|effect| match effect {
+        let mut answers = Vec::new();
+        for effect in effects {
+            match effect {
                 Effect::Audio(cmd) => {
                     self.wiring.ports.audio.send(&self.model.drivers, cmd);
-                    None
                 }
                 Effect::Library(cmd) => {
                     self.wiring.ports.library.send(&self.model.drivers, cmd);
-                    None
                 }
                 Effect::Macos(cmd) => {
                     self.wiring.ports.macos.send(&self.model.drivers, cmd);
-                    None
                 }
                 Effect::Remote(cmd) => {
                     self.wiring.ports.remote.send(&self.model.drivers, cmd);
-                    None
                 }
                 Effect::Config(cmd) => {
                     self.wiring.ports.config.send(&self.model.drivers, cmd);
-                    None
                 }
                 Effect::WindowColors(cmd) => {
                     self.shell_effects.push(ShellEffect::WindowColors(cmd));
-                    None
                 }
                 Effect::Animate(cue) => {
                     self.shell_effects.push(ShellEffect::Animate(cue));
-                    None
                 }
                 Effect::RollShuffle(len) => {
-                    Some(Message::ShuffleRolled(shuffle_order(len)))
+                    answers.push(Message::ShuffleRolled(shuffle_order(len)));
                 }
-                Effect::After { delay, timer } => {
-                    self.timers.after(delay, timer);
-                    None
+                Effect::After { delay, timer } => self.timers.after(delay, timer),
+                Effect::Restart(driver) => {
+                    answers.extend(self.wiring.restart(driver, &self.model));
                 }
-                Effect::Restart(driver) => self.wiring.restart(driver, &self.model),
-                Effect::Quit => {
-                    self.flow = ControlFlow::Break(());
-                    None
-                }
-            })
-            .collect()
+                Effect::Quit => self.flow = ControlFlow::Break(()),
+            }
+        }
+        answers
     }
 }
 

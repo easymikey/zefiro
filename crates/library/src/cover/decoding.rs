@@ -77,6 +77,13 @@ impl CoverDecoding {
         }
     }
 
+    pub(crate) fn is_current(&self, revision: Revision) -> bool {
+        matches!(
+            self,
+            CoverDecoding::Busy { job: _job, revision: busy_revision } if *busy_revision == revision
+        )
+    }
+
     fn start(
         &mut self,
         cover_job: CoverJob,

@@ -53,7 +53,7 @@ impl<'a> FrameLayout<'a> {
             overlay_areas: OverlayWidget::new(overlay_view, &body)
                 .avoid(body.cover_exclusion(scene.cover_mode()))
                 .areas(screen),
-            toast: ToastWidget::from_scene(scene)
+            toast_placement: ToastWidget::from_scene(scene)
                 .and_then(|toast_widget| toast_widget.area(screen, body.breakpoint)),
             ..body
         }
@@ -304,8 +304,9 @@ mod tests {
         model.workspace.toasts = vec![Toast::info("Saved")];
         let sources = SceneSources::new(model);
         let toast = FrameLayout::from_scene(&sources.scene(), screen())
-            .toast
-            .unwrap();
+            .toast_placement
+            .unwrap()
+            .area();
         assert_eq!(toast.y, 1);
         assert_eq!(toast.right(), screen().right() - 1);
     }
@@ -319,7 +320,7 @@ mod tests {
         assert_eq!(layout.breakpoint, Breakpoint::TooSmall);
         assert_eq!(layout.card_metrics, None);
         assert_eq!(layout.playlist_areas, None);
-        assert_eq!(layout.toast, None);
+        assert_eq!(layout.toast_placement, None);
     }
 
     #[derive(Debug, Clone, Copy)]

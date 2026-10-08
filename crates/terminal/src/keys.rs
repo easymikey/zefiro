@@ -4,7 +4,24 @@ use kernel::domain::key::{Key, KeyCode, KeyPress, Modifiers};
 #[must_use]
 pub fn key_press(key_event: KeyEvent) -> Option<KeyPress> {
     let typed = key(key_event)?;
-    let key = key(normalized(key_event)).unwrap_or(typed);
+    let key = Key {
+        code: match typed.code {
+            KeyCode::Char(character) => KeyCode::Char(qwerty_char(character)),
+            other @ (KeyCode::Enter
+            | KeyCode::Esc
+            | KeyCode::Backspace
+            | KeyCode::Up
+            | KeyCode::Down
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::Tab
+            | KeyCode::PageUp
+            | KeyCode::PageDown) => other,
+        },
+        modifiers: typed.modifiers,
+    };
     Some(KeyPress { key, typed })
 }
 
@@ -12,17 +29,6 @@ const JCUKEN_LAYOUT: &str =
     "йцукенгшщзхъфывапролджэячсмитьбю.ЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮ,";
 const QWERTY_LAYOUT: &str =
     "qwertyuiop[]asdfghjkl;'zxcvbnm,./QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>?";
-
-fn normalized(key_event: KeyEvent) -> KeyEvent {
-    if let CrosstermCode::Char(character) = key_event.code {
-        KeyEvent {
-            code: CrosstermCode::Char(qwerty_char(character)),
-            ..key_event
-        }
-    } else {
-        key_event
-    }
-}
 
 fn qwerty_char(character: char) -> char {
     Some(character)

@@ -140,16 +140,10 @@ impl ScreenWidget<'_> {
                     },
                 );
         }
-        if let Some((toast, areas)) =
-            ToastWidget::from_scene(&self.scene).zip(self.frame_layout.toast)
+        if let Some((toast, placement)) = ToastWidget::from_scene(&self.scene)
+            .zip(self.frame_layout.toast_placement.as_ref())
         {
-            toast.paint(
-                areas,
-                Canvas {
-                    area: screen,
-                    buffer,
-                },
-            );
+            toast.paint(placement, buffer);
         }
     }
 }

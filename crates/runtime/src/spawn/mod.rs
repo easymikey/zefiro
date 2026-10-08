@@ -74,6 +74,7 @@ pub(crate) mod tests {
     use crate::{
         driver_thread::{Congestion, DriverThread, spawn_driver},
         error::SpawnError,
+        latest::LatestReceivers,
         registry::{self, DriverRow},
         runtime::Runtime,
         spawn::{ConfigCmd, LibraryCmd, RemoteCmd, Spawners},
@@ -140,6 +141,36 @@ pub(crate) mod tests {
     }
 
     pub(crate) const RECV_TIMEOUT: Duration = Duration::from_secs(1);
+
+    pub(crate) const SETTLE_TIMEOUT: Duration = Duration::from_millis(200);
+
+    pub(crate) fn drain<T>(receiver: &Receiver<T>) -> Vec<T> {
+        let mut collected = vec![receiver.recv_timeout(RECV_TIMEOUT).unwrap()];
+        collected.extend(std::iter::from_fn(|| {
+            receiver.recv_timeout(SETTLE_TIMEOUT).ok()
+        }));
+        collected
+    }
+
+    pub(crate) fn spawned_with<T>(
+        spawner: fn(&SpawnSetup<'_>) -> Result<T, SpawnError>,
+        paths: &StartupPaths,
+        inbox: &Sender<Message>,
+    ) -> (T, LatestReceivers, Receiver<()>) {
+        let (model, _cmd) = kernel::update::startup::startup(Startup::default());
+        let (latest_senders, latest_receivers, doorbell) =
+            crate::latest::latest_channels();
+        let spawned = spawner(&SpawnSetup {
+            audio_settings: &model.settings.audio_settings,
+            paths,
+            inbox,
+            latest_senders: &latest_senders,
+            #[cfg(target_os = "macos")]
+            macos_channel: &crate::spawn_setup::MacosChannel::new(),
+        })
+        .unwrap();
+        (spawned, latest_receivers, doorbell)
+    }
 
     pub(crate) fn stub_paths(dir: &Path) -> StartupPaths {
         StartupPaths {
@@ -235,20 +266,9 @@ pub(crate) mod tests {
     #[test]
     fn an_idle_spawner_never_opens_hardware() {
         let directory = tempfile::tempdir().unwrap();
-        let paths = stub_paths(directory.path());
         let (inbox, _inbox_receiver) = crossbeam_channel::bounded(4);
-        let (model, _cmd) = kernel::update::startup::startup(Startup::default());
-        let (latest_senders, _latest_receivers, _doorbell) =
-            crate::latest::latest_channels();
-        let setup = SpawnSetup {
-            audio_settings: &model.settings.audio_settings,
-            paths: &paths,
-            inbox: &inbox,
-            latest_senders: &latest_senders,
-            #[cfg(target_os = "macos")]
-            macos_channel: &crate::spawn_setup::MacosChannel::new(),
-        };
-        let (audio, _spectrum) = idle_audio(&setup).unwrap();
+        let ((audio, _spectrum), _latest_receivers, _doorbell) =
+            spawned_with(idle_audio, &stub_paths(directory.path()), &inbox);
 
         drop(audio.cmd_sender);
         audio.handle.join().unwrap();

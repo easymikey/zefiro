@@ -98,6 +98,19 @@ impl JobRevisions {
         });
     }
 
+    pub(crate) fn drop_preload(&mut self, current: &Media) {
+        self.preloaded_revision = None;
+        self.decoded(match current {
+            Media::Local(_media_path) => None,
+            Media::Growing(GrowingMedia {
+                media_path: _media_path,
+                downloaded: _downloaded,
+                byte_len: _byte_len,
+                revision,
+            }) => Some(*revision),
+        });
+    }
+
     fn download(&mut self, media: Media) -> (PathBuf, Option<GrowingDownload>) {
         match media {
             Media::Local(media_path) => (media_path, None),
@@ -294,6 +307,25 @@ mod tests {
                 job_revisions.grow(revision(7), 600)
             ),
             (Ok(()), Ok(()))
+        );
+    }
+
+    #[test]
+    fn a_dropped_preload_clears_its_download_and_keeps_the_current_one() {
+        let mut job_revisions = JobRevisions::default();
+        let current = growing("/a".into(), 100, 1_000);
+        drop(job_revisions.decode_job(current.clone()));
+        job_revisions.decoded(Some(revision(9)));
+        drop(job_revisions.preload_job(growing_preload("/b".into(), revision(7))));
+
+        job_revisions.drop_preload(&current);
+
+        assert_eq!(
+            (
+                job_revisions.grow(revision(9), 600),
+                job_revisions.grow(revision(7), 600)
+            ),
+            (Ok(()), Err(Unhandled))
         );
     }
 

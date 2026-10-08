@@ -89,7 +89,7 @@ impl BarFill {
     }
 }
 
-fn repeat_glyph(
+pub(crate) fn repeat_glyph(
     glyph: &'static str,
     full_run: &'static str,
     cells: usize,

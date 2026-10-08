@@ -24,7 +24,8 @@ use kernel::{
 };
 
 use crate::{
-    appearance_file::TomlAppearance,
+    appearance_file::parse_appearance,
+    config_file::parse_config_settings,
     driver::{
         effect::{ConfigEffect, ConfigLoopCmd},
         files::parent_dir,
@@ -33,7 +34,7 @@ use crate::{
         saves::PendingSaves,
         watch::{ConfigChange, ConfigWatch, ConfigWatchEffect, ConfigWatchMessage},
     },
-    embedded_theme::theme_name,
+    embedded_theme::{EMBEDDED_THEMES, theme_name},
     load::theme_parsed,
     theme_file::TomlTheme,
 };
@@ -182,11 +183,7 @@ fn changed(change: ConfigChange, default_music_dir: Option<&Path>) -> ConfigLoop
 }
 
 fn appearance_changed(text: Option<&str>) -> ConfigLoopCmd {
-    let parsed = text.map_or_else(
-        || Ok(TomlAppearance::default()),
-        crate::appearance_file::parse_appearance,
-    );
-    match parsed {
+    match parse_appearance(text.unwrap_or("")) {
         Ok(file) => {
             let appearance_settings = file.to_appearance_settings();
             Cmd::effect(LoopEffect::Execute(ConfigEffect::PublishAppearance(
@@ -208,7 +205,7 @@ fn config_changed(
     text: Option<&str>,
     default_music_dir: Option<&Path>,
 ) -> ConfigLoopCmd {
-    match crate::config_file::parse_config_settings(text.unwrap_or("")) {
+    match parse_config_settings(text.unwrap_or("")) {
         Ok(parsed) => {
             let keymap_event =
                 ConfigEvent::KeymapReloaded(Box::new(parsed.keymap_overrides));
@@ -258,7 +255,7 @@ fn reports(events: impl IntoIterator<Item = ConfigEvent>) -> ConfigLoopCmd {
 }
 
 fn embedded_and_user(user_theme_names: Vec<ThemeName>) -> Vec<ThemeName> {
-    crate::embedded_theme::EMBEDDED_THEMES
+    EMBEDDED_THEMES
         .iter()
         .map(|&(name, _)| ThemeName::from_static(name))
         .chain(user_theme_names)
@@ -442,9 +439,7 @@ mod tests {
     )]
     #[case::select_theme(cmds(vec![ConfigCmd::SelectTheme("noir".parse().unwrap())]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
     #[case::auto_theme(cmds(vec![ConfigCmd::SelectTheme(ThemeChoice::Auto)]), Ok(Cmd::effect(executed(reading(noir(), "/config/themes/noir.toml")))))]
-    #[case::save(saving(ConfigPatch {
-        ..ConfigPatch::default()
-    }), Ok(after(issued(1))))]
+    #[case::save(saving(ConfigPatch::default()), Ok(after(issued(1))))]
     fn a_fresh_driver_answers(
         #[case] message: ConfigMessage,
         #[case] expected: Result<Cmd<String, ConfigEvent>, Unhandled>,
@@ -661,9 +656,7 @@ mod tests {
     fn one_batch_saves_both_files_together() {
         let mut next = appearance_read(driver(None));
         let both = cmds(vec![
-            ConfigCmd::Save(ConfigPatch {
-                ..ConfigPatch::default()
-            }),
+            ConfigCmd::Save(ConfigPatch::default()),
             ConfigCmd::SetAppearance(cover_brackets()),
         ]);
 
@@ -682,13 +675,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::config(vec![ConfigCmd::Save(ConfigPatch {
-        ..ConfigPatch::default()
-    })], &["save_config"])]
+    #[case::config(vec![ConfigCmd::Save(ConfigPatch::default())], &["save_config"])]
     #[case::appearance(vec![ConfigCmd::SetAppearance(cover_brackets())], &["save_appearance"])]
-    #[case::both(vec![ConfigCmd::SetAppearance(cover_brackets()), ConfigCmd::Save(ConfigPatch {
-        ..ConfigPatch::default()
-    })], &["save_config", "save_appearance"])]
+    #[case::both(vec![ConfigCmd::SetAppearance(cover_brackets()), ConfigCmd::Save(ConfigPatch::default())], &["save_config", "save_appearance"])]
     #[case::nothing(vec![], &[])]
     fn flush_writes_every_pending_save_at_once(
         #[case] pending_config_cmds: Vec<ConfigCmd>,

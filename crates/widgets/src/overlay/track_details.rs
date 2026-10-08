@@ -13,10 +13,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    overlay::modal::{
-        frame::{Modal, ModalSize},
-        placement::OverlayAreas,
-    },
+    overlay::modal::frame::{Modal, ModalAreas, ModalSize},
     pixels::numeric::small_count_u16,
     primitive::{
         canvas::Canvas,
@@ -58,14 +55,11 @@ impl<'a> TrackDetailsWidget<'a> {
     }
 
     #[must_use]
-    pub(crate) fn areas(&self, screen: Rect) -> OverlayAreas {
-        OverlayAreas::Dialog(self.modal().areas(screen, self.avoid))
+    pub(crate) fn areas(&self, screen: Rect) -> ModalAreas {
+        self.modal().areas(screen, self.avoid)
     }
 
-    pub(crate) fn paint(&self, areas: OverlayAreas, canvas: Canvas<'_>) {
-        let OverlayAreas::Dialog(areas) = areas else {
-            return;
-        };
+    pub(crate) fn paint(&self, areas: ModalAreas, canvas: Canvas<'_>) {
         let buffer = canvas.buffer;
         self.modal().paint(areas, buffer);
         if areas.body.width == 0 || areas.body.height == 0 {

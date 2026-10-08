@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::Error;
 
@@ -30,7 +30,12 @@ impl LibraryDirs {
         self.cache_dir.join("media")
     }
 
-    pub fn under(root_dir: &std::path::Path) -> Self {
+    #[must_use]
+    pub fn reports_path(&self) -> PathBuf {
+        self.cache_dir.join("reports.json")
+    }
+
+    pub fn under(root_dir: &Path) -> Self {
         Self {
             cache_dir: root_dir.join("cache"),
             data_dir: root_dir.join("data"),

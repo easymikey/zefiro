@@ -1,4 +1,5 @@
 use audio::{FeedChannel, engine::message::AudioMessage, tap::SpectrumTap};
+use crossbeam_channel::SendError;
 use kernel::{cmd::AudioCmd, domain::driver::DriverName};
 
 use crate::{
@@ -35,8 +36,8 @@ pub(crate) fn spawn_audio(
                 feed_receiver,
             },
         );
-        if let Err(unclaimed) = spectrum_sender.send(spectrum_tap) {
-            drop(unclaimed.into_inner());
+        match spectrum_sender.send(spectrum_tap) {
+            Ok(()) | Err(SendError(_)) => {}
         }
         driver
     })?;
@@ -54,30 +55,41 @@ mod tests {
     use std::{
         cell::RefCell,
         sync::atomic::{AtomicUsize, Ordering},
+        thread,
+        time::Duration,
     };
 
-    use audio::tap::SpectrumTap;
-    use crossbeam_channel::{Receiver, Sender, unbounded};
+    use audio::{
+        AudioDriver,
+        FeedChannel,
+        engine::message::AudioMessage,
+        tap::SpectrumTap,
+    };
+    use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
     use kernel::{
         cmd::AudioCmd,
         domain::{
             direction::Direction,
             driver::{DriverName, DriverStatus},
             setting_row::SettingRow,
+            settings::AudioSettings,
             startup::Startup,
         },
-        message::Message,
+        message::{AudioEvent, Message},
     };
 
     use crate::{
+        driver::DriverLoop,
         driver_thread::{Congestion, DriverThread},
         error::SpawnError,
+        registry,
         runtime::Runtime,
         spawn::{
             SpawnSetup,
             Spawners,
             tests::{RECV_TIMEOUT, boom, idle_spawners, spawn_audio_loop, stub_paths},
         },
+        spawn_setup::{CALLBACK_SLOTS, FEED_SLOTS},
     };
 
     fn died_from_replay_gain_step(runtime: &mut Runtime) -> Message {
@@ -219,5 +231,69 @@ mod tests {
                 < SECOND_SPAWN_ORDER.load(Ordering::SeqCst)
         );
         runtime.drain();
+    }
+
+    fn start_audio_driver() -> (DriverThread<AudioCmd>, Receiver<Message>) {
+        let (inbox, sent) = unbounded();
+        let (callback_sender, callback_receiver) = bounded(CALLBACK_SLOTS);
+        let (feed_sender, feed_receiver) = bounded(FEED_SLOTS);
+        let feed_channel = FeedChannel {
+            feed_sender,
+            feed_receiver,
+        };
+        let settings = AudioSettings::default();
+        let row = registry::row(DriverName::Audio);
+        let run_job = audio::deck::job::AudioJob::run;
+        let thread = DriverLoop::<AudioDriver, _> {
+            row,
+            inbox,
+            callback_receiver,
+            message: Some(AudioMessage::Started),
+            run_job,
+        }
+        .spawn(move || AudioDriver::new(settings, callback_sender, feed_channel).0)
+        .unwrap();
+        (thread, sent)
+    }
+
+    fn is_devices_answer(message: &Result<Message, impl Sized>) -> bool {
+        matches!(
+            message,
+            Ok(Message::Audio(
+                AudioEvent::DevicesListed(_) | AudioEvent::Error(_)
+            ))
+        )
+    }
+
+    #[test]
+    #[ignore = "hardware: opens the output device"]
+    fn a_listed_devices_answer_comes_back_through_the_deck_inbox() {
+        let (thread, sent) = start_audio_driver();
+
+        thread.cmd_sender.send(AudioCmd::ListDevices).unwrap();
+        assert!(is_devices_answer(
+            &sent.recv_timeout(Duration::from_secs(5))
+        ));
+        assert!(sent.try_recv().is_err());
+
+        drop(thread.cmd_sender);
+        thread.handle.join().unwrap();
+    }
+
+    #[test]
+    #[ignore = "hardware: opens the output device"]
+    fn a_muted_start_reports_nothing_until_a_cmd_arrives() {
+        let (thread, sent) = start_audio_driver();
+
+        thread::sleep(Duration::from_millis(250));
+        assert!(sent.try_recv().is_err());
+
+        thread.cmd_sender.send(AudioCmd::ListDevices).unwrap();
+        assert!(is_devices_answer(
+            &sent.recv_timeout(Duration::from_secs(5))
+        ));
+
+        drop(thread.cmd_sender);
+        thread.handle.join().unwrap();
     }
 }

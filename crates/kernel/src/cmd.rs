@@ -34,7 +34,7 @@ use crate::{
         sleep_presets::SleepPresets,
         speed::Speed,
         theme::{ThemeChoice, ThemeName},
-        track::{Track, TrackSource},
+        track::{Decibels, Track, TrackSource},
     },
     message::{Message, Timer},
 };
@@ -91,7 +91,7 @@ pub enum ConfigCmd {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TrackLoad {
     pub media: Media,
-    pub decibels: Option<crate::domain::track::Decibels>,
+    pub decibels: Option<Decibels>,
     pub revision: Revision,
 }
 
@@ -427,9 +427,7 @@ mod tests {
             ..ConfigPatch::default()
         };
 
-        let merged = earlier_patch.then(ConfigPatch {
-            ..ConfigPatch::default()
-        });
+        let merged = earlier_patch.then(ConfigPatch::default());
 
         assert_eq!(merged.device, Some(speakers()));
     }
