@@ -36,7 +36,7 @@ pub(crate) struct LibraryParts<'a> {
     pub(crate) playlist: &'a mut Playlist,
     pub(crate) playlist_source: &'a PlaylistSource,
     pub(crate) player: &'a mut Player,
-    pub(crate) queue: &'a mut Vec<TrackSource>,
+    pub(crate) queue: &'a mut Vec<Arc<Track>>,
 }
 
 pub(crate) fn update(
@@ -131,7 +131,7 @@ fn trashed_track(
         .collect();
     library_parts
         .queue
-        .retain(|queued| queued != track.source());
+        .retain(|queued| queued.source() != track.source());
     let resync_parts = ResyncParts {
         workspace: &mut *library_parts.workspace,
         player: library_parts.player,

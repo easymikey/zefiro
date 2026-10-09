@@ -1,6 +1,8 @@
 pub(crate) mod catalog;
 mod download;
 
+use std::sync::Arc;
+
 use crate::{
     cmd::{Cmd, ConfigCmd, ConfigPatch, Effect, RemoteCmd},
     domain::{
@@ -21,6 +23,7 @@ use crate::{
             ServerStatus,
         },
         toast::Toast,
+        track::Track,
         workspace::Workspace,
     },
     message::{Message, RemoteEvent, ServerRequest},
@@ -43,6 +46,7 @@ pub(crate) struct ServerParts<'a> {
     pub(crate) playlist: &'a mut Playlist,
     pub(crate) playlist_source: &'a PlaylistSource,
     pub(crate) play_reports: &'a mut Vec<PlayReport>,
+    pub(crate) queue: &'a mut Vec<Arc<Track>>,
 }
 
 pub(crate) fn request(
@@ -79,6 +83,7 @@ pub(crate) fn request(
                 playlist: _,
                 playlist_source: _,
                 play_reports: kept_play_reports,
+                queue,
             } = server_parts;
             let index = servers
                 .iter()
@@ -88,6 +93,7 @@ pub(crate) fn request(
                 Effect::Remote(RemoteCmd::Forget(servers.remove(index).account));
             catalogs.retain(|catalog| catalog.server_name != server_name);
             play_reports::forget(kept_play_reports, &server_name);
+            queue.retain(|queued| queued.source().server_name() != Some(&server_name));
             let stop = download::forget(downloads, player, &server_name);
             if *catalog_name == CatalogName::Server(server_name) {
                 *catalog_name = CatalogName::Local;
@@ -114,6 +120,7 @@ fn add(
         playlist: _,
         playlist_source: _,
         play_reports: _,
+        queue: _,
     } = server_parts;
     let account = &connection.account;
     let warning = if account.endpoint.is_https() {
@@ -205,6 +212,7 @@ fn status(
         playlist: _,
         playlist_source: _,
         play_reports: _,
+        queue: _,
     } = server_parts;
     let server = servers
         .iter_mut()

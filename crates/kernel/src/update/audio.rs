@@ -12,7 +12,7 @@ use crate::{
         revision::{Freshness, Revision},
         time::Moment,
         toast::Toast,
-        track::{Track, TrackSource},
+        track::Track,
         transport::{OutputError, OutputStatus},
         workspace::Workspace,
     },
@@ -229,20 +229,14 @@ pub(crate) fn next(
     playback_parts: &mut PlaybackParts<'_>,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let pick = first_queued(playback_parts.playlist, playback_parts.queue).map_or_else(
-        || {
+    let pick = first_queued(playback_parts.playlist, playback_parts.queue)
+        .unwrap_or_else(|| {
             playback_parts
                 .playlist
                 .upcoming()
                 .cloned()
                 .map_or(Successor::Nothing, Successor::Following)
-        },
-        |(queue_index, index, track)| Successor::Queued {
-            queue_index,
-            index,
-            track: Arc::clone(track),
-        },
-    );
+        });
     let track = pick.track().cloned().ok_or(Unhandled)?;
     Ok(match player::start(playback_parts, track, now) {
         Ok(cmd) => {
@@ -415,7 +409,7 @@ fn follow_playback(workspace: &mut Workspace, playlist: &Playlist) {
 
 fn move_onto(
     playlist: &mut Playlist,
-    queue: &mut Vec<TrackSource>,
+    queue: &mut Vec<Arc<Track>>,
     successor: Successor,
 ) {
     match successor {
@@ -426,7 +420,9 @@ fn move_onto(
             queue_index, index, ..
         } => {
             queue.drain(..=queue_index);
-            playlist.point_at(index);
+            if let Some(index) = index {
+                playlist.point_at(index);
+            }
         }
         Successor::Following(_) => {
             playlist.skip(Direction::Next);
@@ -437,14 +433,12 @@ fn move_onto(
 
 fn move_onto_preloaded(
     playlist: &mut Playlist,
-    queue: &mut Vec<TrackSource>,
+    queue: &mut Vec<Arc<Track>>,
     committed_track: &Arc<Track>,
 ) {
-    let committed_index =
-        index_of(&playlist.tracks, committed_track.source()).map(ViewIndex::new);
-    let Some(committed_index) = committed_index else {
-        return;
-    };
-    queue.retain(|queued| queued != committed_track.source());
-    playlist.point_at(committed_index);
+    queue.retain(|queued| queued.source() != committed_track.source());
+    if let Some(committed_index) = index_of(&playlist.tracks, committed_track.source())
+    {
+        playlist.point_at(ViewIndex::new(committed_index));
+    }
 }

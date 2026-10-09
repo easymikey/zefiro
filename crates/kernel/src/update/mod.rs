@@ -432,6 +432,7 @@ fn update_queue(
     browse::queue(
         browse::QueueParts {
             catalog_name: &model.catalog_name,
+            catalogs: &mut model.catalogs,
             rows: PlaylistRows::new(
                 &model.playlist_source,
                 model.library.as_ref(),

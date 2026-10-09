@@ -11,7 +11,7 @@ pub(crate) enum Successor {
     Repeating(Arc<Track>),
     Queued {
         queue_index: usize,
-        index: ViewIndex,
+        index: Option<ViewIndex>,
         track: Arc<Track>,
     },
     Following(Arc<Track>),
@@ -40,19 +40,15 @@ impl Successor {
     }
 }
 
-pub(crate) fn successor(playlist: &Playlist, queue: &[TrackSource]) -> Successor {
+pub(crate) fn successor(playlist: &Playlist, queue: &[Arc<Track>]) -> Successor {
     if matches!(playlist.repeat_mode, RepeatMode::One) {
         return playlist
             .current()
             .cloned()
             .map_or(Successor::Nothing, Successor::Repeating);
     }
-    if let Some((queue_index, index, track)) = first_queued(playlist, queue) {
-        return Successor::Queued {
-            queue_index,
-            index,
-            track: Arc::clone(track),
-        };
+    if let Some(queued) = first_queued(playlist, queue) {
+        return queued;
     }
     playlist
         .upcoming()
@@ -60,13 +56,25 @@ pub(crate) fn successor(playlist: &Playlist, queue: &[TrackSource]) -> Successor
         .map_or(Successor::Nothing, Successor::Following)
 }
 
-pub(crate) fn first_queued<'a>(
-    playlist: &'a Playlist,
-    queue: &[TrackSource],
-) -> Option<(usize, ViewIndex, &'a Arc<Track>)> {
-    queue.iter().enumerate().find_map(|(queue_index, source)| {
-        let index = index_of(&playlist.tracks, source)?;
-        let track = playlist.tracks.get(index)?;
-        Some((queue_index, ViewIndex::new(index), track))
+pub(crate) fn first_queued(
+    playlist: &Playlist,
+    queue: &[Arc<Track>],
+) -> Option<Successor> {
+    queue.iter().enumerate().find_map(|(queue_index, queued)| {
+        match index_of(&playlist.tracks, queued.source()) {
+            Some(index) => Some(Successor::Queued {
+                queue_index,
+                index: Some(ViewIndex::new(index)),
+                track: Arc::clone(playlist.tracks.get(index)?),
+            }),
+            None => match queued.source() {
+                TrackSource::Server { .. } => Some(Successor::Queued {
+                    queue_index,
+                    index: None,
+                    track: Arc::clone(queued),
+                }),
+                TrackSource::Local(_path) => None,
+            },
+        }
     })
 }

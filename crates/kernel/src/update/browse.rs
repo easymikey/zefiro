@@ -17,7 +17,7 @@ use crate::{
         overlay::Overlay,
         player::Player,
         playlist::{Playlist, PlaylistRows, PlaylistSource, index_of},
-        server::{Listing, Page, Server, ServerStatus},
+        server::{Listing, Page, Server, ServerName, ServerStatus},
         time::Moment,
         toast::Toast,
         track::{CatalogRow, Track, TrackSource},
@@ -383,10 +383,11 @@ fn jump_to(
 
 pub(crate) struct QueueParts<'a> {
     pub(crate) catalog_name: &'a CatalogName,
+    pub(crate) catalogs: &'a mut [Catalog],
     pub(crate) rows: PlaylistRows<'a>,
     pub(crate) history: &'a [HistoryEntry],
     pub(crate) browse: &'a mut Browse,
-    pub(crate) queue: &'a mut Vec<TrackSource>,
+    pub(crate) queue: &'a mut Vec<Arc<Track>>,
 }
 
 pub(crate) fn queue(
@@ -395,55 +396,68 @@ pub(crate) fn queue(
 ) -> Result<Cmd, Unhandled> {
     let QueueParts {
         catalog_name,
+        catalogs,
         rows,
         history,
         browse,
         queue,
     } = parts;
-    let at_cursor =
-        || source_at(rows, ViewIndex::new(browse.cursor.index())).ok_or(Unhandled);
-    match request {
-        QueueRequest::Toggle
-        | QueueRequest::PlayNext
-        | QueueRequest::Dequeue
-        | QueueRequest::Move(_)
-            if matches!(catalog_name, CatalogName::Server(_)) =>
-        {
-            Err(Unhandled)
+    let mut at_cursor = || match catalog_name {
+        CatalogName::Local => {
+            local_track_at(rows, ViewIndex::new(browse.cursor.index()))
         }
-        QueueRequest::ToggleAt(index) => source_at(rows, index)
-            .map(|source| toggle_queued(queue, source))
+        CatalogName::Server(server_name) => {
+            server_track_at_cursor(catalogs, server_name)
+        }
+    };
+    match request {
+        QueueRequest::ToggleAt(index) => local_track_at(rows, index)
+            .map(|track| toggle_queued(queue, track))
             .ok_or(Unhandled),
         QueueRequest::ToggleHistoryEntry(position) => {
             let history_entry = history.get(position).ok_or(Unhandled)?;
             Ok(enqueue_history_entry(queue, rows, history_entry))
         }
-        QueueRequest::Toggle => Ok(toggle_queued(queue, at_cursor()?)),
-        QueueRequest::PlayNext => play_next(queue, at_cursor()?),
-        QueueRequest::Dequeue => dequeue(queue, &at_cursor()?),
-        QueueRequest::Move(direction) => move_in_queue(queue, &at_cursor()?, direction),
+        QueueRequest::Toggle => Ok(toggle_queued(queue, at_cursor().ok_or(Unhandled)?)),
+        QueueRequest::PlayNext => play_next(queue, at_cursor().ok_or(Unhandled)?),
+        QueueRequest::Dequeue => dequeue(queue, at_cursor().ok_or(Unhandled)?.source()),
+        QueueRequest::Move(direction) => {
+            move_in_queue(queue, at_cursor().ok_or(Unhandled)?.source(), direction)
+        }
     }
 }
 
 fn enqueue_history_entry(
-    queue: &mut Vec<TrackSource>,
+    queue: &mut Vec<Arc<Track>>,
     rows: PlaylistRows<'_>,
     history_entry: &HistoryEntry,
 ) -> Cmd {
-    if rows
-        .iter()
-        .any(|track| *track.source() == history_entry.track_source)
-    {
-        toggle_queued(queue, history_entry.track_source.clone())
-    } else {
-        Cmd::message(Message::Toast(Toast::info("Not in library".to_string())))
-    }
+    rows.iter()
+        .find(|track| *track.source() == history_entry.track_source)
+        .map_or_else(
+            || Cmd::message(Message::Toast(Toast::info("Not in library".to_string()))),
+            |track| toggle_queued(queue, Arc::clone(track)),
+        )
 }
 
-fn source_at(rows: PlaylistRows<'_>, index: ViewIndex) -> Option<TrackSource> {
+fn local_track_at(rows: PlaylistRows<'_>, index: ViewIndex) -> Option<Arc<Track>> {
     rows.get(index)
         .filter(|track| track.local_path().is_some())
-        .map(|track| track.source().clone())
+        .cloned()
+}
+
+fn server_track_at_cursor(
+    catalogs: &mut [Catalog],
+    server_name: &ServerName,
+) -> Option<Arc<Track>> {
+    let level = catalogs
+        .iter_mut()
+        .find(|catalog| catalog.server_name == *server_name)?
+        .level();
+    match level.cursor.get(level.rows())? {
+        CatalogRow::Track(track) => Some(Arc::clone(track)),
+        CatalogRow::Album(_) | CatalogRow::Playlist(_) => None,
+    }
 }
 
 fn full_scan(parts: &mut BrowseParts<'_>) -> Result<Cmd, Unhandled> {
@@ -479,47 +493,50 @@ fn toggle_favorite(parts: &mut BrowseParts<'_>) -> Result<Cmd, Unhandled> {
     ]))
 }
 
-fn toggle_queued(queue: &mut Vec<TrackSource>, source: TrackSource) -> Cmd {
-    match queue.iter().position(|queued| *queued == source) {
+fn toggle_queued(queue: &mut Vec<Arc<Track>>, track: Arc<Track>) -> Cmd {
+    match queue
+        .iter()
+        .position(|queued| queued.source() == track.source())
+    {
         Some(position) => {
             queue.remove(position);
         }
-        None => queue.push(source),
+        None => queue.push(track),
     }
     Cue::QueueChanged.into()
 }
 
-fn play_next(
-    queue: &mut Vec<TrackSource>,
-    track_source: TrackSource,
-) -> Result<Cmd, Unhandled> {
-    if queue.first() == Some(&track_source) {
+fn play_next(queue: &mut Vec<Arc<Track>>, track: Arc<Track>) -> Result<Cmd, Unhandled> {
+    if queue
+        .first()
+        .is_some_and(|first| first.source() == track.source())
+    {
         return Err(Unhandled);
     }
-    queue.retain(|queued| *queued != track_source);
-    queue.insert(0, track_source);
+    queue.retain(|queued| queued.source() != track.source());
+    queue.insert(0, track);
     Ok(Cue::QueueChanged.into())
 }
 
 fn dequeue(
-    queue: &mut Vec<TrackSource>,
+    queue: &mut Vec<Arc<Track>>,
     track_source: &TrackSource,
 ) -> Result<Cmd, Unhandled> {
-    if !queue.contains(track_source) {
+    if !queue.iter().any(|queued| queued.source() == track_source) {
         return Err(Unhandled);
     }
-    queue.retain(|queued| queued != track_source);
+    queue.retain(|queued| queued.source() != track_source);
     Ok(Cue::QueueChanged.into())
 }
 
 fn move_in_queue(
-    queue: &mut [TrackSource],
+    queue: &mut [Arc<Track>],
     track_source: &TrackSource,
     direction: Direction,
 ) -> Result<Cmd, Unhandled> {
     let index = queue
         .iter()
-        .position(|queued| queued == track_source)
+        .position(|queued| queued.source() == track_source)
         .ok_or(Unhandled)?;
     let neighbor = match direction {
         Direction::Previous => index.checked_sub(1),

@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use kernel::{
     domain::{
@@ -169,7 +169,7 @@ pub(crate) fn repeating(mut model: Model, repeat_mode: RepeatMode) -> Model {
 pub(crate) fn queued(mut model: Model, rows: &[usize]) -> Model {
     model.queue = rows
         .iter()
-        .map(|&row| model.playlist.tracks[row].source().clone())
+        .map(|&row| Arc::clone(&model.playlist.tracks[row]))
         .collect();
     model
 }

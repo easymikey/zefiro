@@ -150,7 +150,7 @@ fn queueing_a_local_row_after_an_album_play_queues_the_library_track() {
         Moment::default(),
     ));
 
-    assert_eq!(model.queue, vec![library_sources()[1].clone()]);
+    assert_eq!(queued_sources(&model), vec![library_sources()[1].clone()]);
 }
 
 #[test]
@@ -169,7 +169,15 @@ fn a_local_history_entry_after_an_album_play_enqueues_its_library_track() {
         Moment::default(),
     ));
 
-    assert_eq!(model.queue, vec![library_sources()[0].clone()]);
+    assert_eq!(queued_sources(&model), vec![library_sources()[0].clone()]);
+}
+
+fn queued_sources(model: &Model) -> Vec<TrackSource> {
+    model
+        .queue
+        .iter()
+        .map(|track| track.source().clone())
+        .collect()
 }
 
 #[test]

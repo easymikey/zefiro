@@ -169,7 +169,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | playhead anchor | `Playhead`; value `playhead` | `head` |
 | preloaded next track (kernel record) | `Option<Arc<Track>>` in `Player::Playing`; value `preloaded` | `Preload`, `Requested`, `seek_reset`, `Preload::Queued`, `Preload::Stale`, `Preload::Requested` |
 | player state | `Player`; value `player` | — |
-| play queue | `Model.queue: Vec<TrackSource>`; value `queue` | `queued` for anything else |
+| play queue | `Model.queue: Vec<Arc<Track>>`, identity by `Track::source`; value `queue` | `queued` for anything else |
 | queue number on a row | `QueueNumber`; value `queue_number` | `QueuePosition`, `position` |
 | track position in the library, the shown list | `TrackIndex`, `ViewIndex`; value `index` (`view_index`, `track_index` when both are in scope) | `PlaylistIndex`, `QueueIndex`, `row` for a `ViewIndex`, `browse_selected`, `selected_line`, `cursor_index`, bare `usize`, `StatusLineView.position`, `PlaylistSlot`, `ViewRow` |
 | row of a settings or history overlay | `RowIndex`, `SettingRow`; value `row`; cursor `selected` | `current`, `selected: usize`, `SettingKind` |

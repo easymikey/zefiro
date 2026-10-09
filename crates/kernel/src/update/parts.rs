@@ -172,7 +172,7 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         workspace,
         playlist,
         playlist_source,
-        queue: _,
+        queue,
         transport: _,
         settings: _,
         themes: _,
@@ -194,5 +194,6 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         playlist,
         playlist_source,
         play_reports,
+        queue,
     }
 }

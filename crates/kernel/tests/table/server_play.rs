@@ -4,7 +4,9 @@ use kernel::{
     cmd::{AudioCmd, Cmd, Effect, GrowingMedia, Media, Playback, RemoteCmd, TrackLoad},
     domain::{
         catalog::{BrowseLevel, CatalogName, Paging},
+        cue::Cue,
         cursor::Cursor,
+        direction::Direction,
         index::ViewIndex,
         io_error::IoError,
         model::Model,
@@ -43,7 +45,7 @@ use kernel::{
 use rstest::rstest;
 
 use crate::{
-    support::update::update,
+    support::{model_playing_at, router::queued, update::update},
     table::server_tab::{browse, home, online, server_model, session},
 };
 
@@ -253,8 +255,6 @@ fn local_playlist_model() -> Model {
 }
 
 #[rstest]
-#[case::toggle(entered_album_model(), QueueRequest::Toggle)]
-#[case::play_next(entered_album_model(), QueueRequest::PlayNext)]
 #[case::toggle_at_in_the_playlist(
     entered_album_model(),
     QueueRequest::ToggleAt(ViewIndex::new(1))
@@ -268,7 +268,7 @@ fn local_playlist_model() -> Model {
     local_playlist_model(),
     QueueRequest::PlayNext
 )]
-fn queueing_a_server_track_is_refused(
+fn a_queue_request_without_a_queueable_row_is_refused(
     #[case] mut model: Model,
     #[case] queue_request: QueueRequest,
 ) {
@@ -276,6 +276,109 @@ fn queueing_a_server_track_is_refused(
 
     assert_eq!(answer, Err(Unhandled));
     assert_eq!(model.queue, Vec::new());
+}
+
+fn songs_model() -> Model {
+    let mut model = server_model(online(), 1);
+    let songs_level = &mut model.catalogs[0].albums_level;
+    songs_level.listing = Listing::Songs;
+    songs_level.catalog_rows = (0..3)
+        .map(|track_number| {
+            CatalogRow::Track(Arc::new(server_track(track_number, "flac")))
+        })
+        .collect();
+    songs_level.cursor = Cursor::at(3, 1);
+    songs_level.paging = Paging::Complete;
+    model
+}
+
+fn with_queued(mut model: Model, track_numbers: &[usize]) -> Model {
+    model.queue = track_numbers
+        .iter()
+        .map(|&track_number| Arc::new(server_track(track_number, "flac")))
+        .collect();
+    model
+}
+
+fn queued_sources(model: &Model) -> Vec<TrackSource> {
+    model
+        .queue
+        .iter()
+        .map(|queued| queued.source().clone())
+        .collect()
+}
+
+fn sources_of(track_numbers: &[usize]) -> Vec<TrackSource> {
+    track_numbers
+        .iter()
+        .map(|&track_number| server_track(track_number, "flac").source().clone())
+        .collect()
+}
+
+#[rstest]
+#[case::toggle_in_songs_appends(songs_model(), QueueRequest::Toggle, &[1])]
+#[case::toggle_in_songs_removes(
+    with_queued(songs_model(), &[0, 1]),
+    QueueRequest::Toggle,
+    &[0]
+)]
+#[case::toggle_in_an_opened_album_appends(
+    album_model(online(), "flac"),
+    QueueRequest::Toggle,
+    &[1]
+)]
+#[case::play_next_inserts_at_the_front(
+    with_queued(songs_model(), &[0, 2]),
+    QueueRequest::PlayNext,
+    &[1, 0, 2]
+)]
+#[case::play_next_in_an_opened_album(
+    with_queued(album_model(online(), "flac"), &[0]),
+    QueueRequest::PlayNext,
+    &[1, 0]
+)]
+#[case::dequeue_removes_the_row(
+    with_queued(songs_model(), &[0, 1]),
+    QueueRequest::Dequeue,
+    &[0]
+)]
+#[case::move_down_swaps_with_the_successor(
+    with_queued(songs_model(), &[1, 0]),
+    QueueRequest::Move(Direction::Next),
+    &[0, 1]
+)]
+#[case::move_up_swaps_with_the_predecessor(
+    with_queued(songs_model(), &[0, 1]),
+    QueueRequest::Move(Direction::Previous),
+    &[1, 0]
+)]
+fn the_queue_keys_act_on_the_selected_server_row_like_on_a_local_row(
+    #[case] mut model: Model,
+    #[case] queue_request: QueueRequest,
+    #[case] queued_track_numbers: &[usize],
+) {
+    let answer = update(&mut model, Message::Queue(queue_request), Moment::default());
+
+    assert_eq!(answer, Ok(Cmd::effect(Effect::Animate(Cue::QueueChanged))));
+    assert_eq!(queued_sources(&model), sources_of(queued_track_numbers));
+}
+
+#[test]
+fn a_local_row_and_a_server_row_queue_together_in_order() {
+    let mut model = songs_model();
+    model.queue = vec![Arc::new(Track::from(TrackSource::Local(PathBuf::from(
+        "/music/a.flac",
+    ))))];
+
+    drop(update(
+        &mut model,
+        Message::Queue(QueueRequest::Toggle),
+        Moment::default(),
+    ));
+
+    let mut expected = vec![TrackSource::Local(PathBuf::from("/music/a.flac"))];
+    expected.extend(sources_of(&[1]));
+    assert_eq!(queued_sources(&model), expected);
 }
 
 fn played_fetches(model: &mut Model, message: Message) -> Vec<MediaFetch> {
@@ -748,5 +851,72 @@ fn a_stored_artwork_of_another_server_with_the_same_id_asks_for_the_cover() {
             session: session(),
             artwork: artwork(),
         })]
+    );
+}
+
+fn queued_outside_the_playlist() -> Model {
+    with_queued(entered_album_model(), &[9])
+}
+
+#[rstest]
+#[case::ended(
+    with_queued(playing_album_model(), &[9]),
+    Message::Audio(AudioEvent::Ended)
+)]
+#[case::next(
+    queued_outside_the_playlist(),
+    Message::Playback(PlaybackRequest::Next)
+)]
+fn a_queued_server_track_outside_the_playlist_plays_and_leaves_the_playlist_cursor(
+    #[case] mut model: Model,
+    #[case] message: Message,
+) {
+    let playlist_cursor = model.playlist.cursor;
+    let playlist = playlist_sources(&model);
+
+    let media_fetches = played_fetches(&mut model, message);
+
+    assert_eq!(media_fetches, vec![fetch_from_zero(9, &media_fetches)]);
+    assert_eq!(model.queue, Vec::new());
+    assert_eq!(model.playlist.cursor, playlist_cursor);
+    assert_eq!(playlist_sources(&model), playlist);
+    assert_eq!(
+        model.player.current().map(|track| track.source().clone()),
+        Some(server_track(9, "flac").source().clone())
+    );
+}
+
+#[test]
+fn a_local_track_and_a_server_track_queued_after_it_play_in_queue_order() {
+    let mut model = queued(model_playing_at(3, 0, Duration::ZERO), &[2]);
+    let tab = server_model(online(), 1);
+    model.servers = tab.servers;
+    model.catalogs = tab.catalogs;
+    model.queue.push(Arc::new(server_track(9, "flac")));
+    let local = Arc::clone(&model.playlist.tracks[2]);
+
+    let first = played_fetches(&mut model, Message::Audio(AudioEvent::Ended));
+
+    assert_eq!(first, Vec::new());
+    assert_eq!(
+        model.player.current().map(|track| track.source().clone()),
+        Some(local.source().clone())
+    );
+    assert_eq!(queued_sources(&model), sources_of(&[9]));
+    assert_eq!(model.playlist.cursor.index(), 2);
+
+    drop(update(
+        &mut model,
+        Message::Audio(AudioEvent::Loaded(None)),
+        Moment::default(),
+    ));
+    let second = played_fetches(&mut model, Message::Audio(AudioEvent::Ended));
+
+    assert_eq!(second, vec![fetch_from_zero(9, &second)]);
+    assert_eq!(model.queue, Vec::new());
+    assert_eq!(model.playlist.cursor.index(), 2);
+    assert_eq!(
+        model.player.current().map(|track| track.source().clone()),
+        Some(server_track(9, "flac").source().clone())
     );
 }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kernel::{
     cmd::{Cmd, Effect},
     domain::{
@@ -10,6 +12,7 @@ use kernel::{
         model::Model,
         playlist::PlayOrder,
         time::Moment,
+        track::Track,
     },
     message::{BrowseRequest, Message, QueueRequest},
     update::machine::Unhandled,
@@ -26,19 +29,16 @@ fn queue(model: &mut Model, request: QueueRequest) -> Result<Cmd, Unhandled> {
     update(model, Message::Queue(request), Moment::default())
 }
 
-fn queued_track_sources(
-    model: &Model,
-    rows: &[usize],
-) -> Vec<kernel::domain::track::TrackSource> {
+fn queued_tracks(model: &Model, rows: &[usize]) -> Vec<Arc<Track>> {
     rows.iter()
-        .map(|&row| model.playlist.tracks[row].source().clone())
+        .map(|&row| Arc::clone(&model.playlist.tracks[row]))
         .collect()
 }
 
 fn browsing(count: usize, selected_index: usize, rows: &[usize]) -> Model {
     let mut model = model_with_tracks(count);
     model.workspace.browse.cursor = Cursor::at(count, selected_index);
-    model.queue = queued_track_sources(&model, rows);
+    model.queue = queued_tracks(&model, rows);
     model
 }
 
@@ -86,7 +86,7 @@ fn queue_row(#[case] row: QueueRow) {
         effects,
     } = row;
     let seen = queue(&mut model, request);
-    assert_eq!(model.queue, queued_track_sources(&model, queued));
+    assert_eq!(model.queue, queued_tracks(&model, queued));
     assert_eq!(seen, effects);
 }
 

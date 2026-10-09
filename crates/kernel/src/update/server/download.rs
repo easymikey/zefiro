@@ -35,6 +35,7 @@ pub(crate) fn fetched(
         playlist: _,
         playlist_source: _,
         play_reports: _,
+        queue: _,
     } = server_parts;
     let download = downloads
         .iter_mut()

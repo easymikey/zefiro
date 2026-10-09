@@ -404,7 +404,7 @@ fn a_listing_from_a_superseded_scan_asks_for_no_tags() {
 fn a_confirmed_trash_keeps_the_track_until_the_disk_answers() {
     let mut model = moon_library_scanned();
     let track = Arc::clone(&model.playlist.tracks[0]);
-    model.queue = vec![track.source().clone()];
+    model.queue = vec![Arc::clone(&track)];
     let library = paths(&model.library.as_ref().unwrap().tracks);
     let playlist = paths(&model.playlist.tracks);
 
@@ -424,14 +424,14 @@ fn a_confirmed_trash_keeps_the_track_until_the_disk_answers() {
     assert_eq!(paths(&ready.tracks), library);
     assert_eq!(ready.track_indexes.len(), library.len());
     assert_eq!(paths(&model.playlist.tracks), playlist);
-    assert_eq!(model.queue, [track.source().clone()]);
+    assert_eq!(model.queue, [track]);
 }
 
 #[test]
 fn a_trashed_answer_removes_the_track() {
     let mut model = moon_library_scanned();
     let track = Arc::clone(&model.playlist.tracks[0]);
-    model.queue = vec![track.source().clone()];
+    model.queue = vec![Arc::clone(&track)];
     let path = track.local_path().unwrap().to_path_buf();
 
     let cmd = update(

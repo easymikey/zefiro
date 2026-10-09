@@ -72,6 +72,14 @@ impl TrackSource {
         }
     }
 
+    #[must_use]
+    pub fn server_name(&self) -> Option<&ServerName> {
+        match self {
+            TrackSource::Local(_path) => None,
+            TrackSource::Server { server_name, .. } => Some(server_name),
+        }
+    }
+
     fn name(&self) -> String {
         match self {
             TrackSource::Local(path) => path.file_stem().map_or_else(

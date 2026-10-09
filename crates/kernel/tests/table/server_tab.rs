@@ -561,6 +561,33 @@ fn remove_drops_the_server_and_its_tab_and_leaves_the_local_tab_open(
     assert_eq!(model.catalog_name, CatalogName::Local);
 }
 
+#[test]
+fn remove_drops_the_queued_tracks_of_the_server_and_keeps_the_others() {
+    let mut model = server_model(online(), 3);
+    let other_server_track = TrackSource::Server {
+        server_name: ServerName::new("away"),
+        server_track_id: ServerTrackId::new("e7a2"),
+    };
+    let local_track = TrackSource::Local(PathBuf::from("/m/1.flac"));
+    model.queue = [
+        server_track("c41d"),
+        local_track.clone(),
+        other_server_track.clone(),
+    ]
+    .into_iter()
+    .map(|track_source| Arc::new(Track::from(track_source)))
+    .collect();
+
+    drop(request(&mut model, ServerRequest::Remove(home())));
+
+    let queued: Vec<TrackSource> = model
+        .queue
+        .iter()
+        .map(|queued| queued.source().clone())
+        .collect();
+    assert_eq!(queued, vec![local_track, other_server_track]);
+}
+
 fn server_track(id: &str) -> TrackSource {
     TrackSource::Server {
         server_name: home(),

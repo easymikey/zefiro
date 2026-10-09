@@ -373,7 +373,7 @@ fn due() -> (Model, Result<Vec<Effect>, Unhandled>) {
         ..Model::default()
     };
     model.playlist.tracks = vec![incoming_track()];
-    model.queue = vec![incoming_track().source().clone()];
+    model.queue = vec![incoming_track()];
     let mark = model.revisions.lookahead;
     let effects = kernel::update::update(
         &mut model,

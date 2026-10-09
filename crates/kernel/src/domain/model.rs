@@ -13,7 +13,7 @@ use crate::domain::{
     server::{Artwork, Download, PlayReport, Server},
     settings::Settings,
     theme::Themes,
-    track::{Track, TrackSource},
+    track::Track,
     transport::Transport,
     workspace::Workspace,
 };
@@ -37,7 +37,7 @@ pub struct Model {
     pub scan_status: ScanStatus,
     pub playlist: Playlist,
     pub playlist_source: PlaylistSource,
-    pub queue: Vec<TrackSource>,
+    pub queue: Vec<Arc<Track>>,
     pub player: Player,
     pub transport: Transport,
     pub history: Vec<HistoryEntry>,

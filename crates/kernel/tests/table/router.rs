@@ -104,7 +104,11 @@ fn walked(mut model: Model, messages: Vec<Message>) -> Vec<Step> {
                 model.workspace.overlay.clone(),
                 model.workspace.browse.cursor,
                 model.playlist.cursor,
-                model.queue.clone(),
+                model
+                    .queue
+                    .iter()
+                    .map(|queued| queued.source().clone())
+                    .collect(),
                 model.playlist.repeat_mode,
                 model.playlist.play_order.clone(),
                 model.transport.clone(),

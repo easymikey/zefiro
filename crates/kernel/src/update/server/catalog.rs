@@ -93,6 +93,7 @@ pub(crate) fn upcoming(server_parts: ServerParts<'_>) -> Cmd {
         playlist,
         playlist_source,
         play_reports: _,
+        queue: _,
     } = server_parts;
     let PlaylistSource::Songs(server_name) = playlist_source else {
         return Cmd::none();
