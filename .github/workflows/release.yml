@@ -1,0 +1,181 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, v plus the Cargo version"
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: toolchain
+        run: |
+          rustup toolchain install
+          rustup target add "${{ matrix.target }}"
+
+      - name: check the tag against the Cargo version
+        run: |
+          pkgid=$(cargo pkgid -p zefiro)
+          version="${pkgid##*[#@]}"
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match the Cargo version $version"
+            exit 1
+          fi
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: build
+        run: cargo build --release --locked -p zefiro --target "${{ matrix.target }}"
+
+      - name: stage the binary
+        run: |
+          mkdir -p stage
+          cp "target/${{ matrix.target }}/release/zefiro" stage/zefiro
+
+      - name: sign
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          cat > "$RUNNER_TEMP/sign.sh" <<'EOF'
+          keychain="$RUNNER_TEMP/zefiro-sign.keychain-db"
+          printf '%s' "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$MACOS_CERT_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$MACOS_CERT_PASSWORD" "$keychain"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$MACOS_CERT_PASSWORD" "$keychain"
+          security find-certificate -c "zefiro release" -p "$keychain" > "$RUNNER_TEMP/cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/cert.pem"
+          codesign --force --sign "zefiro release" --identifier dev.zefiro stage/zefiro
+          EOF
+          if bash -e "$RUNNER_TEMP/sign.sh"; then
+            echo "signed with the zefiro release certificate"
+          else
+            echo "::warning::signing with the zefiro release certificate failed; shipping the linker's ad-hoc signature"
+          fi
+          codesign -dv stage/zefiro || true
+          codesign -dr - stage/zefiro || true
+
+      - name: pack
+        run: tar -czf "zefiro-${{ matrix.target }}.tar.gz" -C stage zefiro
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zefiro-${{ matrix.target }}
+          path: zefiro-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: checksums
+        working-directory: dist
+        run: sha256sum zefiro-*.tar.gz > checksums.txt
+
+      - name: publish
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${TAG#v}"
+          gh release create "$TAG" zefiro-*.tar.gz checksums.txt \
+            --target "$GITHUB_SHA" --title "zefiro $version" --generate-notes
+
+  homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: update the tap
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          version="${TAG#v}"
+          base="https://github.com/easymikey/zefiro/releases/download/$TAG"
+          arm_sha=$(sha256sum dist/zefiro-aarch64-apple-darwin.tar.gz | awk '{ print $1 }')
+          intel_sha=$(sha256sum dist/zefiro-x86_64-apple-darwin.tar.gz | awk '{ print $1 }')
+
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          printf '%s\n' "$TAP_DEPLOY_KEY" | tr -d '\r' | ssh-add -
+
+          git clone git@github.com:easymikey/homebrew-zefiro.git tap
+          mkdir -p tap/Formula
+          cat > tap/Formula/zefiro.rb <<EOF
+          class Zefiro < Formula
+            desc "Terminal music player for local files and Navidrome"
+            homepage "https://github.com/easymikey/zefiro"
+            version "$version"
+            license "MIT"
+
+            depends_on :macos
+
+            on_arm do
+              url "$base/zefiro-aarch64-apple-darwin.tar.gz"
+              sha256 "$arm_sha"
+            end
+
+            on_intel do
+              url "$base/zefiro-x86_64-apple-darwin.tar.gz"
+              sha256 "$intel_sha"
+            end
+
+            def install
+              bin.install "zefiro"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/zefiro --version")
+            end
+          end
+          EOF
+
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/zefiro.rb
+          if git diff --cached --quiet; then
+            echo "formula already up to date"
+          else
+            git commit -m "zefiro $version"
+            git push origin HEAD:main
+          fi

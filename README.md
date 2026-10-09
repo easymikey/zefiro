@@ -8,7 +8,28 @@ terminal with ratatui.
 
 ## Install
 
-Build, sign and install through a local Homebrew tap named `local/zefiro`:
+With Homebrew:
+
+```sh
+brew install easymikey/zefiro/zefiro
+```
+
+or add the tap first, then install:
+
+```sh
+brew tap easymikey/zefiro
+brew install zefiro
+```
+
+With the installer, which puts the binary in `~/.local/bin` (set
+`ZEFIRO_INSTALL_DIR` to change it):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/easymikey/zefiro/main/install.sh | sh
+```
+
+From source, build, sign and install through a local Homebrew tap named
+`local/zefiro`:
 
 ```sh
 sh scripts/brew-tap.sh
@@ -123,6 +144,17 @@ cargo clippy --workspace --all-targets -- -D warnings
 `just` runs `cargo fmt --check`, clippy and the tests by default; `just setup` and `just doctor`
 prepare and check a checkout, and `just coverage` measures test coverage. See
 the `justfile` for the rest.
+
+### Releasing
+
+```sh
+sh scripts/release.sh 0.1.1
+```
+
+The script checks that `main` is clean and pushed, sets the version in
+`Cargo.toml` when it differs, then tags `v0.1.1` and pushes. The tag starts the
+Release workflow, which builds both macOS targets, signs them, publishes the
+GitHub Release with checksums and updates the Homebrew tap.
 
 - [docs/architecture.md](docs/architecture.md): how the crates fit together
 - [docs/principles.md](docs/principles.md): the rules the code follows
