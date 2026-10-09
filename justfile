@@ -8,7 +8,7 @@ default: check
 # fmt, taplo, typos, clippy and tests
 check:
     cargo fmt --all --check
-    taplo fmt --check
+    git ls-files '*.toml' | xargs taplo fmt --check
     typos
     cargo clippy --workspace --all-targets -- -D warnings
     cargo nextest run --workspace
@@ -87,7 +87,7 @@ pre-commit:
 # pre-push hook: fmt, taplo, typos, clippy and the ci test profile over the workspace
 pre-push:
     cargo fmt --all --check
-    taplo fmt --check
+    git ls-files '*.toml' | xargs taplo fmt --check
     typos
     cargo clippy --workspace --all-targets -- -D warnings
     cargo nextest run --workspace --profile ci
