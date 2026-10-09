@@ -2,7 +2,7 @@
 source: crates/widgets/src/card/mod.rs
 expression: "rendered(60, card_height().0, |frame|\nframe.render_widget(&widget, frame.area())).to_string()"
 ---
-"╭ Sifr ────────────────────────────────────────────────────╮"
+"╭ Zefiro ──────────────────────────────────────────────────╮"
 "│                                                          │"
 "│      No cover      Moon River              ◌ Buffering   │"
 "│                    Test Artist                           │"

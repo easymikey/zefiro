@@ -67,7 +67,16 @@ impl fmt::Display for Percent {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use crate::domain::{bounded::Bounded, percent::Percent};
+
+    #[rstest]
+    #[case::at_the_ceiling_is_accepted(100, Some(100))]
+    #[case::one_above_the_ceiling_is_refused(101, None)]
+    fn new_rejects_anything_above_100(#[case] raw: u8, #[case] expected: Option<u8>) {
+        assert_eq!(Percent::new(raw).map(Percent::get), expected);
+    }
 
     #[test]
     fn the_ratio_of_ninety_nine_percent_round_trips() {

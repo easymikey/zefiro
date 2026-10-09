@@ -107,6 +107,7 @@ fn ok_gives_a_session_signed_with_the_salted_secret(#[case] body: String) {
     let token =
         value("s").map(|salt| format!("{:x}", md5::compute(format!("hunter2{salt}"))));
     assert_eq!(value("u"), Some("alice"));
+    assert_eq!(value("c"), Some("zefiro"));
     assert_eq!(value("s").map(str::len), Some(12));
     assert_eq!(value("t"), token.as_deref());
     let requests = handle.join();

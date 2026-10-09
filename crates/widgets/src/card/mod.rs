@@ -78,7 +78,7 @@ pub(crate) struct CardWidget<'a> {
 
 const NO_TRACK_TITLE: &str = "No track";
 const NO_COVER_TEXT: &str = "No cover";
-const CARD_TITLE: &str = " Sifr ";
+const CARD_TITLE: &str = " Zefiro ";
 
 pub(crate) fn card_frame(color: Color) -> Block<'static> {
     Block::default()

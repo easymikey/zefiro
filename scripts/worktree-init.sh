@@ -3,6 +3,6 @@
 # An APFS clone: instant and no extra disk until files diverge.
 set -u
 
-target="/tmp/sifr-wt-$(basename "$PWD")"
-seed=/tmp/sifr-wt-gate
+target="/tmp/zefiro-wt-$(basename "$PWD")"
+seed=/tmp/zefiro-wt-gate
 [ -d "$target" ] || [ ! -d "$seed" ] || /bin/cp -cRp "$seed" "$target"

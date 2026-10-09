@@ -1,10 +1,10 @@
-# Principles — why sifr is shaped this way
+# Principles — why zefiro is shaped this way
 
 This file says why. The rules themselves, with every name, signature and limit, live once in `docs/conventions.md`; the structure (crates, threads, message path) is in `docs/architecture.md`. When this file and the rulebook seem to disagree, the rulebook wins and this file is stale.
 
 ## The Elm Architecture
 
-sifr is a terminal music player shaped as The Elm Architecture (TEA): one `Model` holds all app state, one `Message` type is the only input, one `update` decides, and what should happen outside comes back as data (`Effect`s). The view is a function of the model.
+zefiro is a terminal music player shaped as The Elm Architecture (TEA): one `Model` holds all app state, one `Message` type is the only input, one `update` decides, and what should happen outside comes back as data (`Effect`s). The view is a function of the model.
 
 Why:
 
@@ -57,4 +57,4 @@ Typestate for the terminal (RAII is enough), trait-object plugins for drivers (a
 
 ## Enforcement
 
-A rule that a tool can check is held by a clippy lint or a guard test in `crates/sifr-guards`; a rule that needs judgement is checked in reviews. `docs/conventions.md` marks each rule with which of the two holds it.
+A rule that a tool can check is held by a clippy lint or a guard test in `crates/zefiro-guards`; a rule that needs judgement is checked in reviews. `docs/conventions.md` marks each rule with which of the two holds it.

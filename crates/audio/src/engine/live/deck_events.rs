@@ -69,10 +69,7 @@ impl Live {
                 self.phase = Phase::Idle;
                 Ok(then_report(Cmd::message(AudioEvent::Ended)))
             }
-            NextTrack::Crossfading {
-                incoming,
-                fade: _fade,
-            } => {
+            NextTrack::Crossfading { incoming, .. } => {
                 playing.current = incoming;
                 Ok(self.promoted())
             }
@@ -82,7 +79,7 @@ impl Live {
     pub(crate) fn fade_start_reached(&mut self) -> Result<AudioLoopCmd, Unhandled> {
         let Phase::Playing(Playing {
             next: NextTrack::Crossfading { incoming, fade },
-            current: _current,
+            ..
         }) = &mut self.phase
         else {
             return Err(Unhandled);
@@ -103,7 +100,7 @@ impl Live {
         };
         let NextTrack::Crossfading {
             fade: Fade::Running,
-            incoming: _incoming,
+            ..
         } = &playing.next
         else {
             return Err(Unhandled);
@@ -131,7 +128,7 @@ impl Live {
     pub(crate) fn preload_mode(&self) -> Option<PreloadMode> {
         let Phase::Playing(Playing {
             next: NextTrack::Preloading { .. },
-            current: _current,
+            ..
         }) = &self.phase
         else {
             return None;
@@ -183,7 +180,7 @@ impl Live {
     ) -> Result<AudioLoopCmd, Unhandled> {
         let Phase::Playing(Playing {
             next: next @ NextTrack::Preloading { .. },
-            current: _current,
+            ..
         }) = &mut self.phase
         else {
             return Err(Unhandled);

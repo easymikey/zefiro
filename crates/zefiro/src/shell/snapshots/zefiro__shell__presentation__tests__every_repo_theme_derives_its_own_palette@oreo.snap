@@ -1,0 +1,99 @@
+---
+source: crates/zefiro/src/shell/presentation.rs
+expression: colors
+---
+Colors {
+    background: Rgb(
+        [
+            11,
+            11,
+            11,
+        ],
+    ),
+    window_background: Rgb(
+        [
+            18,
+            18,
+            18,
+        ],
+    ),
+    foreground: Rgb(
+        [
+            245,
+            241,
+            232,
+        ],
+    ),
+    accent: Rgb(
+        [
+            243,
+            233,
+            210,
+        ],
+    ),
+    favorite: Rgb(
+        [
+            201,
+            194,
+            180,
+        ],
+    ),
+    selection_foreground: Rgb(
+        [
+            245,
+            241,
+            232,
+        ],
+    ),
+    selection_background: Rgb(
+        [
+            58,
+            58,
+            56,
+        ],
+    ),
+    highlight: Rgb(
+        [
+            243,
+            233,
+            210,
+        ],
+    ),
+    muted_foreground: Rgb(
+        [
+            143,
+            138,
+            128,
+        ],
+    ),
+    bar_groove: Rgb(
+        [
+            81,
+            80,
+            77,
+        ],
+    ),
+    spectrum: [
+        Rgb(
+            [
+                245,
+                241,
+                232,
+            ],
+        ),
+        Rgb(
+            [
+                201,
+                194,
+                180,
+            ],
+        ),
+        Rgb(
+            [
+                143,
+                138,
+                128,
+            ],
+        ),
+    ],
+}

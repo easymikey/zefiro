@@ -183,7 +183,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let paths = ConfigPaths {
             config_path: directory.path().join("config.toml"),
-            appearance_path: directory.path().join("sifr-ui.toml"),
+            appearance_path: directory.path().join("zefiro-ui.toml"),
             themes_dir: directory.path().join("themes"),
             default_music_dir: None,
             theme_name: None,
@@ -410,7 +410,7 @@ mod tests {
     fn a_save_to_a_path_without_a_parent_reports_missing() {
         let paths = ConfigPaths {
             config_path: "config.toml".into(),
-            appearance_path: "sifr-ui.toml".into(),
+            appearance_path: "zefiro-ui.toml".into(),
             themes_dir: "themes".into(),
             default_music_dir: None,
             theme_name: None,
@@ -429,7 +429,7 @@ mod tests {
         );
     }
 
-    const COMMENTED_APPEARANCE: &str = r#"# sifr-ui.toml
+    const COMMENTED_APPEARANCE: &str = r#"# zefiro-ui.toml
 [cover]
 # the noir look
 mode = "vinyl"

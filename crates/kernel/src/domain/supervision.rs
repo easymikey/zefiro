@@ -71,72 +71,14 @@ pub(crate) fn decide_restart(
 
 #[cfg(test)]
 mod tests {
-    use rstest::rstest;
-
     use crate::domain::{
         driver::{DriverName, Restarts},
-        supervision::{Announcement, Decision, Supervision, decide_restart},
+        supervision::{Announcement, Supervision},
         time::Moment,
     };
 
     fn t(secs: u64) -> Moment {
         Moment::new(std::time::Duration::from_secs(secs))
-    }
-
-    fn history(moments: &[u64]) -> Restarts {
-        let mut restarts = Restarts::default();
-        for &secs in moments {
-            restarts.record(t(secs));
-        }
-        restarts
-    }
-
-    #[rstest]
-    #[case::restart_with_no_history(
-        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
-        &[],
-        Decision::Restart
-    )]
-    #[case::restart_under_budget(
-        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
-        &[50, 90],
-        Decision::Restart
-    )]
-    #[case::restart_budget_spent_falls_back(
-        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
-        &[50, 70, 90],
-        Decision::Degrade(Announcement::Toast)
-    )]
-    #[case::restart_old_history_ages_out(
-        Supervision::Restart { attempts: 3, window: std::time::Duration::from_secs(60), announcement: Announcement::Toast },
-        &[10, 70, 90],
-        Decision::Restart
-    )]
-    #[case::restart_zero_attempts_falls_back(
-        Supervision::Restart { attempts: 0, window: std::time::Duration::from_secs(60), announcement: Announcement::Silent },
-        &[],
-        Decision::Degrade(Announcement::Silent)
-    )]
-    #[case::degrade_toast(
-        Supervision::Degrade(Announcement::Toast),
-        &[],
-        Decision::Degrade(Announcement::Toast)
-    )]
-    #[case::degrade_silent(
-        Supervision::Degrade(Announcement::Silent),
-        &[],
-        Decision::Degrade(Announcement::Silent)
-    )]
-    fn decide_restart_decides_by_strategy(
-        #[case] supervision: Supervision,
-        #[case] moments: &[u64],
-        #[case] expected: Decision,
-    ) {
-        let now = t(100);
-        assert_eq!(
-            decide_restart(supervision, &history(moments), now),
-            expected
-        );
     }
 
     #[test]

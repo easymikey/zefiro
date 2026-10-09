@@ -20,7 +20,6 @@ pub struct ScrollAreas {
     pub(crate) rows: Rect,
     pub(crate) content: Rect,
     pub(crate) scrollbar: Rect,
-    pub(crate) hint_row: Rect,
 }
 
 impl ScrollAreas {
@@ -31,7 +30,6 @@ impl ScrollAreas {
             rows: Rect::default(),
             content: Rect::default(),
             scrollbar: Rect::default(),
-            hint_row: Rect::default(),
         }
     }
 }
@@ -44,7 +42,6 @@ pub(crate) fn scroll_areas(outer: Rect, inner: Rect) -> ScrollAreas {
         rows: row_band(outer, inner, scrollbar),
         content: inner,
         scrollbar,
-        hint_row: Rect::default(),
     }
 }
 

@@ -2,7 +2,7 @@
 
 Every rule of this codebase lives here, once. Other docs link here instead of restating a rule: `docs/principles.md` says why, `docs/architecture.md` shows the structure, `docs/testing.md` shows how tests are laid out. Where another doc disagrees with this file, this file wins.
 
-Every rule is marked `guard` (a clippy lint or a `sifr-guards` test holds it; a guard rule with no guard yet is a guard task) or `review` (needs judgement; a reviewer checks it, §14). In tables the mark is the `check` column; in lists it ends the rule.
+Every rule is marked `guard` (a clippy lint or a `zefiro-guards` test holds it; a guard rule with no guard yet is a guard task) or `review` (needs judgement; a reviewer checks it, §14). In tables the mark is the `check` column; in lists it ends the rule.
 
 Decisions log: decided 2026-10-02/03 with the user; the work that brings the code to these rules is the rename batches in `.work/reviews/glossary-draft.md` §7, queued in `.work/briefs/waves.md`. Questions still open are §15: do not settle them while editing.
 
@@ -14,7 +14,7 @@ Effect::X(XCmd) ─► runtime ─► DriverLoop ─► XMessage::Cmds(Cmds { cm
 XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox ─► update
 ```
 
-1. Layer map: kernel: nothing; audio, library, macos, config, remote: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; sifr: anything. `guard` (`layering.rs`)
+1. Layer map: kernel: nothing; audio, library, macos, config, remote: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; zefiro: anything. `guard` (`layering.rs`)
 2. kernel and widgets are pure: no IO, clock, threads, env, channels. `guard` (`purity.rs`)
 3. Only the roots see a whole `Model`: the kernel router inside `update`, `startup`, `Scene::from_model`. Below them a function takes its slice or an `XParts`. `guard` (`demeter.rs`, `demeter_views.rs`)
 4. One entry each: `update` has one call site in runtime, there is one key router, one `startup`; the paint path never calls `update`. `guard` (`dispatch.rs`) for the `update` call site and the paint path, `review` for the one key router and the one `startup`
@@ -66,7 +66,7 @@ refusal sites
 1 runtime/src/driver.rs: let Ok(cmd) = driver.transition(message) else {
 1 runtime/src/event_loop.rs: if self.runtime.deliver(message).is_ok() {
 1 audio/src/deck/envelope.rs: Ok(()) | Err(Unhandled) => {}
-1 sifr/src/shell/painter.rs: if let Ok(cmd) = self.window_colors_write.transition(message) {
+1 zefiro/src/shell/painter.rs: if let Ok(cmd) = self.window_colors_write.transition(message) {
 1 kernel/src/update/mod.rs: let Some(cmd) = branch(model, message, clock).ok() else {
 1 kernel/src/update/mod.rs: Err(refusal) => {
 1 kernel/src/update/machine.rs: (Ok(handled), Err(Unhandled)) | (Err(Unhandled), Ok(handled)) => {
@@ -152,9 +152,9 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 |---|---|---|
 | track | `Track`, `Arc<Track>`; value `track` | `song`, `song_title` |
 | track identity everywhere (queue, favorites, history, m3u) | `TrackSource` (`enum TrackSource { Local(PathBuf), Server { server_name, server_track_id } }`); value `track_source`; field `Track.source` (the type takes the word its field already has); `Local` keeps today's path behaviour: no normalisation, same path text on disk, lookup through a `TrackSource` to index map, a dangling ref is skipped on load; `Server` names a track by its server and the server's id, never by a URL | `TrackRef`, `track_ref`, `track` for it, `source` alone outside `Track`, a path or an index as identity, `TrackRef::Remote` |
-| a music server sifr knows | `Server { account, server_status }` (domain::server) in `Model.servers`; its state `ServerStatus { Connecting, Online(Session), Offline(RemoteError) }`; value `server` | — |
+| a music server zefiro knows | `Server { account, server_status }` (domain::server) in `Model.servers`; its state `ServerStatus { Connecting, Online(Session), Offline(RemoteError) }`; value `server` | — |
 | who logs in where, without the password | `Account { server_name, endpoint, user_name }`, kept in `config.toml` `[[server]]` tables; value `account` | — |
-| the password a connect uses | `Credential { Typed(Secret), Stored }`: typed just now, or the one in the Keychain (service "sifr", account "user@host"); value `credential` | — |
+| the password a connect uses | `Credential { Typed(Secret), Stored }`: typed just now, or the one in the Keychain (service "zefiro", account "user@host"); value `credential` | — |
 | the signed auth query after a connect | `Session { endpoint, query }`; its `Debug` is redacted; the Model keeps it, never the password; value `session` | — |
 | a typed password in flight | `Secret`, only inside `Credential::Typed`; never stored in the Model | — |
 | which catalog the browser shows | `CatalogName { Local, Server(ServerName) }`; value `catalog_name` | — |
@@ -282,7 +282,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | small label | chip (`format_chips`, `speed_chip`) | badge, `tech_chips`, `TechChips`, `TechChipColors` |
 | preload-due / A-B-end timer | `Lookahead` (`Timer::Lookahead`) | `Mark` |
 | A-B point | `AbMark` (`AbLoop::mark`) | — |
-| render part of `sifr-ui.toml` | kernel `domain::appearance::Appearance` (`CoverCells`, `Breakpoints`, `ProgressBar`; built by `TomlAppearance::to_appearance`) | `Look`, `Custom*`, `UiOptions`, `[ui]` |
+| render part of `zefiro-ui.toml` | kernel `domain::appearance::Appearance` (`CoverCells`, `Breakpoints`, `ProgressBar`; built by `TomlAppearance::to_appearance`) | `Look`, `Custom*`, `UiOptions`, `[ui]` |
 | choices the settings overlay edits | kernel `AppearanceSettings` (field `Settings.appearance`) | `SettingsValues`, `SettingsReadout`, `AppearanceSetting` |
 | step a setting / volume / speed | `Step` + `Direction { Next, Previous }` (`Message::Step { row, direction }`, `StepVolume(Direction)`); size is a constant beside the value (`VOLUME_STEP = 5`) | `Adjust`, `Nudge`, `steps: i8`, `Adjusted` |
 | absolute input (remote, IPC, macOS) | `Set*(value)` (`SetVolume`, as cliamp) | — |
@@ -296,7 +296,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | time passed into the kernel | `Moment` | — |
 | first model | `startup`, `Startup` | init, `boot`, `Boot` |
 | everything the binary reads before the runtime starts (first model, paths, theme) | `Launch { startup, paths, theme }`, `launch()` (decided 2026-10-04) | `Boot`, `Look` |
-| terminal geometry unit | kernel `domain::geometry::{Cells(u16), Pixels(u32)}` (columns and rows alike; pixel sizes), imported by widgets, library and sifr (decided 2026-10-04, moved from widgets/library so `Appearance` and `visible_rows` can use them); ratatui `Rect`/`u16` stay at the ratatui boundary only | bare `u16`/`usize`/`u32` sizes |
+| terminal geometry unit | kernel `domain::geometry::{Cells(u16), Pixels(u32)}` (columns and rows alike; pixel sizes), imported by widgets, library and zefiro (decided 2026-10-04, moved from widgets/library so `Appearance` and `visible_rows` can use them); ratatui `Rect`/`u16` stay at the ratatui boundary only | bare `u16`/`usize`/`u32` sizes |
 | index into the sleep presets | `PresetIndex` (`Index` row) | `preset_index: usize`, `ResizeSleepCursor` |
 | macOS `OSStatus` code | `OsStatus(i32)` | bare `i32` |
 | progress bar's unfilled part | `groove` | `track` (collides with `Track`) |
@@ -314,9 +314,9 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | library disk orders inside `LibraryEffect::Execute` | `DiskCmd` | `LibraryCmd` reused |
 | named `Rect`s of one `FrameLayout` part | suffix `*Areas` (`ModalAreas`, `PlaylistAreas`, `OverlayAreas`) | `Rects`, `Regions` |
 | read-models `KeyHintsContent`, `OverlayContent` | `KeyHintsView`, `OverlayView` (View row) | `Content` suffix |
-| sifr's values beside the Model for `ScenePresentation` | `ShellPresentation` | `Presentation` |
+| zefiro's values beside the Model for `ScenePresentation` | `ShellPresentation` | `Presentation` |
 | CPU-parallel work inside one job (tag reading) | allowed: `thread::scope` inside a job body, joined before the job returns (decided 2026-10-04) | detached threads in jobs |
-| turning the raw `TomlTheme` into the widgets `Theme` | the shell (sifr) does it: `Theme` is a widgets type and config sits below widgets; config publishes `TomlTheme` (decided 2026-10-04) | config depending on widgets |
+| turning the raw `TomlTheme` into the widgets `Theme` | the shell (zefiro) does it: `Theme` is a widgets type and config sits below widgets; config publishes `TomlTheme` (decided 2026-10-04) | config depending on widgets |
 | which cover to decode and at what size | the kernel decides: the shell reports the laid-out cover side through `Message::Viewport` (`Pixels`), kernel emits `Effect::Library(LibraryCmd::DecodeCover(CoverJob))` on track or side change; no shell→driver side channel (decided 2026-10-04) | paint path sending `LibraryMessage::Cover` |
 | config reloaded | kernel `ConfigReload { name: ConfigName, result: Result<(), ConfigError> }` (§6.3), `config_reloaded`; the per-file errors held by the workspace are `ConfigErrors`, field `config_errors`; startup shows one toast with the first error and records the rest; the live values parsed from `config.toml` are `ConfigSettings { keymap_overrides, music_dir }` | `SourceOutcome`, `source_result` |
 | applying a patch | `patched` (`TomlAppearance::patched`, kernel `AppearanceSettings::patched(patch)`) | `apply` |
@@ -398,7 +398,7 @@ A name or shape this file does not cover (a new suffix, a new domain word, a sec
 4. Runtime tests are thin, use real channels and need no sound device. A test that needs hardware is `#[ignore = "hardware: …"]` `guard` (`hardware.rs`); a contract test ignored for hardware is a defect in the seam. `review`
 5. A refactor leaves snapshots unchanged except renamed identifiers; a behaviour change comes with a new snapshot and its reason. `review`
 6. In test code `unwrap`, `expect`, `panic!`, indexing, `print!`, `dbg!` are allowed (`clippy.toml` `allow-*-in-tests`); structure is held to the production bar. `guard`
-7. Agents commit after `cargo fmt`, clippy and the guards (`cargo test -p sifr-guards`); they run no test suite; the coordinator runs the gate (`scripts/gate.sh`). `review`
+7. Agents commit after `cargo fmt`, clippy and the guards (`cargo test -p zefiro-guards`); they run no test suite; the coordinator runs the gate (`scripts/gate.sh`). `review`
 
 ## 14. Reviews
 

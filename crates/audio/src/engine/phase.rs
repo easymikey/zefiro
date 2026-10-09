@@ -17,11 +17,8 @@ pub(crate) enum Phase {
 impl Phase {
     pub(crate) fn current(&self) -> Option<&LoadedTrack> {
         match self {
-            Phase::Playing(Playing {
-                current,
-                next: _next,
-            }) => Some(current),
-            Phase::Handover(Incoming::Playing(current)) => Some(current),
+            Phase::Playing(Playing { current, .. })
+            | Phase::Handover(Incoming::Playing(current)) => Some(current),
             Phase::Idle | Phase::Loading(_) | Phase::Handover(Incoming::Loading(_)) => {
                 None
             }
@@ -45,11 +42,7 @@ impl Playing {
     }
 
     pub(crate) fn promote(&mut self) {
-        if let NextTrack::Crossfading {
-            incoming,
-            fade: _fade,
-        } = &mut self.next
-        {
+        if let NextTrack::Crossfading { incoming, .. } = &mut self.next {
             std::mem::swap(&mut self.current, incoming);
             self.next = NextTrack::None;
         }
@@ -138,7 +131,7 @@ pub(crate) struct Upcoming {
 impl From<LoadedTrack> for Upcoming {
     fn from(track: LoadedTrack) -> Self {
         let LoadedTrack {
-            duration: _duration,
+            duration: _,
             decibels,
             media,
         } = track;

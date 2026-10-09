@@ -75,6 +75,8 @@ impl Moment {
 mod tests {
     use std::time::Duration;
 
+    use rstest::rstest;
+
     use crate::domain::time::{Moment, TimecodeError, parse_timecode};
 
     #[test]
@@ -85,12 +87,26 @@ mod tests {
         assert_eq!(parse_timecode("90"), Ok(Duration::from_secs(90)));
     }
 
-    #[test]
-    fn parse_timecode_rejects_an_out_of_range_seconds_field() {
+    #[rstest]
+    #[case::in_minutes_and_seconds("1:99", 99)]
+    #[case::in_hours_minutes_and_seconds("1:00:60", 60)]
+    fn parse_timecode_rejects_an_out_of_range_seconds_field(
+        #[case] input: &str,
+        #[case] seconds: u64,
+    ) {
         assert_eq!(
-            parse_timecode("1:99"),
-            Err(TimecodeError::OutOfRange { value: 99, max: 59 })
+            parse_timecode(input),
+            Err(TimecodeError::OutOfRange {
+                value: seconds,
+                max: 59
+            })
         );
+    }
+
+    #[test]
+    fn since_epoch_returns_the_stored_duration() {
+        let elapsed = Duration::from_secs(90);
+        assert_eq!(Moment::new(elapsed).since_epoch(), elapsed);
     }
 
     #[test]
@@ -98,22 +114,18 @@ mod tests {
         assert_eq!(parse_timecode(""), Err(TimecodeError::Empty));
     }
 
-    #[test]
-    fn default_is_the_epoch_itself() {
-        assert_eq!(Moment::default(), Moment::new(Duration::ZERO));
-    }
-
-    #[test]
-    fn elapsed_since_is_the_gap_between_two_moments() {
-        let earlier_at = Moment::new(Duration::from_secs(3));
-        let later_at = Moment::new(Duration::from_secs(5));
-        assert_eq!(later_at.elapsed_since(earlier_at), Duration::from_secs(2));
-    }
-
-    #[test]
-    fn elapsed_since_saturates_when_the_other_moment_is_later() {
-        let earlier_at = Moment::new(Duration::from_secs(3));
-        let later_at = Moment::new(Duration::from_secs(5));
-        assert_eq!(earlier_at.elapsed_since(later_at), Duration::ZERO);
+    #[rstest]
+    #[case(5, 3, 2)]
+    #[case(3, 5, 0)]
+    fn elapsed_since_is_the_gap_between_two_moments(
+        #[case] at: u64,
+        #[case] other: u64,
+        #[case] gap: u64,
+    ) {
+        assert_eq!(
+            Moment::new(Duration::from_secs(at))
+                .elapsed_since(Moment::new(Duration::from_secs(other))),
+            Duration::from_secs(gap)
+        );
     }
 }

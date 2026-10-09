@@ -457,7 +457,7 @@ fn signed(account: &Account, secret: &Secret) -> Session {
     Session::new(
         account.endpoint.clone(),
         &format!(
-            "u={}&t={token}&s={salt}&v={API_VERSION}&c=sifr&f=json",
+            "u={}&t={token}&s={salt}&v={API_VERSION}&c=zefiro&f=json",
             encoded(account.user_name.as_str())
         ),
     )
@@ -589,7 +589,7 @@ mod tests {
         #[case] bytes: &[u8],
     ) {
         let part_path = env::temp_dir().join(format!(
-            "sifr-written-{}-{}.part",
+            "zefiro-written-{}-{}.part",
             process::id(),
             bytes.len()
         ));

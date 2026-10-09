@@ -23,6 +23,7 @@ pub(crate) struct Fader {
     pub(crate) control: EnvelopeControl,
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct Feeding<'a> {
     pub(crate) speed: Speed,
     pub(crate) callback_sender: &'a Sender<AudioMessage>,
@@ -61,13 +62,13 @@ impl Output {
     pub(crate) fn voice(
         &self,
         decoded_track: DecodedTrack,
-        feeding: &Feeding<'_>,
+        feeding: Feeding<'_>,
     ) -> Result<(Box<Voice>, EnvelopeControl), DecodeError> {
         let Feeding {
             speed,
             callback_sender,
             feed_sender,
-        } = *feeding;
+        } = feeding;
         let varispeed =
             Varispeed::new(decoded_track.decoder.sample_rate(), self.format, speed)
                 .or(Err(DecodeError::Unsupported))?;

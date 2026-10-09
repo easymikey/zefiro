@@ -43,7 +43,7 @@ fn a_forget_drops_the_server_waiting_connect() {
         panic!("valid connections");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
 
     let connects = jobs(answered(&mut driver, asked(vec![a.clone(), x.clone()])));
     let forget = jobs(answered(&mut driver, forgets(x.account.clone())));
@@ -61,7 +61,7 @@ fn a_forget_of_the_server_connecting_runs_after_its_connect_answers() {
         panic!("a valid connection");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
 
     let connects = jobs(answered(&mut driver, asked(vec![x.clone()])));
     let forget = jobs(answered(&mut driver, forgets(x.account.clone())));
@@ -90,7 +90,7 @@ fn a_connect_waits_for_the_forget_of_its_server() {
         panic!("a valid connection");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
 
     let forget = jobs(answered(&mut driver, forgets(x.account.clone())));
     let connects = jobs(answered(&mut driver, asked(vec![x.clone()])));
@@ -110,7 +110,7 @@ fn a_forget_drops_the_server_queued_star_and_runs_after_the_star_in_flight() {
         panic!("a valid account");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let cmds = [
         star_cmd("c41d", Favorite::Yes),
         star_cmd("e7a2", Favorite::No),

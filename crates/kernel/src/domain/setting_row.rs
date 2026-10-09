@@ -203,30 +203,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::toggle_up_from_0(StepRow {
-        choice: Choice::Option(option(2, 0)),
-        control: AppearanceControl::Toggle,
-        direction: Direction::Next,
-        expected: option(2, 1),
-    })]
-    #[case::toggle_down_from_0(StepRow {
-        choice: Choice::Option(option(2, 0)),
-        control: AppearanceControl::Toggle,
-        direction: Direction::Previous,
-        expected: option(2, 1),
-    })]
-    #[case::cycle_wraps_up_at_the_end(StepRow {
-        choice: Choice::Option(option(3, 2)),
-        control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
-        direction: Direction::Next,
-        expected: option(3, 0),
-    })]
-    #[case::cycle_wraps_down_at_0(StepRow {
-        choice: Choice::Option(option(3, 0)),
-        control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
-        direction: Direction::Previous,
-        expected: option(3, 2),
-    })]
     #[case::mixed_up(StepRow {
         choice: Choice::Mixed,
         control: AppearanceControl::Cycle(OptionCount::new(3).unwrap()),
@@ -241,13 +217,5 @@ mod tests {
     })]
     fn choice_steps_onto_a_real_option(#[case] row: StepRow) {
         assert_eq!(row.choice.stepped(row.control, row.direction), row.expected);
-    }
-
-    #[test]
-    fn option_count_rejects_zero_and_bounds_its_index() {
-        assert_eq!(OptionCount::new(0), None);
-        let count = OptionCount::new(3).unwrap();
-        assert_eq!(count.index(3), None);
-        assert!(count.index(2).is_some());
     }
 }

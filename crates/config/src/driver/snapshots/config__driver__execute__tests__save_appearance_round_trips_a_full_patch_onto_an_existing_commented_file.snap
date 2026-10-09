@@ -3,7 +3,7 @@ source: crates/runtime/src/config/driver.rs
 assertion_line: 454
 expression: text
 ---
-# sifr-ui.toml
+# zefiro-ui.toml
 [cover]
 # the noir look
 mode = "off"

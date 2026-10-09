@@ -344,8 +344,8 @@ pub(crate) mod tests {
     fn a_mixer_without_a_voice_writes_silence() {
         let MixerChannel {
             mut mixer,
-            control: _control,
-            retired_voices: _retired_voices,
+            control: _,
+            retired_voices: _,
         } = channel(MONO_8K);
         assert!(mixed(&mut mixer, 1_000).iter().all(|&sample| sample == 0.0));
         let mut out = [1_i16; 64];
@@ -421,7 +421,7 @@ pub(crate) mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(MONO_12K);
             let (current_voice, _current_control) =
                 voice(&first, MONO_12K, feed_sender);

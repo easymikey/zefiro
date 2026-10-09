@@ -116,15 +116,26 @@ mod tests {
     #[rstest]
     #[case::a_light_colour_on_a_light_background(
         Rgb([0xf3, 0xe9, 0xd2]),
-        Rgb([0xf5, 0xf1, 0xe8])
+        Rgb([0xf5, 0xf1, 0xe8]),
+        BLACK
     )]
-    #[case::a_dark_colour(Rgb([0x2a, 0xa8, 0xa0]), Rgb([0xd8, 0xd0, 0xc8]))]
-    fn raise_contrast_pushes_a_light_or_dark_colour_toward_black(
+    #[case::a_dark_colour(
+        Rgb([0x2a, 0xa8, 0xa0]),
+        Rgb([0xd8, 0xd0, 0xc8]),
+        BLACK
+    )]
+    #[case::a_light_colour_on_a_mid_background(
+        Rgb([0x90, 0x90, 0x90]),
+        Rgb([0x80, 0x80, 0x80]),
+        WHITE
+    )]
+    fn raise_contrast_pushes_a_colour_toward_black_or_white(
         #[case] color: Rgb,
         #[case] background: Rgb,
+        #[case] target: Rgb,
     ) {
         let raised = raise_contrast(color, &[background], MIN_MARKER_CONTRAST);
-        assert!(relative_luminance(raised) < relative_luminance(color));
+        assert!(contrast_ratio(raised, target) < contrast_ratio(color, target));
         assert!(contrast_ratio(raised, background) >= MIN_MARKER_CONTRAST);
     }
 

@@ -3,7 +3,7 @@ source: crates/widgets/src/card/mod.rs
 assertion_line: 605
 expression: "painted(&widget, 60, height())"
 ---
-"╭ Sifr ────────────────────────────────────────────────────╮"
+"╭ Zefiro ──────────────────────────────────────────────────╮"
 "│                                                          │"
 "│      No cover      Moon River                ▶ Playing   │"
 "│                    Test Artist                           │"

@@ -68,7 +68,7 @@ clean:
 
 # size of everything safe to delete
 disk:
-    @du -sh target ~/.cache/sifr 2>/dev/null; true
+    @du -sh target ~/.cache/zefiro 2>/dev/null; true
 
 # pre-commit hook: fix formatting of fully staged files, then check what is staged, clippy if rust changed
 pre-commit:

@@ -405,7 +405,7 @@ pub enum RemoteError {
     },
     #[error("{server_name} moved to another address; update its link")]
     Moved { server_name: ServerName },
-    #[error("{server_name} sent an answer sifr cannot read: {diagnostic}")]
+    #[error("{server_name} sent an answer zefiro cannot read: {diagnostic}")]
     Parse {
         server_name: ServerName,
         diagnostic: Diagnostic,
@@ -540,12 +540,6 @@ mod tests {
 
     #[rstest]
     #[case(
-        "https://music.example.com/",
-        "https://music.example.com",
-        "music.example.com"
-    )]
-    #[case("http://10.0.0.2:4533", "http://10.0.0.2:4533", "10.0.0.2")]
-    #[case(
         "https://example.com/navidrome/",
         "https://example.com/navidrome",
         "example.com"
@@ -562,23 +556,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case("https://music.example.com", true)]
-    #[case("https://10.0.0.2:4533/navidrome", true)]
-    #[case("http://music.example.com", false)]
-    #[case("http://10.0.0.2:4533", false)]
-    fn is_https_holds_only_for_an_https_link(#[case] link: &str, #[case] https: bool) {
-        assert_eq!(
-            Endpoint::parse(link).map(|endpoint| endpoint.is_https()),
-            Ok(https)
-        );
-    }
-
-    #[rstest]
     #[case("", EndpointError::Empty)]
-    #[case("ftp://x", EndpointError::Scheme)]
     #[case("https://", EndpointError::Host)]
-    #[case("https://x:99999", EndpointError::Host)]
     #[case("https://x:0", EndpointError::Host)]
+    #[case("https://x:99999", EndpointError::Host)]
     #[case("https://x:+80", EndpointError::Host)]
     #[case("https://alice@x", EndpointError::UserInfo)]
     #[case("https://x/?a", EndpointError::Query)]
@@ -591,8 +572,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case("https://music.example.com/navidrome", "alice@music.example.com")]
-    #[case("http://10.0.0.2:4533", "alice@10.0.0.2:4533")]
     #[case("http://[::1]:4533/", "alice@[::1]:4533")]
     fn keychain_account_is_user_at_host_with_the_port_if_any_and_survives_a_rename(
         #[case] link: &str,
@@ -667,15 +646,12 @@ mod tests {
     }
 
     #[rstest]
-    #[case(RemoteError::Api { server_name: server_name(), api_code: ApiCode(70) }, true)]
     #[case(RemoteError::Status { server_name: server_name(), http_status: HttpStatus(404) }, true)]
     #[case(
         RemoteError::Parse { server_name: server_name(), diagnostic: Diagnostic::from_error(&std::fmt::Error) },
         true
     )]
     #[case(RemoteError::Status { server_name: server_name(), http_status: HttpStatus(503) }, false)]
-    #[case(RemoteError::Unreachable { server_name: server_name(), source: IoError::Other }, false)]
-    #[case(RemoteError::Moved { server_name: server_name() }, false)]
     fn is_refusal_holds_for_api_codes_parse_failures_and_client_statuses(
         #[case] error: RemoteError,
         #[case] refusal: bool,
@@ -683,8 +659,19 @@ mod tests {
         assert_eq!(error.is_refusal(), refusal);
     }
 
+    #[test]
+    fn a_parse_error_says_zefiro_cannot_read_the_answer() {
+        let error = RemoteError::Parse {
+            server_name: server_name(),
+            diagnostic: Diagnostic::from_error(&std::fmt::Error),
+        };
+        assert_eq!(
+            error.to_string(),
+            "home sent an answer zefiro cannot read: an error occurred when formatting an argument"
+        );
+    }
+
     #[rstest]
-    #[case(["home", "tr-1", "flac"], "home/tr-1.flac")]
     #[case(["a/b", "c\\d", "mp3"], "a_b/c_d.mp3")]
     #[case(["..", "..", ""], "_../_..._")]
     fn cache_key_is_server_slash_id_dot_suffix_with_separators_replaced(

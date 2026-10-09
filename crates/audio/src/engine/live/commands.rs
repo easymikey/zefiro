@@ -25,11 +25,11 @@ impl Live {
         audio_cmd: AudioCmd,
     ) -> Result<AudioLoopCmd, Unhandled> {
         match audio_cmd {
-            AudioCmd::Load(TrackLoad {
-                revision,
-                media: _media,
-                decibels: _decibels,
-            }) if revision <= self.executed_revisions.load => Err(Unhandled),
+            AudioCmd::Load(TrackLoad { revision, .. })
+                if revision <= self.executed_revisions.load =>
+            {
+                Err(Unhandled)
+            }
             AudioCmd::Load(track_load) => Ok(self.load(job_revisions, track_load)),
             AudioCmd::Preload(track_load) => self.preload(job_revisions, track_load),
             AudioCmd::CancelPreload(revision) => {
@@ -115,11 +115,7 @@ impl Live {
     fn seek(&mut self, target: Duration) -> AudioLoopCmd {
         let Phase::Playing(Playing {
             current,
-            next:
-                NextTrack::Crossfading {
-                    fade,
-                    incoming: _incoming,
-                },
+            next: NextTrack::Crossfading { fade, .. },
         }) = &mut self.phase
         else {
             return then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(
@@ -195,18 +191,14 @@ impl Live {
         let audio_loop_cmd = match &playing.next {
             NextTrack::None => return cancelled,
             NextTrack::Crossfading {
-                incoming: _incoming,
                 fade: Fade::Running,
+                ..
             } => return Cmd::message(AudioEvent::PreloadKept(revision)),
             NextTrack::Crossfading {
-                incoming: _incoming,
-                fade: Fade::Armed,
+                fade: Fade::Armed, ..
             } => Cmd::effect(LoopEffect::Execute(EngineEffect::SetFadeStart(None)))
                 .then(drop_preload),
-            NextTrack::Preloading {
-                media: _media,
-                decibels: _decibels,
-            } => drop_preload,
+            NextTrack::Preloading { .. } => drop_preload,
             NextTrack::Gapless(_incoming) => drop_preload,
         };
         job_revisions.drop_preload(&playing.current.media);
@@ -639,9 +631,8 @@ mod tests {
             .effects()
             .filter_map(|effect| {
                 let LoopEffect::Run(AudioJob::Decode {
-                    media_path: _media_path,
                     download: Some(download),
-                    revision: _revision,
+                    ..
                 }) = effect
                 else {
                     return None;

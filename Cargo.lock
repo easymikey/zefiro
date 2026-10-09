@@ -2496,40 +2496,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
-name = "sifr"
-version = "0.1.0"
-dependencies = [
- "audio",
- "clap",
- "config",
- "crossbeam-channel",
- "crossterm",
- "dirs",
- "insta",
- "kernel",
- "library",
- "ratatui",
- "rstest",
- "runtime",
- "signal-hook",
- "tempfile",
- "terminal",
- "thiserror 2.0.20",
- "widgets",
-]
-
-[[package]]
-name = "sifr-guards"
-version = "0.1.0"
-dependencies = [
- "config",
- "proc-macro2",
- "syn 2.0.119",
- "thiserror 2.0.20",
- "toml",
-]
-
-[[package]]
 name = "signal-hook"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3891,6 +3857,40 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "zefiro"
+version = "0.1.0"
+dependencies = [
+ "audio",
+ "clap",
+ "config",
+ "crossbeam-channel",
+ "crossterm",
+ "dirs",
+ "insta",
+ "kernel",
+ "library",
+ "ratatui",
+ "rstest",
+ "runtime",
+ "signal-hook",
+ "tempfile",
+ "terminal",
+ "thiserror 2.0.20",
+ "widgets",
+]
+
+[[package]]
+name = "zefiro-guards"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "proc-macro2",
+ "syn 2.0.119",
+ "thiserror 2.0.20",
+ "toml",
 ]
 
 [[package]]

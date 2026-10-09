@@ -331,7 +331,7 @@ mod tests {
     fn watch(theme: Option<&'static str>) -> ConfigWatch {
         ConfigWatch::new(&ConfigPaths {
             config_path: PathBuf::from("/config/config.toml"),
-            appearance_path: PathBuf::from("/config/sifr-ui.toml"),
+            appearance_path: PathBuf::from("/config/zefiro-ui.toml"),
             themes_dir: PathBuf::from("/config/themes"),
             default_music_dir: None,
             theme_name: theme.map(ThemeName::from_static),
@@ -359,7 +359,7 @@ mod tests {
     #[rstest]
     #[case::appearance(
         ConfigWatchMessage::PollAppearance,
-        reads(ConfigName::Appearance, "/config/sifr-ui.toml")
+        reads(ConfigName::Appearance, "/config/zefiro-ui.toml")
     )]
     #[case::config(
         ConfigWatchMessage::PollConfig,

@@ -13,7 +13,7 @@ where
     };
     let guard = StopOnDrop(main.stopper());
     let handle = std::thread::Builder::new()
-        .name("sifr-event-loop".to_owned())
+        .name("zefiro-event-loop".to_owned())
         .spawn(move || {
             let _guard = guard;
             body(runtime)

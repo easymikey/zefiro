@@ -9,7 +9,7 @@ use objc2_media_player::{MPMediaItemArtwork, MPNowPlayingPlaybackState};
 
 use crate::{clock::NowPlayingClock, ffi};
 
-const PLACEHOLDER_TITLE: &str = "sifr";
+const PLACEHOLDER_TITLE: &str = "zefiro";
 const PAUSED_RATE: f64 = 0.0;
 
 #[derive(Debug, Clone, Copy)]

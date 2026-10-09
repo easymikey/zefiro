@@ -1,10 +1,10 @@
 # Architecture
 
-How sifr is put together: crates and layers, threads, the message path, the driver registry and the cells. Every rule, trait signature and name lives in `docs/conventions.md` (cited as §n); why the design is this way is `docs/principles.md`. Where this file and the rulebook disagree, the rulebook wins.
+How zefiro is put together: crates and layers, threads, the message path, the driver registry and the cells. Every rule, trait signature and name lives in `docs/conventions.md` (cited as §n); why the design is this way is `docs/principles.md`. Where this file and the rulebook disagree, the rulebook wins.
 
 ## Pattern
 
-sifr is The Elm Architecture (TEA) with drivers (conventions §1):
+zefiro is The Elm Architecture (TEA) with drivers (conventions §1):
 
 ```
 Message ──► kernel update(&mut Model, Message, Moment) ──► effects
@@ -22,7 +22,7 @@ Message ──► kernel update(&mut Model, Message, Moment) ──► effects
 - The kernel is the only place that decides, and it is pure. `update` drains follow-up messages itself and returns the collected effects, or `Unhandled` when the message has no transition in the current state (§3.2, §3.4).
 - The runtime performs what the kernel decided; its interpreter is a lookup with no decisions.
 - Drivers adapt external sources (audio device, library files, config files, macOS media keys and system volume, music servers) into events. A driver waits for its source; nothing polls.
-- The shell (binary `sifr`) turns terminal input into messages and the model into a frame.
+- The shell (binary `zefiro`) turns terminal input into messages and the model into a frame.
 - Timers exist only in the kernel as `Effect::After { delay, timer }`; they come back as `Message::Elapsed(Timer)`.
 
 ## Crates and layers
@@ -32,7 +32,7 @@ The layer map is conventions §1.1; edges only point down the table.
 | layer | crate | role |
 |---|---|---|
 | 0 | `kernel` | `Model`, `Message`, `Cmd`/`Effect`, `update`, key routing, the `Machine` and `Driver` traits, supervision, domain types |
-| 1 | `config` | file formats: `config.toml`, `sifr-ui.toml` (appearance), themes, keymap; parse and format-preserving patch; settings rows; `ConfigDriver` |
+| 1 | `config` | file formats: `config.toml`, `zefiro-ui.toml` (appearance), themes, keymap; parse and format-preserving patch; settings rows; `ConfigDriver` |
 | 1 | `library` | scan, tags, embedded covers, playlists, history, favorites; `LibraryDriver` |
 | 1 | `audio` | playback engine: symphonia decode, the feeder job, the mixer on the cpal callback with varispeed over rubato, spectrum tap; `AudioDriver` |
 | 1 | `macos` | media keys, Now Playing, system volume and output device (CoreAudio listeners), the Keychain store for keyring-core (`keychain`); `MacosDriver`, `MainLoop` |
@@ -40,7 +40,7 @@ The layer map is conventions §1.1; edges only point down the table.
 | 2 | `runtime` | event loop, interpreter, timers, cells, registry, ports, `DriverLoop`, start, drain, `host` |
 | 2 | `widgets` | pure terminal view: `Scene`, `FrameLayout`, the `screen` module, card, playlist, overlays, toast, animations, milkdrop, spectrum smoothing, pixel images |
 | 3 | `terminal` | terminal IO: session, input, key conversion, capability probe, window colours, image protocols |
-| 4 | `sifr` | binary: command line, startup, signals, the `Shell` implementation (view, presentation, motion clock, painter) |
+| 4 | `zefiro` | binary: command line, startup, signals, the `Shell` implementation (view, presentation, motion clock, painter) |
 
 `macos` is a target-gated dependency (§4.9): off macOS it is not linked.
 
@@ -67,11 +67,11 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **Playback.** `update` returns `Effect::Audio(AudioCmd::Load(..))` → audio port → `DriverLoop` delivers `AudioMessage::Cmds(Cmds { cmds, at })` → `AudioDriver::transition` → `execute` opens the file → `AudioEvent`s → `DriverLoop` → `inbox` → `update`.
 
-**Volume.** `update` returns `MacosCmd::SetVolume` → macOS driver → CoreAudio write; the driver machine swallows the listener echo of its own write. A change made outside sifr arrives as `MacosEvent::VolumeChanged`.
+**Volume.** `update` returns `MacosCmd::SetVolume` → macOS driver → CoreAudio write; the driver machine swallows the listener echo of its own write. A change made outside zefiro arrives as `MacosEvent::VolumeChanged`.
 
 **In-app setting.** a `Step` key → `update` → `Effect::Config(ConfigCmd::SetAppearance { .. })` → the config driver patches its appearance, schedules the save (coalesced, format-preserving) and publishes the appearance into its cell → the next paint installs it. The driver marks its own write as seen, so it never comes back as a reload.
 
-**Hand edit of `sifr-ui.toml`.** a `notify` stream item → the config driver re-reads the file → the appearance into the cell and `ConfigEvent::AppearanceReloaded` to the kernel, which derives the settings rows from it, so they show the file's values. A theme file works the same way with `ConfigEvent::ThemeReloaded`; with Animations on, its cue fades the whole screen at once in a quick fade over `TIMINGS.screen_wash` (150 ms), every cell from the colours of the frame on screen (`PaintedCell`, kept by the painter only while Animations are on) to the new theme, and the window colours follow the same fade. A vinyl the theme only restyles (same track, same cover) repaints once. A layout change has no transition: the new layout shows at once.
+**Hand edit of `zefiro-ui.toml`.** a `notify` stream item → the config driver re-reads the file → the appearance into the cell and `ConfigEvent::AppearanceReloaded` to the kernel, which derives the settings rows from it, so they show the file's values. A theme file works the same way with `ConfigEvent::ThemeReloaded`; with Animations on, its cue fades the whole screen at once in a quick fade over `TIMINGS.screen_wash` (150 ms), every cell from the colours of the frame on screen (`PaintedCell`, kept by the painter only while Animations are on) to the new theme, and the window colours follow the same fade. A vinyl the theme only restyles (same track, same cover) repaints once. A layout change has no transition: the new layout shows at once.
 
 **Cover.** the kernel asks for a cover with `Effect::Library(LibraryCmd::DecodeCover)` when track, side or mode changes → the library driver answers once per distinct request → a cached decode is published at once, otherwise a `CoverJob` runs on a worker → the decoded cover goes into the cover cell and rings the doorbell → the next paint takes it → the terminal encodes it once per (path, rect) and places it after the text in the same draw. A cover change (another cover path) in the same rect on a pixel terminal with Animations on fades in at most `COVER_CROSSFADE_STEPS` encoded steps over `TIMINGS.cover_crossfade`; with Animations off it repaints once.
 
@@ -81,7 +81,7 @@ Hardware drivers are injected: the binary passes the real spawners to `Runtime::
 
 **Server track.** All HTTP lives in the `remote` crate; `audio` has no network, and the kernel never builds a protocol URL. Playing a `TrackSource::Server` track, the kernel records a `Download { media_fetch, fetched }` and orders the first chunk, `RemoteCmd::Fetch(MediaFetch)` for the current track or `RemoteCmd::Prefetch(MediaFetch)` for the next one → the remote driver runs it as a `RemoteJob`: it builds the stream URL from the `Session`, asks for one bounded Range chunk from `first_byte` (`FETCH_CHUNK`, 4 MiB, `Accept-Encoding: identity`, its own `FETCH_TIMEOUT`), appends it to the track's file in the media cache (keyed by `CacheKey`, trimmed to 2 GB) and answers `RemoteEvent::Fetched { revision, result }` → the kernel drops an answer whose `Revision` no download holds; on progress it stores the `Fetched` bytes, orders the next chunk from `downloaded` until the file is complete, loads the track as `Media::Growing` once the download is ready (`START_MARGIN`, or the whole file for MP4 containers), and from then on sends audio `AudioCmd::Grow { revision, downloaded }`, the safe byte bound of the growing file; audio reads only below that bound. A failed or empty chunk retries after `Timer::Fetch(revision)`. Seeking past the downloaded part is out of scope.
 
-**Server login.** `RemoteCmd::Connect(Connection)` → the remote driver reads or writes the password through keyring-core (service `sifr`, account `<user>@<host>`; the macOS store comes from the `macos` crate's `keychain` module, set as keyring-core's default store once at runtime wiring), signs the token query and answers `RemoteEvent::Connected { server_name, session }`; the Model keeps the `Session`, never the password. Connects, stars and play reports wait in the driver's own queue, since `DriverLoop` runs only the newest job of each variant; jobs of different variants run side by side.
+**Server login.** `RemoteCmd::Connect(Connection)` → the remote driver reads or writes the password through keyring-core (service `zefiro`, account `<user>@<host>`; the macOS store comes from the `macos` crate's `keychain` module, set as keyring-core's default store once at runtime wiring), signs the token query and answers `RemoteEvent::Connected { server_name, session }`; the Model keeps the `Session`, never the password. Connects, stars and play reports wait in the driver's own queue, since `DriverLoop` runs only the newest job of each variant; jobs of different variants run side by side.
 
 **Stop.** `q`, a signal or a fatal driver decision → the kernel sends the stop commands (audio stop, window colours reset, `ConfigCmd::Flush`, `RemoteCmd::Flush`) and `Quit` → drain: drop the ports, wait for `Stopped | Died` from each driver up to two seconds in total, join those that reported; on macOS `host` then stops the main run loop.
 

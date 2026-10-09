@@ -8,10 +8,10 @@ members = [
   "crates/macos",
   "crates/remote",
   "crates/runtime",
-  "crates/sifr",
-  "crates/sifr-guards",
+  "crates/zefiro-guards",
   "crates/terminal",
   "crates/widgets",
+  "crates/zefiro",
 ]
 
 [workspace.metadata.bin]

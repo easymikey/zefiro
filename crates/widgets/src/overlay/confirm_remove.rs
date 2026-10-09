@@ -15,7 +15,7 @@ fn sentence(server_name: &ServerName) -> [&str; 5] {
         glyphs::quote::QUOTE_OPEN,
         server_name.as_str(),
         glyphs::quote::QUOTE_CLOSE,
-        " from sifr",
+        " from zefiro",
     ]
 }
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Line-coverage floors: for each workspace crate except sifr-guards, runs the
+# Line-coverage floors: for each workspace crate except zefiro-guards, runs the
 # crate's own tests under cargo llvm-cov, then checks the line coverage against
 # the crate's floor. Only code no test can reach is left out of the count:
 # crates/macos/src/ffi.rs, where every fn calls into the MediaPlayer framework.
@@ -24,9 +24,9 @@ kernel 95
 library 92
 macos 68
 runtime 91
-sifr 69
 terminal 78
 widgets 95
+zefiro 69
 '
 
 : "${CARGO_TARGET_DIR:=target/llvm-cov}"
@@ -38,7 +38,7 @@ cargo bin cargo-llvm-cov clean --workspace --color never >/dev/null 2>&1
 failed=''
 for manifest in crates/*/Cargo.toml; do
     crate=$(awk -F'"' '/^name = / { print $2; exit }' "$manifest")
-    if [ "$crate" = "sifr-guards" ]; then
+    if [ "$crate" = "zefiro-guards" ]; then
         continue
     fi
     floor=$(printf '%s\n' "$floors" | awk -v crate="$crate" '$1 == crate { print $2 }')

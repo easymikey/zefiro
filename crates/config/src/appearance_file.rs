@@ -147,7 +147,7 @@ impl Default for TomlLayout {
 
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-#[serde(default, deny_unknown_fields, expecting = "the sifr-ui.toml file")]
+#[serde(default, deny_unknown_fields, expecting = "the zefiro-ui.toml file")]
 pub struct TomlAppearance {
     pub(crate) card: TomlCard,
     pub progress: TomlProgress,

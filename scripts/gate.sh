@@ -6,7 +6,7 @@ if [ -z "$brief" ] && [ -f .gate-brief ]; then
     brief=$(cat .gate-brief)
 fi
 
-: "${CARGO_TARGET_DIR:=/tmp/sifr-wt-$(basename "$PWD")}"
+: "${CARGO_TARGET_DIR:=/tmp/zefiro-wt-$(basename "$PWD")}"
 export CARGO_TARGET_DIR
 export RUSTC_WRAPPER=
 

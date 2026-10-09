@@ -120,7 +120,7 @@ fn a_forget_runs_one_job_and_its_answer_reports_a_keychain_error() {
         panic!("a valid account");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let error = RemoteError::Keychain {
         server_name: ServerName::new("home"),
         source: IoError::from(ErrorKind::Other),
@@ -159,7 +159,7 @@ fn two_connects_run_the_first_and_the_second_waits_for_its_answer() {
         panic!("valid connections");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     assert_eq!(
         jobs(answered(&mut driver, asked(vec![a.clone(), b.clone()]))),
         Some((vec![RemoteJob::Connect(a)], vec![]))
@@ -185,7 +185,7 @@ fn a_connect_for_the_server_in_flight_is_queued_once_with_the_newest_credential(
         panic!("valid connections");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     assert_eq!(
         jobs(answered(&mut driver, asked(vec![first.clone()]))),
         Some((vec![RemoteJob::Connect(first)], vec![]))
@@ -213,7 +213,7 @@ fn an_answer_for_a_server_not_in_flight_is_unhandled_and_changes_nothing() {
         panic!("valid connections");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     assert!(driver.transition(asked(vec![a, b])).is_ok());
     let before = format!("{driver:?}");
     assert!(matches!(
@@ -226,7 +226,7 @@ fn an_answer_for_a_server_not_in_flight_is_unhandled_and_changes_nothing() {
 #[test]
 fn an_empty_order_is_unhandled() {
     assert!(matches!(
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"))
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"))
             .transition(asked(vec![])),
         Err(Unhandled)
     ));
@@ -267,7 +267,7 @@ fn a_connect_answer_with_an_error_reports_it(
         panic!("valid connection");
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     assert!(driver.transition(asked(vec![a])).is_ok());
     assert_eq!(
         remote_message.and_then(|message| jobs(answered(&mut driver, message))),
@@ -304,7 +304,7 @@ fn list_job(name: &str, listing: Listing, revision: Revision) -> Option<RemoteJo
 
 pub(crate) fn online_driver(name: &str) -> RemoteDriver {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let Some(connection) = stored(name) else {
         return driver;
     };
@@ -401,7 +401,7 @@ fn a_listed_answer_that_is_not_in_flight_is_unhandled_and_changes_nothing() {
 fn a_list_with_no_connect_before_it_runs_from_the_orders_session() {
     let revision = Revision::default().next();
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     assert_eq!(
         jobs(
             list_cmd("a", Listing::Albums(AlbumOrder::Newest), revision)
@@ -503,7 +503,7 @@ fn three_searches_within_the_wait_give_one_job_with_the_last_input() {
     let second = first.next();
     let third = second.next();
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     for (input, revision) in [("m", first), ("mi", second), ("mil", third)] {
         assert_eq!(
             search_cmd(input, revision)
@@ -529,7 +529,7 @@ fn an_empty_search_sends_no_job_answers_an_empty_found_and_drops_the_waiting_sea
     let first = Revision::default().next();
     let second = first.next();
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     assert!(
         search_cmd("m", first)
             .is_some_and(|message| driver.transition(message).is_ok())
@@ -557,7 +557,7 @@ fn a_found_answer_gives_its_rows_and_a_failed_search_answers_found_with_its_revi
         server_name: ServerName::new("a"),
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     assert_eq!(
         jobs(answered(
             &mut driver,
@@ -638,7 +638,7 @@ pub(crate) fn holds(id: &str, favorite: Favorite) -> RemoteEvent {
 #[test]
 fn two_stars_are_sent_in_order_and_a_failed_one_answers_the_state_before() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let remote_error = RemoteError::Moved {
         server_name: ServerName::new("a"),
     };
@@ -701,7 +701,7 @@ fn two_stars_are_sent_in_order_and_a_failed_one_answers_the_state_before() {
 #[test]
 fn a_prefetch_job_keeps_the_current_fetch_and_a_fetch_keeps_the_prefetch() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let key =
         |id| CacheKey::new(&ServerName::new("home"), &ServerTrackId::new(id), "flac");
     let fetch = |id| {

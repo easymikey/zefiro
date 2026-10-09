@@ -111,7 +111,7 @@ fn played() -> Scrobble {
 #[test]
 fn a_report_runs_beside_a_star() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
 
     let asked = jobs(answered(
         &mut driver,
@@ -136,7 +136,7 @@ fn a_report_runs_beside_a_star() {
 #[test]
 fn an_offline_server_keeps_its_reports_and_the_retry_sends_them_with_the_new_ones() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let remote_error = RemoteError::Moved {
         server_name: ServerName::new("a"),
     };
@@ -197,7 +197,7 @@ fn an_offline_server_keeps_its_reports_and_the_retry_sends_them_with_the_new_one
 #[test]
 fn a_failed_server_lets_the_next_server_report_first_on_the_retry() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let remote_error = RemoteError::Moved {
         server_name: ServerName::new("a"),
     };
@@ -243,7 +243,7 @@ fn executed(answer: Option<Answer>) -> Option<Vec<RemoteEffect>> {
 #[test]
 fn the_flush_file_round_trips_the_pending_reports_without_their_sessions() {
     let reports_path =
-        env::temp_dir().join(format!("sifr-reports-{}.json", std::process::id()));
+        env::temp_dir().join(format!("zefiro-reports-{}.json", std::process::id()));
     let mut driver = RemoteDriver::new(env::temp_dir(), reports_path.clone());
     let play_reports: Vec<PlayReport> = [Scrobble::NowPlaying, played()]
         .into_iter()
@@ -291,7 +291,7 @@ fn the_flush_file_round_trips_the_pending_reports_without_their_sessions() {
 #[test]
 fn an_unreadable_reports_file_is_an_error_not_an_empty_list() {
     let reports_path =
-        env::temp_dir().join(format!("sifr-reports-bad-{}.json", std::process::id()));
+        env::temp_dir().join(format!("zefiro-reports-bad-{}.json", std::process::id()));
     let written = std::fs::write(&reports_path, b"not json");
     let mut driver = RemoteDriver::new(env::temp_dir(), reports_path.clone());
 
@@ -310,7 +310,7 @@ fn an_unreadable_reports_file_is_an_error_not_an_empty_list() {
 #[test]
 fn a_failed_write_of_no_reports_answers_unsaved_without_a_server() {
     let blocker =
-        env::temp_dir().join(format!("sifr-reports-file-{}", std::process::id()));
+        env::temp_dir().join(format!("zefiro-reports-file-{}", std::process::id()));
     let written = std::fs::write(&blocker, b"");
     let mut driver = RemoteDriver::new(env::temp_dir(), blocker.join("reports.json"));
 
@@ -333,7 +333,7 @@ fn a_refused_report_is_dropped_once_and_the_rest_go_on() {
         api_code: ApiCode(70),
     };
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
 
     let asked = jobs(answered(
         &mut driver,
@@ -371,7 +371,7 @@ fn a_refused_report_is_dropped_once_and_the_rest_go_on() {
 #[test]
 fn a_streak_of_failed_retries_answers_one_error_until_a_success_ends_it() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let remote_error = RemoteError::Unreachable {
         server_name: ServerName::new("a"),
         source: IoError::Other,
@@ -432,7 +432,7 @@ fn a_streak_of_failed_retries_answers_one_error_until_a_success_ends_it() {
 #[test]
 fn a_failed_now_playing_is_neither_retried_nor_written() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let remote_error = RemoteError::Moved {
         server_name: ServerName::new("a"),
     };
@@ -481,7 +481,7 @@ fn a_failed_now_playing_is_neither_retried_nor_written() {
 #[test]
 fn a_forget_drops_the_server_reports_from_the_queue_and_the_file() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
 
     let asked = jobs(answered(
         &mut driver,
@@ -500,8 +500,8 @@ fn a_forget_drops_the_server_reports_from_the_queue_and_the_file() {
 
 #[test]
 fn a_sent_report_leaves_the_written_file_at_once_and_a_restart_restores_the_rest() {
-    let reports_path =
-        env::temp_dir().join(format!("sifr-reports-sent-{}.json", std::process::id()));
+    let reports_path = env::temp_dir()
+        .join(format!("zefiro-reports-sent-{}.json", std::process::id()));
     let mut driver = RemoteDriver::new(env::temp_dir(), reports_path.clone());
     let later_scrobble =
         Scrobble::Played(Moment::new(Duration::from_millis(1_700_000_100_000)));
@@ -553,7 +553,7 @@ fn a_sent_report_leaves_the_written_file_at_once_and_a_restart_restores_the_rest
 #[test]
 fn a_restored_report_ordered_again_is_written_once() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
 
     let kept = answered(
         &mut driver,
@@ -574,7 +574,7 @@ fn a_restored_report_ordered_again_is_written_once() {
 #[test]
 fn two_servers_that_fail_by_turns_answer_one_error_each() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let remote_error = |name: &str| RemoteError::Unreachable {
         server_name: ServerName::new(name),
         source: IoError::Other,
@@ -623,7 +623,7 @@ fn two_servers_that_fail_by_turns_answer_one_error_each() {
 #[test]
 fn a_connect_success_ends_the_streak_so_the_next_failure_answers_an_error_again() {
     let mut driver =
-        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("sifr-reports.json"));
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
     let remote_error = RemoteError::Unreachable {
         server_name: ServerName::new("a"),
         source: IoError::Other,

@@ -1,10 +1,21 @@
 use kernel::domain::{
-    chord::Chord,
-    key::{Key, Modifiers},
+    chord::{Chord, ChordPrefix},
+    key::{Key, KeyCode, Modifiers},
 };
 use proptest::prelude::{prop_assert_eq, proptest};
 
 use crate::support::strategies::unmodified_key_code;
+
+#[test]
+fn gg_spells_the_g_sequence() {
+    assert_eq!(
+        "gg".parse::<Chord>(),
+        Ok(Chord::Sequence {
+            chord_prefix: ChordPrefix::G,
+            key: Key::plain(KeyCode::Char('g')),
+        })
+    );
+}
 
 proptest! {
     #[test]

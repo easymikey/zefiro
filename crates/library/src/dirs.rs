@@ -24,9 +24,9 @@ impl LibraryDirs {
         user_config_dir: &Path,
     ) -> Self {
         Self {
-            cache_dir: user_cache_dir.join("sifr"),
-            data_dir: user_data_dir.join("sifr"),
-            playlists_dir: user_config_dir.join("sifr").join("playlists"),
+            cache_dir: user_cache_dir.join("zefiro"),
+            data_dir: user_data_dir.join("zefiro"),
+            playlists_dir: user_config_dir.join("zefiro").join("playlists"),
         }
     }
 
@@ -60,9 +60,9 @@ mod tests {
         assert_eq!(
             library_dirs(),
             LibraryDirs {
-                cache_dir: PathBuf::from("/user/cache/sifr"),
-                data_dir: PathBuf::from("/user/data/sifr"),
-                playlists_dir: PathBuf::from("/user/config/sifr/playlists"),
+                cache_dir: PathBuf::from("/user/cache/zefiro"),
+                data_dir: PathBuf::from("/user/data/zefiro"),
+                playlists_dir: PathBuf::from("/user/config/zefiro/playlists"),
             }
         );
     }
@@ -71,7 +71,7 @@ mod tests {
     fn the_media_dir_lies_in_the_cache_dir() {
         assert_eq!(
             library_dirs().media_dir(),
-            Path::new("/user/cache/sifr/media")
+            Path::new("/user/cache/zefiro/media")
         );
     }
 }

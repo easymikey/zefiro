@@ -153,7 +153,7 @@ mod tests {
     fn paths(directory_path: &Path, theme: Option<&'static str>) -> ConfigPaths {
         ConfigPaths {
             config_path: directory_path.join("config.toml"),
-            appearance_path: directory_path.join("sifr-ui.toml"),
+            appearance_path: directory_path.join("zefiro-ui.toml"),
             themes_dir: directory_path.join("themes"),
             default_music_dir: None,
             theme_name: theme.map(ThemeName::from_static),
@@ -227,7 +227,7 @@ mod tests {
     ) {
         let directory = tempfile::tempdir().unwrap();
         if let Some(text) = text {
-            std::fs::write(directory.path().join("sifr-ui.toml"), text).unwrap();
+            std::fs::write(directory.path().join("zefiro-ui.toml"), text).unwrap();
         }
 
         let loaded = loaded(directory.path(), None);

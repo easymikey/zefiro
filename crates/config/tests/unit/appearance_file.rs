@@ -1,7 +1,7 @@
 use config::{appearance_file::parse_appearance, patch::patched_appearance_text};
 use kernel::domain::appearance::{AppearancePatch, CoverMode};
 
-const COMMENTED_UI: &str = include_str!("../fixtures/sifr-ui_commented.toml");
+const COMMENTED_UI: &str = include_str!("../fixtures/zefiro-ui_commented.toml");
 
 #[test]
 fn a_patch_round_trips_through_the_public_parser() {

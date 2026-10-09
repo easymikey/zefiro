@@ -120,7 +120,7 @@ fn closed_link() -> String {
 
 fn media_dir(name: &str) -> PathBuf {
     let media_dir =
-        env::temp_dir().join(format!("sifr-media-{}-{name}", process::id()));
+        env::temp_dir().join(format!("zefiro-media-{}-{name}", process::id()));
     assert!(!media_dir.exists() || fs::remove_dir_all(&media_dir).is_ok());
     media_dir
 }
@@ -145,16 +145,12 @@ fn fetched(
     media_dir: &Path,
     kept_cache_keys: Vec<CacheKey>,
 ) -> Option<Result<Fetched, RemoteError>> {
-    let RemoteMessage::Fetched {
-        revision: _revision,
-        result,
-    } = (RemoteJob::Fetch {
+    let RemoteMessage::Fetched { result, .. } = (RemoteJob::Fetch {
         media_fetch: media_fetch?,
         media_dir: Arc::from(media_dir),
         kept_cache_keys,
     })
-    .run(&agent())
-    else {
+    .run(&agent()) else {
         return None;
     };
     Some(result)

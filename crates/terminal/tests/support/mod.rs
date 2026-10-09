@@ -22,7 +22,7 @@ use widgets::{
     },
 };
 
-const CHILD: &str = "SIFR_TERMINAL_TEST_CHILD";
+const CHILD: &str = "ZEFIRO_TERMINAL_TEST_CHILD";
 
 const TERMINAL_VARIABLES: [&str; 6] = [
     "TERM_PROGRAM",

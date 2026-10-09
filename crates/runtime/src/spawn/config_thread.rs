@@ -122,7 +122,7 @@ mod tests {
     #[case::an_appearance_edit_after_spawn(
         EditRow {
             theme_name: None,
-            path: "sifr-ui.toml",
+            path: "zefiro-ui.toml",
             text: "[window]\nkey_hints = false\n",
         },
         |message: Message| matches!(
@@ -207,8 +207,9 @@ mod tests {
             preset_appearance(AppearancePreset::Noir),
         )));
 
-        let text = wait_for_content(&directory.path().join("sifr-ui.toml"), "milkdrop")
-            .unwrap();
+        let text =
+            wait_for_content(&directory.path().join("zefiro-ui.toml"), "milkdrop")
+                .unwrap();
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert_eq!(
             parsed
@@ -241,7 +242,7 @@ mod tests {
         }));
 
         let config_path = directory.path().join("config.toml");
-        let appearance_path = directory.path().join("sifr-ui.toml");
+        let appearance_path = directory.path().join("zefiro-ui.toml");
         assert!(wait_for_content(&config_path, "theme").is_some());
         assert!(wait_for_content(&appearance_path, "format_chips").is_some());
         assert!(
@@ -249,7 +250,7 @@ mod tests {
             "a write we made ourselves must never come back as a reload"
         );
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        assert!(!root.join("sifr-ui.toml").exists());
+        assert!(!root.join("zefiro-ui.toml").exists());
         assert!(!root.join("config.toml").exists());
         run.stop();
     }
@@ -267,7 +268,7 @@ mod tests {
         run.stop();
 
         let content =
-            std::fs::read_to_string(directory.path().join("sifr-ui.toml")).unwrap();
+            std::fs::read_to_string(directory.path().join("zefiro-ui.toml")).unwrap();
         assert!(
             content.contains("key_hints"),
             "the pending save must land on disk"

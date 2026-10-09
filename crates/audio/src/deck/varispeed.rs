@@ -524,7 +524,7 @@ mod tests {
         let MixerChannel {
             mut mixer,
             mut control,
-            retired_voices: _retired_voices,
+            retired_voices: _,
         } = mixer_channel(MONO_12K, Speed::default(), &spectrum_buffers);
         let role = SinkRole::Current;
         control.order(MixerOrder::Attach { role, voice });

@@ -29,7 +29,7 @@ impl From<ScrollAreas> for ModalAreas {
         Self {
             outer: areas.outer,
             body: areas.content,
-            hint_row: areas.hint_row,
+            hint_row: Rect::default(),
         }
     }
 }
@@ -123,10 +123,7 @@ impl<'a> ModalPlacement<'a> {
             ModalContainer::Playlist(pane) => self.border(pane).areas(),
             ModalContainer::Floating(avoid) => {
                 let areas = self.modal().areas(screen, avoid);
-                ScrollAreas {
-                    hint_row: areas.hint_row,
-                    ..scroll_areas(areas.outer, areas.body)
-                }
+                scroll_areas(areas.outer, areas.body)
             }
         }
     }

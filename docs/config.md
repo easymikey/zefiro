@@ -1,11 +1,11 @@
 # Configuration
 
-sifr reads two TOML files from the same directory, plus theme files.
+zefiro reads two TOML files from the same directory, plus theme files.
 
 | File | Parsed into | Purpose |
 |---|---|---|
 | `config.toml` | `TomlSettings` (`crates/config/src/config_file.rs`) | music folder, theme, volume, audio, key rebinds |
-| `sifr-ui.toml` | `TomlAppearance` (`crates/config/src/appearance_file.rs`) | cover, card, progress line, layout breakpoints, window |
+| `zefiro-ui.toml` | `TomlAppearance` (`crates/config/src/appearance_file.rs`) | cover, card, progress line, layout breakpoints, window |
 | `themes/<name>.toml` | `TomlTheme` (`crates/config/src/theme_file.rs`) | one colour theme |
 
 ## Rules for every file
@@ -14,29 +14,29 @@ sifr reads two TOML files from the same directory, plus theme files.
   `deny_unknown_fields`, so an unknown or misspelt key is a parse error.
   Each key is the field's own snake_case name.
 - **Where the files live.** The directory is `dirs::config_dir()` joined with
-  `sifr`. On macOS that is `~/Library/Application Support/sifr/`. If the
+  `zefiro`. On macOS that is `~/Library/Application Support/zefiro/`. If the
   platform has no config directory, startup fails with an error. There is no
   fallback to the current directory.
 - **A missing file is the default.** A missing `config.toml` or
-  `sifr-ui.toml` means `TomlSettings::default()` or
+  `zefiro-ui.toml` means `TomlSettings::default()` or
   `TomlAppearance::default()`, with no message.
 - **A bad file falls back with a toast.** If a file cannot be read or does not
-  parse at startup, sifr starts with that file's defaults and shows an error
+  parse at startup, zefiro starts with that file's defaults and shows an error
   toast. A bad theme file falls back to the stock theme the same way. During a
   session, a reload that fails keeps the last good values and shows a toast;
   the same error repeated raises no second toast.
-- **Paths are taken as written.** sifr does not expand `~` or `$VAR` in any
+- **Paths are taken as written.** zefiro does not expand `~` or `$VAR` in any
   value.
 - **Files are watched, not polled.** The config driver watches the config
   directory (recursively, so `themes/` too) through a `notify` stream. On each
-  change event it re-reads `config.toml`, `sifr-ui.toml` and the active theme,
+  change event it re-reads `config.toml`, `zefiro-ui.toml` and the active theme,
   and lists `themes/`. A file whose text did not change reports nothing.
 
 ## What reloads live
 
 | Change | Effect |
 |---|---|
-| `sifr-ui.toml`, any key | applies at once |
+| `zefiro-ui.toml`, any key | applies at once |
 | the active theme file | applies at once |
 | a new or removed file in `themes/` | the settings overlay's theme list updates |
 | `config.toml` `[keymap]` | the key bindings are rebuilt |
@@ -46,23 +46,23 @@ sifr reads two TOML files from the same directory, plus theme files.
 The settings overlay (the `settings` action) changes values in the running app
 and saves them. A `config.toml` change (crossfade, ReplayGain, output device,
 theme, volume, sleep presets, music folder) is a `ConfigPatch`; an
-`sifr-ui.toml` change (cover mode, brackets, format chips, speed chip,
+`zefiro-ui.toml` change (cover mode, brackets, format chips, speed chip,
 remaining time, key hints, animations, layout mode) is an `AppearancePatch`.
 `crates/config/src/patch.rs` writes each patch with `toml_edit`: only the keys
 the patch sets change, and comments, blank lines and table order stay.
 
 The settings overlay's `Noir` preset sets the `noir` theme and these
-`sifr-ui.toml` values in one step: `[cover] mode = "milkdrop"`,
+`zefiro-ui.toml` values in one step: `[cover] mode = "milkdrop"`,
 `[cover] brackets = true`, `[card] format_chips = true`,
 `[progress] remaining = true` (`preset_appearance` in
 `crates/kernel/src/domain/appearance.rs`).
 
 ## `config.toml`
 
-Path: `<config dir>/sifr/config.toml`.
+Path: `<config dir>/zefiro/config.toml`.
 
 The scanned library is cached apart from the config, under
-`dirs::cache_dir()` joined with `sifr` (macOS: `~/Library/Caches/sifr/`):
+`dirs::cache_dir()` joined with `zefiro` (macOS: `~/Library/Caches/zefiro/`):
 `library.bin` holds the tagged tracks and `library.dir` the folder they were
 scanned from. A missing or stale pair means a rescan.
 
@@ -153,7 +153,7 @@ when the bindings are built.
 
 ## Theme files
 
-Path: `<config dir>/sifr/themes/<name>.toml`, or one of the embedded themes in
+Path: `<config dir>/zefiro/themes/<name>.toml`, or one of the embedded themes in
 `themes/` in the repository.
 
 A theme has a `name`, a `[colors]` table of seven required keys and one
@@ -179,9 +179,9 @@ ground (at least 1.5:1), the bar groove against the panel ground (1.5:1), the
 selected row's text against the band (4.5:1), and the `▶` marker against both
 (3:1).
 
-## `sifr-ui.toml`
+## `zefiro-ui.toml`
 
-Path: `<config dir>/sifr/sifr-ui.toml`, beside `config.toml`.
+Path: `<config dir>/zefiro/zefiro-ui.toml`, beside `config.toml`.
 
 ### `[cover]`
 
@@ -216,8 +216,8 @@ Path: `<config dir>/sifr/sifr-ui.toml`, beside `config.toml`.
 | `full_min_height` | integer | `19` | Fewest rows for the `Full` layout. |
 | `compact_min_width` | integer | `30` | Fewest columns for the `Compact` layout. |
 | `compact_min_height` | integer | `13` | Fewest rows for the `Compact` layout. |
-| `min_width` | integer | `48` | Below this many columns sifr shows a "too small" message instead. |
-| `min_height` | integer | `16` | Below this many rows sifr shows a "too small" message instead. |
+| `min_width` | integer | `48` | Below this many columns zefiro shows a "too small" message instead. |
+| `min_height` | integer | `16` | Below this many rows zefiro shows a "too small" message instead. |
 | `mode` | `"auto"` or `"compact"` | `"auto"` | Forces a layout tier. A forced tier that does not fit falls back to what `auto` picks. |
 
 ### `[window]`
@@ -265,7 +265,7 @@ key_hints = true
 
 ## Regenerating the default blocks
 
-Two guards in `crates/sifr-guards` lock the blocks above to the code.
+Two guards in `crates/zefiro-guards` lock the blocks above to the code.
 `config_doc_config.rs` parses the `defaults:config` block with `parse_config` and
 compares it with `TomlSettings::default()`. `config_doc_appearance.rs` parses the
 `defaults:window` block with `parse_appearance` and compares it with
@@ -274,4 +274,4 @@ are kept by hand. When a default changes:
 
 1. Read the failing assertion's diff; it names the fields that differ.
 2. Edit the TOML between the matching markers in this file.
-3. Run `cargo test -p sifr-guards` until it passes.
+3. Run `cargo test -p zefiro-guards` until it passes.

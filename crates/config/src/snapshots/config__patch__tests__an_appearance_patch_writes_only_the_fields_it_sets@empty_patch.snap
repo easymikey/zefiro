@@ -2,7 +2,7 @@
 source: crates/config/src/appearance_document.rs
 expression: out
 ---
-# sifr-ui.toml
+# zefiro-ui.toml
 [cover]
 # the noir look
 mode = "vinyl"

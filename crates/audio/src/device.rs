@@ -400,7 +400,7 @@ mod tests {
     #[case::backend(loss_code(OutputError::Backend), Some(OutputError::Backend))]
     #[case::clear(0, None)]
     #[case::unknown(7, None)]
-    fn a_latched_loss_code_reads_back_as_its_output_error(
+    fn a_loss_code_reads_back_as_its_latched_error(
         #[case] code: u8,
         #[case] expected: Option<OutputError>,
     ) {

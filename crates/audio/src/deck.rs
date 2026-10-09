@@ -82,7 +82,7 @@ impl Deck {
         let output = self.output.as_mut()?;
         let (voice, mut control) = match output.voice(
             decoded_track,
-            &Feeding {
+            Feeding {
                 speed,
                 callback_sender: &self.callback_sender,
                 feed_sender: &self.feed_sender,
@@ -239,7 +239,7 @@ impl Deck {
         let path = staged_track.decoder.path.to_path_buf();
         let (voice, control) = match output.voice(
             staged_track,
-            &Feeding {
+            Feeding {
                 speed: Speed::default(),
                 callback_sender: &self.callback_sender,
                 feed_sender: &self.feed_sender,

@@ -50,7 +50,7 @@ use crate::{
     },
 };
 
-pub const KEYCHAIN_SERVICE: &str = "sifr";
+pub const KEYCHAIN_SERVICE: &str = "zefiro";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteJob {

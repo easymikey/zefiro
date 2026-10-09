@@ -70,7 +70,7 @@ fn a_forget_deletes_the_stored_password_and_a_missing_one_is_fine() {
     else {
         panic!("a valid account");
     };
-    let saved = keyring_core::Entry::new("sifr", &account.keychain_account())
+    let saved = keyring_core::Entry::new("zefiro", &account.keychain_account())
         .and_then(|entry| entry.set_password("hunter2"));
     assert!(saved.is_ok());
 
@@ -86,7 +86,7 @@ fn a_forget_deletes_the_stored_password_and_a_missing_one_is_fine() {
         "was {second:?}"
     );
     assert!(matches!(
-        keyring_core::Entry::new("sifr", &account.keychain_account())
+        keyring_core::Entry::new("zefiro", &account.keychain_account())
             .and_then(|entry| entry.get_password()),
         Err(keyring_core::Error::NoEntry)
     ));

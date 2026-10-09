@@ -73,17 +73,11 @@ impl fmt::Debug for AudioMessage {
         match self {
             AudioMessage::Cmds(cmds) => f.debug_tuple("Cmds").field(cmds).finish(),
             AudioMessage::Deck(event) => f.debug_tuple("Deck").field(event).finish(),
-            AudioMessage::Decoded {
-                revision,
-                result: _result,
-            } => f
+            AudioMessage::Decoded { revision, .. } => f
                 .debug_struct("Decoded")
                 .field("revision", revision)
                 .finish_non_exhaustive(),
-            AudioMessage::Preloaded {
-                revision,
-                result: _result,
-            } => f
+            AudioMessage::Preloaded { revision, .. } => f
                 .debug_struct("Preloaded")
                 .field("revision", revision)
                 .finish_non_exhaustive(),

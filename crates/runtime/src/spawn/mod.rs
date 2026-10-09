@@ -176,7 +176,7 @@ pub(crate) mod tests {
         StartupPaths {
             config_paths: ConfigPaths {
                 config_path: dir.join("config.toml"),
-                appearance_path: dir.join("sifr-ui.toml"),
+                appearance_path: dir.join("zefiro-ui.toml"),
                 themes_dir: dir.join("themes"),
                 default_music_dir: None,
                 theme_name: None,

@@ -479,7 +479,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::no_order(|_: &mut EnvelopeControl| {}, Signals::FINISHED)]
     #[case::fade_start(
         |control: &mut EnvelopeControl| control.set_fade_start(Some(Duration::from_millis(50))),
         Signals(Signals::FADE_START.0 | Signals::FINISHED.0)

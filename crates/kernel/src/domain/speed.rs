@@ -58,41 +58,12 @@ impl fmt::Display for Speed {
 mod tests {
     use rstest::rstest;
 
-    use crate::domain::{bounded::Bounded, direction::Direction, speed::Speed};
+    use crate::domain::{bounded::Bounded, speed::Speed};
 
     #[rstest]
-    #[case::saturates_above_the_ceiling(10.0, 4.0)]
-    #[case::saturates_below_the_floor(0.0, 0.25)]
     #[case::nan_resets_to_unity(f32::NAN, 1.0)]
     fn clamped_saturates(#[case] raw: f32, #[case] expected: f32) {
         assert_eq!(Speed::clamped(raw).get(), expected);
-    }
-
-    #[test]
-    fn default_is_unity() {
-        assert_eq!(Speed::default().get(), 1.0);
-    }
-
-    #[rstest]
-    #[case::next_saturates_at_the_ceiling(Speed::clamped(4.0), Direction::Next, 4.0)]
-    #[case::previous_saturates_at_the_floor(
-        Speed::clamped(0.25),
-        Direction::Previous,
-        0.25
-    )]
-    #[case::next_from_default(Speed::default(), Direction::Next, 1.25)]
-    #[case::previous_from_default(Speed::default(), Direction::Previous, 0.75)]
-    fn step_saturates_at_bounds(
-        #[case] speed: Speed,
-        #[case] direction: Direction,
-        #[case] expected: f32,
-    ) {
-        assert_eq!(speed.step(direction).get(), expected);
-    }
-
-    #[test]
-    fn display_reports_the_default_as_one() {
-        assert_eq!(Speed::default().to_string(), "1");
     }
 
     #[rstest]

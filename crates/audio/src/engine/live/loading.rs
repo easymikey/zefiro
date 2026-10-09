@@ -39,7 +39,7 @@ impl Live {
     ) -> AudioLoopCmd {
         let DeviceOpened {
             device,
-            device_name: _device_name,
+            device_name: _,
             position,
             playback,
         } = device_opened;
@@ -64,10 +64,9 @@ impl Live {
                         Some(Upcoming { media, decibels })
                     }
                     NextTrack::Gapless(track) => Some(Upcoming::from(track)),
-                    NextTrack::Crossfading {
-                        incoming,
-                        fade: _fade,
-                    } => Some(Upcoming::from(incoming)),
+                    NextTrack::Crossfading { incoming, .. } => {
+                        Some(Upcoming::from(incoming))
+                    }
                 };
                 (current, upcoming)
             }
@@ -172,10 +171,7 @@ impl Live {
                 )),
             ),
             Some(Resume {
-                position,
-                playback,
-                duration: _duration,
-                upcoming: _upcoming,
+                position, playback, ..
             }) => Cmd::effect(LoopEffect::Execute(EngineEffect::Resume {
                 gain,
                 position: *position,

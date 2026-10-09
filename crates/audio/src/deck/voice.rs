@@ -170,7 +170,7 @@ mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(MONO_8K);
             let (current_voice, _current_control) = voice(&file, MONO_8K, feed_sender);
             attach(&mut control, SinkRole::Current, current_voice);
@@ -196,7 +196,7 @@ mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(MONO_8K);
             let (current_voice, current_control) = voice(&file, MONO_8K, feed_sender);
             attach(&mut control, SinkRole::Current, current_voice);
@@ -223,7 +223,7 @@ mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(STEREO_8K);
             let (current_voice, _current_control) =
                 voice(&file, STEREO_8K, feed_sender);
@@ -252,7 +252,7 @@ mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(MONO_8K);
             let (current_voice, _current_control) = voice(&file, MONO_8K, feed_sender);
             attach(&mut control, SinkRole::Current, current_voice);
@@ -272,7 +272,7 @@ mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(MONO_8K);
             let (incoming_voice, incoming_control) = voice(&file, MONO_8K, feed_sender);
             attach(&mut control, SinkRole::Incoming, incoming_voice);
@@ -322,7 +322,7 @@ mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(STEREO_12K);
             let (current_voice, _current_control) =
                 voice(&file, STEREO_12K, feed_sender);
@@ -350,7 +350,7 @@ mod tests {
             let MixerChannel {
                 mut mixer,
                 mut control,
-                retired_voices: _retired_voices,
+                retired_voices: _,
             } = channel(MONO_8K);
             let (current_voice, current_control) = voice(&file, MONO_8K, feed_sender);
             attach(&mut control, SinkRole::Current, current_voice);

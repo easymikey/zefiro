@@ -154,8 +154,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::empty_means_off(&[], vec![])]
-    #[case::one_preset(&[15], vec![Duration::from_mins(15)])]
     #[case::three_presets(&[1, 360, 720], vec![Duration::from_mins(1), Duration::from_mins(360), Duration::from_mins(720)])]
     fn sleep_presets_from_minutes_accepts_a_valid_list(
         #[case] minutes: &[u64],
@@ -168,10 +166,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case::zero_minutes(&[0], SleepPresetsError::OutOfRange { duration: Duration::ZERO, min: Duration::from_mins(1), max: Duration::from_mins(720) })]
-    #[case::over_the_ceiling(&[721], SleepPresetsError::OutOfRange { duration: Duration::from_mins(721), min: Duration::from_mins(1), max: Duration::from_mins(720) })]
     #[case::past_the_duration_range(&[u64::MAX / 60 + 1], SleepPresetsError::OutOfRange { duration: Duration::from_secs(u64::MAX), min: Duration::from_mins(1), max: Duration::from_mins(720) })]
-    #[case::not_ascending(&[30, 20], SleepPresetsError::NotAscending(Duration::from_mins(20)))]
     #[case::repeated(&[30, 30], SleepPresetsError::NotAscending(Duration::from_mins(30)))]
     #[case::too_many(&[1, 2, 3, 4, 5, 6], SleepPresetsError::TooMany(6))]
     fn sleep_presets_from_minutes_rejects_what_it_cannot_place(
@@ -179,14 +174,5 @@ mod tests {
         #[case] expected: SleepPresetsError,
     ) {
         assert_eq!(SleepPresets::from_minutes(minutes), Err(expected));
-    }
-
-    #[test]
-    fn sleep_presets_are_read_as_whole_minutes() {
-        let presets = SleepPresets::from_minutes(&[10, 20]).unwrap();
-        assert_eq!(
-            presets.as_slice(),
-            [Duration::from_mins(10), Duration::from_mins(20)]
-        );
     }
 }

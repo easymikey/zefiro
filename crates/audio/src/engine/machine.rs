@@ -85,7 +85,7 @@ impl Machine for Engine {
         let Engine {
             state,
             job_revisions: revisions,
-            device_choice: _device_choice,
+            device_choice: _,
         } = self;
         match (&mut *state, engine_message) {
             (_, EngineMessage::Reported(Some(position))) => {
@@ -110,14 +110,11 @@ impl Machine for Engine {
                 | EngineMessage::FadeStartReached
                 | EngineMessage::Ramped(_),
             ) => Err(Unhandled),
-            (
-                EngineState::Live(_),
-                EngineMessage::Attached {
-                    revision,
-                    preload_mode: _preload_mode,
-                    duration: _duration,
-                },
-            ) if !revisions.is_current_preload(revision) => Err(Unhandled),
+            (EngineState::Live(_), EngineMessage::Attached { revision, .. })
+                if !revisions.is_current_preload(revision) =>
+            {
+                Err(Unhandled)
+            }
             (EngineState::Live(live), EngineMessage::Cmds(batch)) => {
                 batched(batch, |cmd| live.command(revisions, cmd))
             }
@@ -129,7 +126,7 @@ impl Machine for Engine {
                 EngineMessage::Attached {
                     preload_mode,
                     duration,
-                    revision: _revision,
+                    ..
                 },
             ) => live.attached(preload_mode, duration),
             (EngineState::Live(live), EngineMessage::Finished(role)) => {
@@ -219,7 +216,7 @@ impl Engine {
         let Engine {
             state,
             job_revisions: revisions,
-            device_choice: _device_choice,
+            device_choice: _,
         } = self;
         match (&mut *state, error) {
             (_, error @ (AudioError::Seek { .. } | AudioError::ListDevices { .. })) => {
@@ -248,7 +245,7 @@ impl Engine {
         let Engine {
             state,
             job_revisions: revisions,
-            device_choice: _device_choice,
+            device_choice: _,
         } = self;
         silenced(state, revisions, AudioEvent::OutputLost(error))
     }

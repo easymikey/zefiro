@@ -311,7 +311,7 @@ mod tests {
     fn seeded(theme: Option<&'static str>, seen_texts: SeenTexts) -> Driver {
         let paths = ConfigPaths {
             config_path: PathBuf::from("/config/config.toml"),
-            appearance_path: PathBuf::from("/config/sifr-ui.toml"),
+            appearance_path: PathBuf::from("/config/zefiro-ui.toml"),
             themes_dir: PathBuf::from("/config/themes"),
             default_music_dir: None,
             theme_name: theme.map(ThemeName::from_static),
@@ -419,7 +419,7 @@ mod tests {
     #[rstest]
     #[case::started(ConfigMessage::Started, Ok(Cmd::from_iter([
         "watch /config".to_string(),
-        executed(reading(ConfigName::Appearance, "/config/sifr-ui.toml")),
+        executed(reading(ConfigName::Appearance, "/config/zefiro-ui.toml")),
         executed(reading(ConfigName::Config, "/config/config.toml")),
         executed(ConfigEffect::Watch(ConfigWatchEffect::List(PathBuf::from(
             "/config/themes"

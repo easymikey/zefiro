@@ -30,14 +30,10 @@ pub(crate) struct JobRevisions {
 impl JobRevisions {
     pub(crate) fn is_current(&self, message: &AudioMessage) -> bool {
         match message {
-            AudioMessage::Decoded {
-                revision,
-                result: _result,
-            } => *revision == self.decode,
-            AudioMessage::Preloaded {
-                revision,
-                result: _result,
-            } => self.is_current_preload(*revision),
+            AudioMessage::Decoded { revision, .. } => *revision == self.decode,
+            AudioMessage::Preloaded { revision, .. } => {
+                self.is_current_preload(*revision)
+            }
             AudioMessage::Engine(EngineMessage::Interrupted(revision, _)) => {
                 *revision >= self.decode
             }
@@ -103,12 +99,7 @@ impl JobRevisions {
         self.preload_download_revision = None;
         self.decoded(match current {
             Media::Local(_media_path) => None,
-            Media::Growing(GrowingMedia {
-                media_path: _media_path,
-                downloaded: _downloaded,
-                byte_len: _byte_len,
-                revision,
-            }) => Some(*revision),
+            Media::Growing(GrowingMedia { revision, .. }) => Some(*revision),
         });
     }
 
@@ -210,14 +201,12 @@ mod tests {
 
     fn bound(audio_job: &AudioJob) -> u64 {
         let (AudioJob::Decode {
-            media_path: _media_path,
             download: Some(download),
-            revision: _revision,
+            ..
         }
         | AudioJob::Preload {
-            media_path: _media_path,
             download: Some(download),
-            revision: _revision,
+            ..
         }) = audio_job
         else {
             panic!("a growing media gives a growing job, got {audio_job:?}");
@@ -320,7 +309,7 @@ mod tests {
         let AudioJob::Decode {
             media_path,
             download: Some(download),
-            revision: _revision,
+            ..
         } = audio_job
         else {
             panic!("a load of a growing media gives a growing decode job");

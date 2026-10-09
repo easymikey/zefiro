@@ -4,7 +4,7 @@ use kernel::domain::{config::ConfigName, theme::ThemeName};
 
 pub const CONFIG_FILE_NAME: &str = "config.toml";
 
-pub const APPEARANCE_FILE_NAME: &str = "sifr-ui.toml";
+pub const APPEARANCE_FILE_NAME: &str = "zefiro-ui.toml";
 
 #[must_use]
 pub fn theme_file_name(name: &str) -> String {

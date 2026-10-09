@@ -28,7 +28,7 @@ static AGENT: LazyLock<Agent> = LazyLock::new(|| {
         .http_status_as_error(false)
         .timeout_connect(Some(CONNECT_TIMEOUT))
         .timeout_global(Some(API_TIMEOUT))
-        .user_agent(concat!("sifr/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("zefiro/", env!("CARGO_PKG_VERSION")))
         .build()
         .new_agent()
 });

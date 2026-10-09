@@ -26,27 +26,27 @@ pub(crate) struct DriverRow {
 pub(crate) const REGISTRY: [DriverRow; 5] = [
     DriverRow {
         driver_name: DriverName::Audio,
-        thread_name: "sifr-audio",
+        thread_name: "zefiro-audio",
         platform: Platform::Every,
     },
     DriverRow {
         driver_name: DriverName::Macos,
-        thread_name: "sifr-macos",
+        thread_name: "zefiro-macos",
         platform: Platform::Macos,
     },
     DriverRow {
         driver_name: DriverName::Library,
-        thread_name: "sifr-library",
+        thread_name: "zefiro-library",
         platform: Platform::Every,
     },
     DriverRow {
         driver_name: DriverName::Config,
-        thread_name: "sifr-config",
+        thread_name: "zefiro-config",
         platform: Platform::Every,
     },
     DriverRow {
         driver_name: DriverName::Remote,
-        thread_name: "sifr-remote",
+        thread_name: "zefiro-remote",
         platform: Platform::Every,
     },
 ];

@@ -17,7 +17,7 @@ One binary per crate means one link per crate instead of one per file; the cost 
 
 ## The guards crate
 
-Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, whichever crate it scans, on one `guards/support.rs`: one directory walk, one `source_files(areas)` list keyed by crate-relative path (`widgets/src/screen/mod.rs`), one `Allow { path, pattern, reason }` row, one `stale` check, one `report`. `cargo test -p sifr-guards` runs all of them in under a second.
+Every guard that reads source text lives in `crates/zefiro-guards/tests/guards/`, whichever crate it scans, on one `guards/support.rs`: one directory walk, one `source_files(areas)` list keyed by crate-relative path (`widgets/src/screen/mod.rs`), one `Allow { path, pattern, reason }` row, one `stale` check, one `report`. `cargo test -p zefiro-guards` runs all of them in under a second.
 
 | guard | holds (rule in conventions) |
 |---|---|
@@ -47,7 +47,7 @@ Every guard that reads source text lives in `crates/sifr-guards/tests/guards/`, 
 
 Every other guard refuses every hit; only `comments.rs` and `demeter.rs` keep an allowlist. Those lists are shrink-only and the shrinking is enforced: a row whose `(path, pattern)` no longer matches anything turns its guard red and prints the row's `reason`, so a paid-off debt cannot be re-spent elsewhere. A new exemption is a rule change in `docs/conventions.md`, not an allowlist row.
 
-The `config_doc` guards are the exception that reach into another crate's own types (`config`) to compare `docs/config.md` against a schema instead of scanning source text; `sifr-guards` carries them as dependencies for that. `sifr-guards` is not a layer in the layering table: nothing depends on it.
+The `config_doc` guards are the exception that reach into another crate's own types (`config`) to compare `docs/config.md` against a schema instead of scanning source text; `zefiro-guards` carries them as dependencies for that. `zefiro-guards` is not a layer in the layering table: nothing depends on it.
 
 ## Hardware tests
 

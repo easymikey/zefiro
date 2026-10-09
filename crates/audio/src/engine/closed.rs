@@ -98,8 +98,7 @@ impl Closed {
     ) -> Result<AudioLoopCmd, Unhandled> {
         let Some(TrackLoad {
             media: Media::Growing(growing_media),
-            revision: _load,
-            decibels: _decibels,
+            ..
         }) = &mut self.track_load
         else {
             return Err(Unhandled);
@@ -123,9 +122,9 @@ impl Closed {
     ) -> (Live, AudioLoopCmd) {
         let DeviceOpened {
             device,
-            device_name: _device_name,
-            position: _position,
-            playback: _playback,
+            device_name: _,
+            position: _,
+            playback: _,
         } = device_opened;
         let mut live = Live::new(
             AudioSettings {
@@ -440,19 +439,21 @@ mod tests {
         assert!(matches!(engine, EngineState::Live(_)));
     }
 
-    #[rstest]
-    #[case::closed_tells_the_world_the_device_fell_back(
-        EngineState::Closed(Closed { settings: settings_on("usb"), track_load: None, speed: Speed::default() }),
-        EngineRow {
-            next: EngineState::Live(live()),
-            effect: Ok(Cmd::message(AudioEvent::DeviceFellBack(OutputDevice::SystemDefault))),
-        }
-    )]
-    fn a_fallback_is_announced_once_the_system_default_opens(
-        #[case] engine_state: EngineState,
-        #[case] moved_row: EngineRow,
-    ) {
-        assert_fallback(engine_state, moved_row);
+    #[test]
+    fn a_fallback_is_announced_once_the_system_default_opens() {
+        assert_fallback(
+            EngineState::Closed(Closed {
+                settings: settings_on("usb"),
+                track_load: None,
+                speed: Speed::default(),
+            }),
+            EngineRow {
+                next: EngineState::Live(live()),
+                effect: Ok(Cmd::message(AudioEvent::DeviceFellBack(
+                    OutputDevice::SystemDefault,
+                ))),
+            },
+        );
     }
 
     fn device_then_load(output_device: OutputDevice) -> EngineMessage {

@@ -281,7 +281,8 @@ mod tests {
         patch::{patched_appearance_text, patched_config_text},
     };
 
-    const COMMENTED_UI: &str = include_str!("../tests/fixtures/sifr-ui_commented.toml");
+    const COMMENTED_UI: &str =
+        include_str!("../tests/fixtures/zefiro-ui_commented.toml");
 
     fn every_appearance_field_in_text() -> AppearancePatch {
         AppearancePatch {

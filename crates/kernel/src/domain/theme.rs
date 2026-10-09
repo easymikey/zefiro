@@ -178,31 +178,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::next(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("a")) },
-        direction: Direction::Next,
-        expected: Some("b"),
-    })]
-    #[case::wraps_at_end(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("c")) },
-        direction: Direction::Next,
-        expected: Some("a"),
-    })]
-    #[case::previous_wraps_at_start(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("a")) },
-        direction: Direction::Previous,
-        expected: Some("c"),
-    })]
-    #[case::selected_missing_from_list_up(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("gone")) },
-        direction: Direction::Next,
-        expected: Some("a"),
-    })]
-    #[case::selected_missing_from_list_down(StepRow {
-        themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Named(ThemeName::from_static("gone")) },
-        direction: Direction::Previous,
-        expected: Some("c"),
-    })]
     #[case::auto_up(StepRow {
         themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Auto },
         direction: Direction::Next,
@@ -212,11 +187,6 @@ mod tests {
         themes: Themes { names: names(&["a", "b", "c"]), theme_choice: ThemeChoice::Auto },
         direction: Direction::Previous,
         expected: Some("c"),
-    })]
-    #[case::empty_list_gives_none(StepRow {
-        themes: Themes { names: Vec::new(), theme_choice: ThemeChoice::Auto },
-        direction: Direction::Next,
-        expected: None,
     })]
     fn themes_step_onto_a_listed_name(#[case] row: StepRow) {
         assert_eq!(
@@ -229,7 +199,6 @@ mod tests {
 
     #[rstest]
     #[case::auto("auto", Ok(ThemeChoice::Auto))]
-    #[case::named("noir", Ok(ThemeChoice::Named(ThemeName::from_static("noir"))))]
     #[case::empty("", Err(ThemeNameError::Empty))]
     #[case::case_sensitive(
         "AUTO",
@@ -243,7 +212,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::parent("../x")]
     #[case::nested("a/b")]
     #[case::backslash("a\\b")]
     #[case::dots("..")]

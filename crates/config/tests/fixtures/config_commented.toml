@@ -1,4 +1,4 @@
-# sifr config
+# zefiro config
 music_dir = "/music" # where my library lives
 theme = "auto"
 volume = 50
