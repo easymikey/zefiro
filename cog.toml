@@ -3,10 +3,6 @@ branch_whitelist = ["main"]
 skip_ci = "[skip ci]"
 skip_untracked = true
 
-[commit_types]
-lint = { changelog_title = "Lints" }
-guard = { changelog_title = "Guards" }
-
 [changelog]
 path = "CHANGELOG.md"
 authors = [{ signature = "Mikhail Avdeev", username = "easymikey" }]

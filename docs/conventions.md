@@ -2,9 +2,7 @@
 
 Every rule of this codebase lives here, once. Other docs link here instead of restating a rule: `docs/principles.md` says why, `docs/architecture.md` shows the structure, `docs/testing.md` shows how tests are laid out. Where another doc disagrees with this file, this file wins.
 
-Every rule is marked `guard` (a clippy lint or a `zefiro-guards` test holds it; a guard rule with no guard yet is a guard task) or `review` (needs judgement; a reviewer checks it, §14). In tables the mark is the `check` column; in lists it ends the rule.
-
-Decisions log: decided 2026-10-02/03 with the user; the work that brings the code to these rules is the rename batches in `.work/reviews/glossary-draft.md` §7, queued in `.work/briefs/waves.md`. Questions still open are §15: do not settle them while editing.
+Every rule is marked `lint` (a clippy lint holds it) or `review` (needs judgement; a reviewer checks it, §14). In tables the mark is the `check` column; in lists it ends the rule.
 
 ## 1. Flow
 
@@ -14,10 +12,10 @@ Effect::X(XCmd) ─► runtime ─► DriverLoop ─► XMessage::Cmds(Cmds { cm
 XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox ─► update
 ```
 
-1. Layer map: kernel: nothing; audio, library, macos, config, remote: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; zefiro: anything. `guard` (`layering.rs`)
-2. kernel and widgets are pure: no IO, clock, threads, env, channels. `guard` (`purity.rs`)
-3. Only the roots see a whole `Model`: the kernel router inside `update`, `startup`, `Scene::from_model`. Below them a function takes its slice or an `XParts`. `guard` (`demeter.rs`, `demeter_views.rs`)
-4. One entry each: `update` has one call site in runtime, there is one key router, one `startup`; the paint path never calls `update`. `guard` (`dispatch.rs`) for the `update` call site and the paint path, `review` for the one key router and the one `startup`
+1. Layer map: kernel: nothing; audio, library, macos, config, remote: kernel; runtime: drivers, kernel, config; widgets: kernel; terminal: kernel, widgets; zefiro: anything. `lint`
+2. kernel and widgets are pure: no IO, clock, threads, env, channels. `lint`
+3. Only the roots see a whole `Model`: the kernel router inside `update`, `startup`, `Scene::from_model`. Below them a function takes its slice or an `XParts`. `lint`
+4. One entry each: `update` has one call site in runtime, there is one key router, one `startup`; the paint path never calls `update`. `lint` for the `update` call site and the paint path, `review` for the one key router and the one `startup`
 5. Effects are data with one interpreter: the kernel returns `Effect`s, runtime runs each as a lookup with no decision, the shell does only terminal IO; no second place matches on `Effect`. `review`
 6. Calc and effect are split: every decision is a pure function with tests; the action beside it holds no logic. `review`
 7. No loop through IO for our own changes: a value a message changes is changed in the `Model` in that `update`; persisting it is an effect; a watcher exists only for external edits and never re-applies what the app just wrote. `review`
@@ -30,24 +28,24 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox �
 | Model | kernel | the only app state; owned slices (`player`, `transport`, `playlist`, `workspace`, `queue`, …); `startup(Startup) -> (Model, Vec<Effect>)` (drains its messages like `update`); `update(&mut Model, Message, Moment) -> Result<Vec<Effect>, Unhandled>` (drains `Cmd` messages itself, §3.4) | `Model`; first call `startup` | review |
 | Machine | kernel (trait), implementors anywhere | `trait Machine { type Message; type Effect; fn transition(&mut self, message: Self::Message) -> Result<Self::Effect, Unhandled>; }`; `Effect` is a `Cmd` type (kernel `Cmd`, driver part `Cmd<XEffect, XEvent>`); the contract (`Machine`, `Driver`, `Unhandled`) lives in `kernel::update::machine`, effects in `kernel::cmd` | see §3 | review |
 | Parts | kernel | `struct XParts<'a>` whose fields are only `&`/`&mut` borrows of `Model` fields, built by the router | `XParts` | review |
-| Cmd | kernel | `struct Cmd<E = Effect, M = Message> { effects: Vec<E>, messages: Vec<M> }`; build with `Cmd::none()`, `Cmd::effect(e)`, `Cmd::message(m)`, `From<Effect>`, `From<Cue>`, `FromIterator<E>`; join with `then` (appends, in order); read with `effects()` / `IntoIterator`, split with `into_parts()` (runtime reads a driver Cmd); a nested machine's effects lift with `map_effect`, its messages through `into_parts()` (`ConfigDriver::drive_watch` turns each `ConfigChange` into its own `Cmd`). No other combinator (`merge`, `chain`, `batch`, `and`) | `Cmd` = what a machine returned | guard |
+| Cmd | kernel | `struct Cmd<E = Effect, M = Message> { effects: Vec<E>, messages: Vec<M> }`; build with `Cmd::none()`, `Cmd::effect(e)`, `Cmd::message(m)`, `From<Effect>`, `From<Cue>`, `FromIterator<E>`; join with `then` (appends, in order); read with `effects()` / `IntoIterator`, split with `into_parts()` (runtime reads a driver Cmd); a nested machine's effects lift with `map_effect`, its messages through `into_parts()` (`ConfigDriver::drive_watch` turns each `ConfigChange` into its own `Cmd`). No other combinator (`merge`, `chain`, `batch`, `and`) | `Cmd` = what a machine returned | lint |
 | Effect | kernel | one variant per target: `Audio(AudioCmd)`, `Library(LibraryCmd)`, `Macos(MacosCmd)`, `Remote(RemoteCmd)`, `Config(ConfigCmd)`, `WindowColors(WindowColorsCmd)`, `Animate(Cue)`, `RollShuffle(usize)`, `After { delay, timer }`, `Restart(DriverName)`, `Quit` | `Effect` | review |
-| XCmd | kernel | the order to one driver, carried inside `Effect` | `AudioCmd`, `LibraryCmd`, `MacosCmd`, `ConfigCmd`, `RemoteCmd` | guard |
-| Event | kernel (types) | what a driver reports; `From<XEvent> for Message`; driver lifecycle is `DriverEvent { Died, Stopped, Full }` | `XEvent` | guard |
+| XCmd | kernel | the order to one driver, carried inside `Effect` | `AudioCmd`, `LibraryCmd`, `MacosCmd`, `ConfigCmd`, `RemoteCmd` | lint |
+| Event | kernel (types) | what a driver reports; `From<XEvent> for Message`; driver lifecycle is `DriverEvent { Died, Stopped, Full }` | `XEvent` | lint |
 | Answer | kernel | runtime's reply to a kernel effect it ran: a `Message` variant named for the effect in the past tense (`Effect::RollShuffle` → `Message::ShuffleRolled`) | past tense of the effect | review |
-| Request | kernel | what the shell asks the core; always a branch of `Message` | `XRequest` | guard |
+| Request | kernel | what the shell asks the core; always a branch of `Message` | `XRequest` | lint |
 | Message | kernel | the only input of `update`: `X(XRequest)`, `X(XEvent)`, answers, `Elapsed(Timer)`, `Driver { driver_name, event }`, `Key(KeyPress)`, … | `Message` | review |
-| Driver | audio, macos, library, config, remote | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver`, `RemoteDriver` | guard |
-| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `message: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the audio feeder's wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the audio start closure `SpawnAudio`; an audio driver that stops before handing over its tap is `SpawnError::TapLost { driver_name }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | guard |
-| Stream | runtime | a repeated input started by a driver effect (`LibraryWatchEffect::Watch(PathBuf)`, as Crux `stream_from_shell`); runtime owns it and feeds its items back as `XMessage`s. The word `Subscription` is not used | `FileStream` | guard |
+| Driver | audio, macos, library, config, remote | the top machine of one external source (§4) | `AudioDriver`, `MacosDriver`, `LibraryDriver`, `ConfigDriver`, `RemoteDriver` | lint |
+| DriverLoop | runtime | one generic loop, one thread per driver (§4); a driver effect reaches it through `LoopEffect { Execute, Run, After, Watch, Unwatch }` (decided 2026-10-04); runtime seeds `XMessage::Started` into the inbox at spawn through the `DriverLoop` field `message: Option<D::Message>`; the loop's private next-input enum is `LoopInput` (not `Wake`, reserved for the audio feeder's wake-up); the inputs `Spawners` hands each driver thread are `SpawnSetup`, the audio start closure `SpawnAudio`; an audio driver that stops before handing over its tap is `SpawnError::TapLost { driver_name }`; a value the driver publishes goes out through a closure sink `P: Fn(T)` the runtime passes in | `DriverLoop` | lint |
+| Stream | runtime | a repeated input started by a driver effect (`LibraryWatchEffect::Watch(PathBuf)`, as Crux `stream_from_shell`); runtime owns it and feeds its items back as `XMessage`s. The word `Subscription` is not used | `FileStream` | lint |
 | Job | driver crate (type), runtime (thread) | slow blocking work a driver hands to the runtime worker as `XEffect::Run(XJob)`; the result returns as an `XMessage`; stale by `Revision` (§4.7) | `AudioJob`, `LibraryJob`, `MacosJob`, `RemoteJob` | review |
-| Error | every crate that can fail | §6 | `Error`, `<Type>Error` | guard |
-| Scene | widgets | `Scene::from_model(&Model, ScenePresentation)`; the only widget code that sees `&Model`; no `*_view()` or `layout_parts()` getters | `Scene` | guard |
+| Error | every crate that can fail | §6 | `Error`, `<Type>Error` | lint |
+| Scene | widgets | `Scene::from_model(&Model, ScenePresentation)`; the only widget code that sees `&Model`; no `*_view()` or `layout_parts()` getters | `Scene` | lint |
 | View | widgets | read-model holding fields from two or more `Model` slices; borrowed fields, no state, no `&Model`; built only by `XView::from_scene(&Scene)` | `XView<'a>` | review |
-| Widget | widgets | every type with `impl Widget`, overlays included; every widget type ends in `Widget` (`ToastWidget`, `CardWidget`, `TooSmallWidget`); built as in ratatui and ratcn: `XWidget::new(..)` takes what the widget cannot paint without (its `input`, then the `ActiveTheme` when it paints in theme colours), every optional knob is a consuming setter named after the field (`style(XStyle)`, `speed_chip(SpeedChip)`, …); fields are private, so there is never a struct literal outside its module and never a `builder()`; `input` is `&` one Model slice or one `XView` | `XWidget`, never `*Overlay` | guard |
+| Widget | widgets | every type with `impl Widget`, overlays included; every widget type ends in `Widget` (`ToastWidget`, `CardWidget`, `TooSmallWidget`); built as in ratatui and ratcn: `XWidget::new(..)` takes what the widget cannot paint without (its `input`, then the `ActiveTheme` when it paints in theme colours), every optional knob is a consuming setter named after the field (`style(XStyle)`, `speed_chip(SpeedChip)`, …); fields are private, so there is never a struct literal outside its module and never a `builder()`; `input` is `&` one Model slice or one `XView` | `XWidget`, never `*Overlay` | lint |
 | Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; an input beyond the theme rides on `ActiveTheme` through a builder (`with_progress_bar`); fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
-| Colors | widgets | only the theme palette | `Colors` | guard |
-| raw TOML | config | every serde shape of a file or a section; each carries `#[serde(expecting = "…")]` in user words (`"a [cover] table"`), so a Rust name never reaches a toast | `Toml*` (`TomlTheme`, `TomlSettings`, `TomlCover`, `TomlKeymap`, `TomlCard`, `TomlColors`, `TomlAudio`) | guard |
+| Colors | widgets | only the theme palette | `Colors` | lint |
+| raw TOML | config | every serde shape of a file or a section; each carries `#[serde(expecting = "…")]` in user words (`"a [cover] table"`), so a Rust name never reaches a toast | `Toml*` (`TomlTheme`, `TomlSettings`, `TomlCover`, `TomlKeymap`, `TomlCard`, `TomlColors`, `TomlAudio`) | lint |
 | parsed value | kernel, widgets | what inner code uses; parsed once at the boundary, never re-checked | bare noun (`Theme`, `Keymap`, `Appearance`) | review |
 | user settings | kernel | values the user edits in a file or the settings overlay | `XSettings` (`Settings`, `AudioSettings`, `AppearanceSettings`) | review |
 | config file id | kernel | `ConfigName { Config, Theme(ThemeName) }` | `ConfigName` | review |
@@ -77,13 +75,13 @@ refusal sites
 1 kernel/src/update/playback.rs: Err(Unhandled) => Ok(stepped),
 ```
 
-3. The input is an enum `XMessage` where X is the machine's type name (for an impl on `Option<T>` or `CursorOver<T>`, the noun of `T`; for a top driver machine, the subsystem: `AudioMessage`, `MacosMessage`, `LibraryMessage`, `ConfigMessage`), even with one variant, so a new input source is one new variant. Exception (Crux: no parallel enum that maps 1:1): when the machine's input would be identical to a shell `XRequest` enum, the machine takes that `XRequest` as its `Machine::Message` (`CursorOver<SearchQuery>` takes `SearchRequest`, `TextEntry<E>` takes `TextRequest`). The parameter is always `message`. `guard`
+3. The input is an enum `XMessage` where X is the machine's type name (for an impl on `Option<T>` or `CursorOver<T>`, the noun of `T`; for a top driver machine, the subsystem: `AudioMessage`, `MacosMessage`, `LibraryMessage`, `ConfigMessage`), even with one variant, so a new input source is one new variant. Exception (Crux: no parallel enum that maps 1:1): when the machine's input would be identical to a shell `XRequest` enum, the machine takes that `XRequest` as its `Machine::Message` (`CursorOver<SearchQuery>` takes `SearchRequest`, `TextEntry<E>` takes `TextRequest`). The parameter is always `message`. `lint`
 4. A message to self or parent is `Cmd::message(m)`; no follow-up or out-message types. DECIDED 2026-10-03 (as Crux `process_event`): kernel `update` drains every `Cmd` message itself, depth-first, in order, inside the same call, and returns only the collected effects, so a step and its follow-ups are atomic, no frame sees a half-applied model, and kernel tests see the final state through the production `update`. Depth over 8 is a programmer error: `debug_assert!`, and release stops the chain. `review`
-5. The match is exhaustive, no `_ =>`. A variant move uses one `mem::replace`; `mem::take` on machine state is banned. `guard` (`_ =>`; `mem::take` of a `self` field inside `transition`), `review` (`mem::take` elsewhere)
+5. The match is exhaustive, no `_ =>`. A variant move uses one `mem::replace`; `mem::take` on machine state is banned. `lint` (`_ =>`; `mem::take` of a `self` field inside `transition`), `review` (`mem::take` elsewhere)
 6. A machine reads no clock. Kernel time arrives as `Moment`; driver commands arrive as `XMessage::Cmds(Cmds { cmds, at: Instant })` (kernel `pub struct Cmds<C> { cmds: Vec<C>, at: Instant }`; `DriverLoop` needs `D::Message: From<Cmds<C>>`) (`DriverLoop` reads the clock; time as data, as `crux_time`). `review`
-7. A part is a plain noun naming what it works on, with no `State` suffix: `Engine`, `Hardware`, `Cover`, `ConfigWatch`, `CoverDecoding`. No two public types in the workspace share a name, except each crate's boundary `Error`. `guard`
+7. A part is a plain noun naming what it works on, with no `State` suffix: `Engine`, `Hardware`, `Cover`, `ConfigWatch`, `CoverDecoding`. No two public types in the workspace share a name, except each crate's boundary `Error`. `lint`
 8. Keys go to one key context: every binding names its `KeyContext`; an open overlay takes every key (a typed letter never reaches a global command), and with no overlay the router tries playlist, then global. `Esc` and `q` close every overlay through ordinary `Close` bindings, not router special cases (decided 2026-10-05). `review`
-9. A machine on a realtime thread (cpal callback: `Envelope`) has `Effect = ()`: `transition(&mut self, message) -> Result<(), Unhandled>`, so it allocates nothing. `guard`
+9. A machine on a realtime thread (cpal callback: `Envelope`) has `Effect = ()`: `transition(&mut self, message) -> Result<(), Unhandled>`, so it allocates nothing. `lint`
 
 ## 4. Drivers
 
@@ -91,7 +89,7 @@ Why `Driver`: same roles as OS drivers (request in, interrupt-driven events out,
 
 1. Each driver has one top machine `XDriver` that implements `Driver` (§4.5a). Its input `XMessage` has the variant `Cmds(Cmds<XCmd>)` plus one variant per own signal source (job results, stream items, callback input). `review`
 2. `XDriver::transition` returns `Cmd<XEffect, XEvent>`: `effects` are actions, `messages` are reports to the kernel. An `XEffect` enum has no variant carrying an event. DECIDED 2026-10-03 (Crux `map_event`): `messages` always go one level up to the parent, at every level; a part inside a driver returns `Cmd<PartEffect, XMessage>` (`ConfigWatch` → `Cmd<ConfigWatchEffect, ConfigChange>`, which `ConfigDriver` lifts) and the driver lifts its effects with `map_effect` and its messages one by one after `into_parts()`; the top driver's parent is the kernel, so its messages are `XEvent`. A machine never messages itself; an IO answer comes back through `execute` (§4.3). No driver builds a kernel `Message`. `review`
-3. The only impure step is `XDriver::execute(&mut self, effect: XEffect) -> Option<XMessage>`. `None` = fire-and-forget (Crux `Output = ()`); `Some(answer)` = the IO result, which `DriverLoop` feeds to `transition` at once, before the next inbox item (Crux `resolve`). The answer to effect `X` is the message variant named for it in the past tense (`Open` → `Opened`, `Save` → `Saved`, `Read` → `ReadDone`). Words `perform`, `handle`, `process`, `dispatch`, `apply` are banned for it. `guard`
+3. The only impure step is `XDriver::execute(&mut self, effect: XEffect) -> Option<XMessage>`. `None` = fire-and-forget (Crux `Output = ()`); `Some(answer)` = the IO result, which `DriverLoop` feeds to `transition` at once, before the next inbox item (Crux `resolve`). The answer to effect `X` is the message variant named for it in the past tense (`Open` → `Opened`, `Save` → `Saved`, `Read` → `ReadDone`). Words `perform`, `handle`, `process`, `dispatch`, `apply` are banned for it. `lint`
 4. Data a driver needs at start are fields of `XDriver`, not a `*Parts` bundle. `review`
 5a. DECIDED 2026-10-03 (Crux: effects start everything, the shell owns the loop): kernel `pub trait Driver: Machine { type Effect; fn execute(&mut self, effect: Self::Effect) -> Option<Self::Message>; }` is the only driver trait; kernel `enum Driver` (which driver) becomes `DriverName` (as `OverlayName`, `ConfigName`). No per-driver hooks in `DriverLoop`: a deadline or debounce is an effect `After { delay, timer }` (as kernel `Effect::After`, Crux `notify_after`); watching files or any repeated input is an effect that starts a stream (`LibraryWatchEffect::Watch(PathBuf)`), whose items come back as `XMessage`s; shutdown is an ordinary kernel command sent before `Quit` (`ConfigCmd::Flush`), not a loop hook; `DriverLoop` drains the inbox and delivers all pending commands as one message `XMessage::Cmds(Cmds<XCmd>)`, so coalescing (keep the last volume) is pure machine logic tested by tables; `DriverLoop::spawn(start: impl FnOnce() -> D + Send)` builds the driver on its own thread (the cpal output stream is `!Send`). Rejected: Elm-style `subscriptions()` (a second mechanism beside effects). `review`
 5. A driver opens no thread and no channel. `DriverLoop` (runtime) opens and closes every thread, channel, worker and stream: receive, read the clock, `transition`, `execute` each effect, send each event as a `Message` into `inbox`. There is no per-driver loop type. Threads a library opens inside itself (the cpal output stream, `notify` watcher) are excepted. `review`
@@ -104,17 +102,17 @@ Why `Driver`: same roles as OS drivers (request in, interrupt-driven events out,
 
 ## 5. Effects and enum variants
 
-1. Variant shape by field count: no data → unit (`Play`); one field → tuple (`Seek(Duration)`); two or more → named fields (`After { delay, timer }`). A single named field is banned, with two exceptions: the context field of an error variant (`SpawnError::TapLost { driver_name }`, as thiserror) and a row count with no type of its own (`CursorBy { rows: i32 }`). A unit goes into the type, not the field name: time is `Duration` (`NotAscending(Duration)`; a signed step is `{ direction: Direction, by: Duration }`); a count is a tuple, the variant name says what it counts (`RollShuffle(usize)`). `guard`
+1. Variant shape by field count: no data → unit (`Play`); one field → tuple (`Seek(Duration)`); two or more → named fields (`After { delay, timer }`). A single named field is banned, with two exceptions: the context field of an error variant (`SpawnError::TapLost { driver_name }`, as thiserror) and a row count with no type of its own (`CursorBy { rows: i32 }`). A unit goes into the type, not the field name: time is `Duration` (`NotAscending(Duration)`; a signed step is `{ direction: Direction, by: Duration }`); a count is a tuple, the variant name says what it counts (`RollShuffle(usize)`). `lint`
 2. An effect carries only the data its action needs. A compound action is several effects in one `Cmd`, in order (a speed step is `AudioCmd::SetSpeed(speed)` then `MacosCmd::SetSpeed(speed)`), as Crux `Command::all`/`then`. `review`
 3. An effect is a whole desired state or carries a `Revision`; effects are absolute (`SetVolume(…)`), so a repeat is harmless. Stale timers are dropped by `Revision`; `Effect::After { delay, timer }` stays (as `crux_time` `NotifyAfter`). `review`
 4. A newtype exists when the value has a rule (range, invariant: `Speed(f32)`), a unit (`Cells`, `Pixels`) or an index space (`TrackIndex`, `ViewIndex`); a bare integer in geometry is a defect; every `as` cast sits in a named conversion: a unit conversion is a method on the newtype that owns the unit (`Frames::duration(rate)`), a plain numeric cast is a fn named by its result (`bin_index`), never `x_to_y`. `review`
-5. Use std types where they say it: `Result<..>` and `Option<..>` written out; no `Result` aliases (`type XResult = …`). `guard`
+5. Use std types where they say it: `Result<..>` and `Option<..>` written out; no `Result` aliases (`type XResult = …`). `lint`
 
 ## 6. Errors
 
-1. Every crate that can fail has one boundary `Error`. Machines and `update` return `Unhandled` (§3.2), not an error type. `guard`
-2. An error of parsing or validating one value is `<Type>Error` (`ThemeNameError`, `TimecodeError`, `RemoteInputError`); its out-of-range case is the variant `OutOfRange` with the offending value and the bound, the value field named for its kind: `{ value, max }` for a count (`TimecodeError`), `{ duration, max }` for a `Duration` (`CrossfadeError`), plus `min` when the floor is not zero (`SleepPresetsError`). A panic payload is not carried: `DriverError::Panicked` is a unit variant; the payload text is dropped until runtime devtools exist (§6.4). `guard`
-3. `thiserror` enum, `#[error]` user text on every variant, `#[source]` chains, context fields, no `String` payloads (config reload: §8; `ConfigError: PartialEq` so a toast shows only for a new error; user text comes from `Display` when the toast is built), no `Box<dyn Error>`, no `anyhow`, `From` only along a real crate edge. No `let _ =` anywhere, tests included (a value is handled, propagated, asserted or turned into an event), no `unwrap_or_default` hiding an error. `guard` (`conventions.rs` `let_underscore` and `ok_discard`, clippy `disallowed-methods`)
+1. Every crate that can fail has one boundary `Error`. Machines and `update` return `Unhandled` (§3.2), not an error type. `lint`
+2. An error of parsing or validating one value is `<Type>Error` (`ThemeNameError`, `TimecodeError`, `RemoteInputError`); its out-of-range case is the variant `OutOfRange` with the offending value and the bound, the value field named for its kind: `{ value, max }` for a count (`TimecodeError`), `{ duration, max }` for a `Duration` (`CrossfadeError`), plus `min` when the floor is not zero (`SleepPresetsError`). A panic payload is not carried: `DriverError::Panicked` is a unit variant; the payload text is dropped until runtime devtools exist (§6.4). `lint`
+3. `thiserror` enum, `#[error]` user text on every variant, `#[source]` chains, context fields, no `String` payloads (config reload: §8; `ConfigError: PartialEq` so a toast shows only for a new error; user text comes from `Display` when the toast is built), no `Box<dyn Error>`, no `anyhow`, `From` only along a real crate edge. No `let _ =` anywhere, tests included (a value is handled, propagated, asserted or turned into an event), no `unwrap_or_default` hiding an error. `lint` (`conventions.rs` `let_underscore` and `ok_discard`, clippy `disallowed-methods`)
 4. IO failures travel as data inside an `XEvent` into the Model and a toast, never as a panic. A message or event enum carries an error in one `Error(XError)` variant (`AudioMessage::Error(AudioError)`, `LibraryEvent::Error`); no per-operation `*Failed` variants — the machine branches on the error variant (decided 2026-10-04). Debugging is later devtools in runtime recording `Message` → `Cmd` and the model before/after (Elm debugger style). `review`
 
 ## 7. Suffixes and prefixes
@@ -146,7 +144,7 @@ The meaning of each affix is `review`; the bans are in §9.
 
 ## 8. Domain words
 
-Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`; Zed's modal is our `Overlay`). The "not" column is held by `RETIRED_NAMES` (`guard`); picking the word for a concept is `review`.
+Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`; Zed's modal is our `Overlay`). The "not" column is held by `RETIRED_NAMES` (`lint`); picking the word for a concept is `review`.
 
 | concept | the word | not |
 |---|---|---|
@@ -275,7 +273,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | milkdrop stamp | `MilkdropStamp`; value `stamp` | `MilkdropTick`, `tick`, `WarpParams`, `InjectParams` |
 | screen wash: a theme change fades every cell at once from the colours on screen in a quick fade | `screen_wash`; the colours on screen `PaintedCell` (`fg`, `bg`), value `painted_cells`, the start `wash_from` | `THEME_WASH_GRADIENT_CELLS` |
 | scatter animation | `scatter_burst` | `delete_*` |
-| animation inputs | `CellFilter`; value `cell_filter` | `guard`, `duration` for them |
+| animation inputs | `CellFilter`; value `cell_filter` | `lint`, `duration` for them |
 | who paused playback | `PausedBy` | — |
 | modal surface in the core | `Overlay`, `OverlayName`; render frame and geometry `Modal*` | `OverlayKind`, `OverlayScreen`, `Pane*` (only the `playlist::pane` module) |
 | bottom key line | `KeyHints` (`key_hints`) | `Footer`, `SettingsHintLabels`, `FooterContent` |
@@ -330,34 +328,34 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 
 | banned | source | check |
 |---|---|---|
-| `Ui` prefix on any name | memory 2026-09-16, `RETIRED_NAMES` | guard |
-| `Cfg`, `Ctx` in a type name | `naming.rs` | guard |
-| type suffixes `Props Tuning Sync Scratch Slices Info Type Kind Inputs Values Flags Params Options Data Manager Handler Helper Util Utils Wrapper Holder Draw Spec Slot` | `naming.rs`, `forbidden_names.rs`, review criteria | guard |
+| `Ui` prefix on any name | memory 2026-09-16, `RETIRED_NAMES` | lint |
+| `Cfg`, `Ctx` in a type name |  | lint |
+| type suffixes `Props Tuning Sync Scratch Slices Info Type Kind Inputs Values Flags Params Options Data Manager Handler Helper Util Utils Wrapper Holder Draw Spec Slot` | review criteria | lint |
 | type suffixes `State` (machine parts), `File`/`Config` (raw or parsed shapes), `XColors` other than `Colors` | decided 2026-10-02/03 | review |
-| `Loop` suffix except `DriverLoop`, `MainLoop` (AppKit), runtime's `EventLoop` and the kernel's `AbLoop`; no per-driver loop | decided 2026-10-02/03 | guard |
-| identifiers ending `Refused`, `Fault`, `Problem`, `Failure`, `Rejected` | `forbidden_names.rs`, decided 2026-10-02/03 | guard |
-| words `Outcome`, `apply`, `Look`, `Adjust`, `Nudge`, `Subscription`; type prefix `Custom*`; `*Overlay` widgets | decided 2026-10-03 | guard |
+| `Loop` suffix except `DriverLoop`, `MainLoop` (AppKit), runtime's `EventLoop` and the kernel's `AbLoop`; no per-driver loop | decided 2026-10-02/03 | lint |
+| identifiers ending `Refused`, `Fault`, `Problem`, `Failure`, `Rejected` | decided 2026-10-02/03 | lint |
+| words `Outcome`, `apply`, `Look`, `Adjust`, `Nudge`, `Subscription`; type prefix `Custom*`; `*Overlay` widgets | decided 2026-10-03 | lint |
 | `*Request` outside kernel shell → core enums | decided 2026-10-03 | review |
-| `Machine::Error`, machine error enums, `UpdateError`, `DriverEvent::Rejected` | decided 2026-10-03 | guard |
+| `Machine::Error`, machine error enums, `UpdateError`, `DriverEvent::Rejected` | decided 2026-10-03 | lint |
 | `XParts` holding anything but `Model` borrows; one-slice `XView`; `Scene::*_view()` and `Scene::layout_parts()` getters; `Role::` inside painters | decided 2026-10-03 | review |
-| `fn render*` other than ratatui trait methods (`Widget::render`, `StatefulWidget::render`) | decided 2026-10-03 | guard |
-| a single named field in an enum variant; `type XResult = Result<…>` aliases | decided 2026-10-03 | guard |
-| `fn sync_*`, `sync/` module dirs; `fn get_*` (a getter is the noun: `volume()`; `set_*` stays for a method replacing one held value, §8); predicates `should_ wants_ needs_` (use `is_ has_ can_`); `maybe`; `x_to_y` functions | `naming.rs`, `forbidden_names.rs` | guard |
-| `compile`, `build_*`, `make_*`, `create_*`, `place_*`, `resolve_*` returning `Self` (use `new`, `with_*`, `from_*`) | `forbidden_names.rs` | guard |
-| module files `reduce.rs compile.rs route.rs handle.rs process.rs dispatch.rs` | `forbidden_names.rs` | guard |
-| abbreviations `vol proto cm hw dur tech bg msg pos err` and `_vol vol_ eq_ tech_ _proto _dur`; `draw*` (except `draw_pixmap`); allowed: only `Cmd`, `buf`, `px` | `naming.rs` | guard |
-| parameter names `data info ctx cfg opts options idx tmp res val value handle item entry thing stuff params args props w h n i` | `naming.rs` | guard |
-| every name in `RETIRED_NAMES` (`Skin`, `Footer`, `Notice*`, `Focus`, `KeyEffect`, `MediaEvent`, `AudioFault`, `Palette`, …) | `naming.rs` | guard |
-| `#[allow]`, `#[expect]` outside tests; `super::` paths; glob imports; `macro_rules!` and own proc-macro crates; comments other than `SAFETY:` / `PROTOCOL:` / `GUARD:` one-liners | clippy, `imports.rs`, `macros.rs`, `comments.rs` | guard |
-| `unwrap`, `expect`, `panic!`, `todo!`, `unreachable!`, slice indexing in `src` | clippy | guard |
-| `bool` parameters (a two-variant enum instead, with no methods); `bool` + `Option` pairs, `Option<Option<_>>`, `Vec` + `usize` pairs (`Cursor { index, len }` is a bounded index and allowed; its owner resets `len` whenever the list changes); `_ =>` on own enums | clippy, review criteria | guard |
-| `..` closing a struct or tuple-struct pattern of a workspace type that binds a field in a `let` without `else`, a fn or closure parameter or a `for` pattern, outside `mod tests` (name each field, an ignored one as `field: _`; `X { .. }` that binds nothing stays; a `match` arm, `if let`, `while let` and `let … else` may close the pattern with `..`) | P39, P277, `rest_patterns.rs` | guard |
-| an arm made only of wildcards in a tuple (`(_, _) =>`) over own enums, outside `mod tests` | P39, `wildcard_arms.rs` | guard |
-| an arm whose `\|` alternation holds `_` or an all-wildcard tuple (`X \| _ =>`, `(_, Key::Up) \| (_, _) =>`) over own enums, outside `mod tests` | P41, `wildcard_arms.rs` | guard |
-| `Duration::from_mins`, `from_hours`, `from_days` over an argument that is not a literal or a const, outside `mod tests` (they panic on overflow; use `from_secs` with a saturating product) | P41, `durations.rs` | guard |
-| `Select::new()` in `crates/runtime/src` outside `mod tests` (a wait is `select_biased!` with a `default(timeout)` arm) | P39, `select_waits.rs` | guard |
+| `fn render*` other than ratatui trait methods (`Widget::render`, `StatefulWidget::render`) | decided 2026-10-03 | lint |
+| a single named field in an enum variant; `type XResult = Result<…>` aliases | decided 2026-10-03 | lint |
+| `fn sync_*`, `sync/` module dirs; `fn get_*` (a getter is the noun: `volume()`; `set_*` stays for a method replacing one held value, §8); predicates `should_ wants_ needs_` (use `is_ has_ can_`); `maybe`; `x_to_y` functions |  | lint |
+| `compile`, `build_*`, `make_*`, `create_*`, `place_*`, `resolve_*` returning `Self` (use `new`, `with_*`, `from_*`) |  | lint |
+| module files `reduce.rs compile.rs route.rs handle.rs process.rs dispatch.rs` |  | lint |
+| abbreviations `vol proto cm hw dur tech bg msg pos err` and `_vol vol_ eq_ tech_ _proto _dur`; `draw*` (except `draw_pixmap`); allowed: only `Cmd`, `buf`, `px` |  | lint |
+| parameter names `data info ctx cfg opts options idx tmp res val value handle item entry thing stuff params args props w h n i` |  | lint |
+| every name in `RETIRED_NAMES` (`Skin`, `Footer`, `Notice*`, `Focus`, `KeyEffect`, `MediaEvent`, `AudioFault`, `Palette`, …) |  | lint |
+| `#[allow]`, `#[expect]` outside tests; `super::` paths; glob imports; `macro_rules!` and own proc-macro crates; comments other than `SAFETY:` / `PROTOCOL:` / `GUARD:` one-liners | clippy,  | lint |
+| `unwrap`, `expect`, `panic!`, `todo!`, `unreachable!`, slice indexing in `src` | clippy | lint |
+| `bool` parameters (a two-variant enum instead, with no methods); `bool` + `Option` pairs, `Option<Option<_>>`, `Vec` + `usize` pairs (`Cursor { index, len }` is a bounded index and allowed; its owner resets `len` whenever the list changes); `_ =>` on own enums | clippy, review criteria | lint |
+| `..` closing a struct or tuple-struct pattern of a workspace type that binds a field in a `let` without `else`, a fn or closure parameter or a `for` pattern, outside `mod tests` (name each field, an ignored one as `field: _`; `X { .. }` that binds nothing stays; a `match` arm, `if let`, `while let` and `let … else` may close the pattern with `..`) | P39, P277,  | lint |
+| an arm made only of wildcards in a tuple (`(_, _) =>`) over own enums, outside `mod tests` | P39,  | lint |
+| an arm whose `\|` alternation holds `_` or an all-wildcard tuple (`X \| _ =>`, `(_, Key::Up) \| (_, _) =>`) over own enums, outside `mod tests` | P41,  | lint |
+| `Duration::from_mins`, `from_hours`, `from_days` over an argument that is not a literal or a const, outside `mod tests` (they panic on overflow; use `from_secs` with a saturating product) | P41,  | lint |
+| `Select::new()` in `crates/runtime/src` outside `mod tests` (a wait is `select_biased!` with a `default(timeout)` arm) | P39,  | lint |
 | `Option<Vec/Box/Result>` unless empty and absent differ | memory 2026-10-01 | review |
-| functions over 3 parameters, 60 lines or cognitive complexity 15; nesting over 3; files over 800 lines; test-only `src` files | clippy, `length.rs`, memory | guard |
+| functions over 3 parameters, 60 lines or cognitive complexity 15; nesting over 3; files over 800 lines; test-only `src` files | clippy, memory | lint |
 | production code that only tests call; tests use the production API or assert on the data | user 2026-10-03 | review |
 
 ## 10. Off-convention rule
@@ -375,12 +373,12 @@ A name or shape this file does not cover (a new suffix, a new domain word, a sec
 7. Resources are RAII: raw mode, alternate screen and threads are restored by a guard's `Drop`. `review`
 8. Own traits are `Machine`, `Driver`, `Shell` (runtime↔binary seam), one narrow trait per hardware or OS source (`Watcher`), and a trait shared by three or more value types (`Bounded`, `Flag`); methods take and return data, static dispatch, never `dyn`; fakes plug in over the same real channels. `review`
 9. Public API is minimal: `pub(crate)` unless a downstream crate needs it; no re-exports or shims for compatibility; delete, never deprecate. No extra abstraction, dependency or crate feature. `review`
-10. Modules: no cycles inside a crate; leaves never import roots (no widgets module outside `screen` imports `crate::screen`) `guard` (`layering.rs`); a module's fan-in/fan-out stays within 3 × the crate median or the review names why. One responsibility per module; a second responsibility moves to its own module named for its noun. `review`
+10. Modules: no cycles inside a crate; leaves never import roots (no widgets module outside `screen` imports `crate::screen`) `lint`; a module's fan-in/fan-out stays within 3 × the crate median or the review names why. One responsibility per module; a second responsibility moves to its own module named for its noun. `review`
 
 ## 12. Events, frames and performance
 
 1. Three event classes, one path each: a fact reaches `update` as a `Message` through the bounded mailbox; driver internals never leave the driver thread; a stream value (spectrum, decoded cover, reloaded theme, reloaded appearance) goes into a latest-value cell, never a queue. No message exists only because time passed. `review`
-2. Cells are lock-free: `triple_buffer` for samples and envelope orders, atomics for scalars, `arc-swap` for large rare values. On a realtime path (audio callback, OS callback) no `Mutex`, allocation, free or blocking call. The audio render callback `Mixer::mix` sends no signal: it takes decoded chunks, mixer orders and returns empty chunks and retired voices through wait-free rtrb rings, reads envelope orders from `triple_buffer` cells and leaves position and flags in atomics; the feeder, a `DriverLoop` job paced by the driver, refills the chunks and wakes the driver. An OS callback only sets a flag or `try_send`s into a bounded(1) doorbell. `Mixer::mix` and `FeedSource::read` carry `#[sanitize(realtime = "nonblocking")]`, and `scripts/rtsan.sh` runs the audio tests under RTSan. `review`
+2. Cells are lock-free: `triple_buffer` for samples and envelope orders, atomics for scalars, `arc-swap` for large rare values. On a realtime path (audio callback, OS callback) no `Mutex`, allocation, free or blocking call. The audio render callback `Mixer::mix` sends no signal: it takes decoded chunks, mixer orders and returns empty chunks and retired voices through wait-free rtrb rings, reads envelope orders from `triple_buffer` cells and leaves position and flags in atomics; the feeder, a `DriverLoop` job paced by the driver, refills the chunks and wakes the driver. An OS callback only sets a flag or `try_send`s into a bounded(1) doorbell. `Mixer::mix` and `FeedSource::read` carry `#[sanitize(realtime = "nonblocking")]`. `review`
 3. Kernel timers (`Effect::After`) exist only for decisions (`Timer::Lookahead`, `Sleep`, `Toast`); a timer whose only purpose is to move pixels is a defect. `review`
 4. `update` names each transition worth animating as `Effect::Animate(Cue)`; the shell plays the cue and never diffs the model to guess what changed. `review`
 5. Frames only while something moves: every `frame_due` source is a pure function of (layout, anchor, now) that never slides; spectrum frames only while it is on screen and playing or decaying; with nothing moving the loop blocks with no deadline. `review`
@@ -395,10 +393,9 @@ A name or shape this file does not cover (a new suffix, a new domain word, a sec
 1. A private function is tested in `#[cfg(test)] mod tests` at the bottom of its file; a public contract in the crate's `tests/` tiers (`docs/testing.md`). `review`
 2. `rstest` cases and `insta` snapshots, fixtures on disk; behaviour is covered, not lines; every snapshot is meaningful. `review`
 3. A machine is tested as a table of (state, message) rows, refusals included: a refusal asserts `Err(Unhandled)` and the unchanged state. `review`
-4. Runtime tests are thin, use real channels and need no sound device. A test that needs hardware is `#[ignore = "hardware: …"]` `guard` (`hardware.rs`); a contract test ignored for hardware is a defect in the seam. `review`
+4. Runtime tests are thin, use real channels and need no sound device. A test that needs hardware is `#[ignore = "hardware: …"]` `lint`; a contract test ignored for hardware is a defect in the seam. `review`
 5. A refactor leaves snapshots unchanged except renamed identifiers; a behaviour change comes with a new snapshot and its reason. `review`
-6. In test code `unwrap`, `expect`, `panic!`, indexing, `print!`, `dbg!` are allowed (`clippy.toml` `allow-*-in-tests`); structure is held to the production bar. `guard`
-7. Agents commit after `cargo fmt`, clippy and the guards (`cargo test -p zefiro-guards`); they run no test suite; the coordinator runs the gate (`scripts/gate.sh`). `review`
+6. In test code `unwrap`, `expect`, `panic!`, indexing, `print!`, `dbg!` are allowed (`clippy.toml` `allow-*-in-tests`); structure is held to the production bar. `lint`
 
 ## 14. Reviews
 

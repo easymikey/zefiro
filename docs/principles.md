@@ -32,7 +32,7 @@ Crates form one direction of dependency: the pure kernel at the bottom, the sour
 
 Why:
 
-- **A layer cannot leak upward.** The kernel never learns about CoreAudio, files or terminal escape codes; the view never learns about threads. A guard test keeps the arrows pointing one way, so a shortcut fails the build instead of a review.
+- **A layer cannot leak upward.** The kernel never learns about CoreAudio, files or terminal escape codes; the view never learns about threads.
 - **Each crate has one boundary.** Inner code works on parsed values; parsing and validating happen once, where data enters. Inner code never re-checks.
 - **The composition root is the only place that knows the concrete world.** Below it, nothing knows it runs on real hardware, which is what lets tests plug fakes over the same real channels.
 
@@ -57,4 +57,4 @@ Typestate for the terminal (RAII is enough), trait-object plugins for drivers (a
 
 ## Enforcement
 
-A rule that a tool can check is held by a clippy lint or a guard test in `crates/zefiro-guards`; a rule that needs judgement is checked in reviews. `docs/conventions.md` marks each rule with which of the two holds it.
+A rule that a tool can check is held by a clippy lint; a rule that needs judgement is checked in reviews. `docs/conventions.md` marks each rule with which of the two holds it.

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{
     Parser,
-    builder::{PathBufValueParser, TypedValueParser},
+    builder::{BoolValueParser, PathBufValueParser, TypedValueParser},
 };
 use config::{
     config_file::TomlSettings,
@@ -36,7 +36,7 @@ pub(crate) struct Launch {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "zefiro", about = "A terminal music player")]
+#[command(name = "zefiro", version, about = "A terminal music player")]
 struct Cli {
     #[arg(help = "Play this folder for this run only, without saving it")]
     path: Option<PathBuf>,
@@ -50,16 +50,31 @@ struct Cli {
     )]
     music_dir: Option<PathBuf>,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Use this theme for this run only: auto, an embedded theme or a themes/<name>.toml file"
+    )]
     theme: Option<String>,
 
-    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+    #[arg(
+        long,
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        help = "Start this run at this volume, 0 to 100"
+    )]
     volume: Option<u8>,
 
-    #[arg(long, action = clap::ArgAction::Count)]
-    shuffle: u8,
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        value_parser = BoolValueParser::new().map(|on| if on { Shuffle::On } else { Shuffle::Off }),
+        help = "Start this run with shuffle on"
+    )]
+    shuffle: Shuffle,
 
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Start this run on this saved playlist, named without .m3u8"
+    )]
     playlist: Option<String>,
 }
 
@@ -73,10 +88,6 @@ fn checked(path: PathBuf) -> Result<PathBuf, String> {
         | Verdict::Denied
         | Verdict::Unreadable(_)) => Err(verdict.to_string()),
     }
-}
-
-fn shuffle_requested(count: u8) -> Shuffle {
-    if count > 0 { Shuffle::On } else { Shuffle::Off }
 }
 
 fn user_config_dir() -> Result<PathBuf, Error> {
@@ -144,7 +155,7 @@ fn merged_startup(
 ) -> Startup {
     Startup {
         music_dir,
-        shuffle: shuffle_requested(cli.shuffle),
+        shuffle: cli.shuffle,
         keymap_overrides: toml_settings.keymap.into_keymap_overrides(),
         accounts: toml_settings
             .servers
@@ -258,7 +269,6 @@ mod tests {
             load_named_playlist,
             merged_startup,
             resolved_music_dir,
-            shuffle_requested,
             start,
         },
     };
@@ -272,7 +282,7 @@ mod tests {
             music_dir: None,
             theme: theme.map(str::to_owned),
             volume: None,
-            shuffle: 0,
+            shuffle: Shuffle::Off,
             playlist: None,
         };
         start(&cli, dir, library_dirs(dir)).unwrap()
@@ -438,7 +448,7 @@ mod tests {
         path: Option<&'static str>,
         theme: Option<&'static str>,
         volume: Option<u8>,
-        shuffle: u8,
+        shuffle: Shuffle,
         playlist: Option<&'static str>,
     }
 
@@ -448,7 +458,7 @@ mod tests {
         path: None,
         theme: None,
         volume: None,
-        shuffle: 0,
+        shuffle: Shuffle::Off,
         playlist: None,
     })]
     #[case::every_flag(CliRow {
@@ -466,7 +476,7 @@ mod tests {
         path: Some("/music"),
         theme: Some("noir"),
         volume: Some(42),
-        shuffle: 1,
+        shuffle: Shuffle::On,
         playlist: Some("favourites"),
     })]
     fn every_flag_parses_into_its_field(#[case] row: CliRow) {
@@ -477,17 +487,6 @@ mod tests {
         assert_eq!(cli.volume, row.volume);
         assert_eq!(cli.shuffle, row.shuffle);
         assert_eq!(cli.playlist.as_deref(), row.playlist);
-    }
-
-    #[rstest]
-    #[case::absent(0, Shuffle::Off)]
-    #[case::present(1, Shuffle::On)]
-    #[case::repeated(2, Shuffle::On)]
-    fn shuffle_requested_treats_any_count_above_zero_as_on(
-        #[case] count: u8,
-        #[case] expected: Shuffle,
-    ) {
-        assert_eq!(shuffle_requested(count), expected);
     }
 
     #[test]
@@ -606,6 +605,36 @@ mod tests {
                 "Save this folder as music_dir in config.toml and start on it"
             ),
             "{help}"
+        );
+    }
+
+    #[rstest]
+    #[case::theme(
+        "--theme <THEME>",
+        "Use this theme for this run only: auto, an embedded theme or a themes/<name>.toml file"
+    )]
+    #[case::volume("--volume <VOLUME>", "Start this run at this volume, 0 to 100")]
+    #[case::shuffle("--shuffle\n", "Start this run with shuffle on")]
+    #[case::playlist(
+        "--playlist <PLAYLIST>",
+        "Start this run on this saved playlist, named without .m3u8"
+    )]
+    #[case::version("--version", "Print version")]
+    fn the_help_describes_every_option(#[case] usage: &str, #[case] description: &str) {
+        let help = Cli::command().render_long_help().to_string();
+
+        assert!(help.contains(usage), "{help}");
+        assert!(help.contains(description), "{help}");
+    }
+
+    #[test]
+    fn version_prints_the_name_and_the_package_version() {
+        let shown = Cli::try_parse_from(["zefiro", "--version"]).unwrap_err();
+
+        assert_eq!(shown.kind(), ErrorKind::DisplayVersion);
+        assert_eq!(
+            shown.to_string(),
+            format!("zefiro {}\n", env!("CARGO_PKG_VERSION"))
         );
     }
 

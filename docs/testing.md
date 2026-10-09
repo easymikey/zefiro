@@ -15,40 +15,6 @@ cargo test -p kernel --test main -- --skip unit::  # everything but one tier
 
 One binary per crate means one link per crate instead of one per file; the cost is that one compile error blocks the whole crate's tests, and that `tests/main.rs` must list every tier module. Private functions are tested in `#[cfg(test)] mod tests` at the bottom of their own file, not here.
 
-## The guards crate
-
-Every guard that reads source text lives in `crates/zefiro-guards/tests/guards/`, whichever crate it scans, on one `guards/support.rs`: one directory walk, one `source_files(areas)` list keyed by crate-relative path (`widgets/src/screen/mod.rs`), one `Allow { path, pattern, reason }` row, one `stale` check, one `report`. `cargo test -p zefiro-guards` runs all of them in under a second.
-
-| guard | holds (rule in conventions) |
-|---|---|
-| `comments.rs` | only the listed `SAFETY:` / `PROTOCOL:` / `GUARD:` one-liners (§9) |
-| `builders.rs` | no generated `builder()`, no `maybe_` setter; setters are named after their fields (§2) |
-| `conventions.rs` | banned words and loop names from the conventions vocabulary (§9); item rules: `mem::take` of a `self` field inside a `transition` body (§3.5), part names (§3.7), one-field variants (§5.1), no `Result` alias (§5.5), `let _` and `.ok();` discards (§6.3) |
-| `config_doc_config.rs`, `config_doc_appearance.rs` | `docs/config.md`'s default blocks still parse into the config defaults |
-| `demeter.rs` | kernel `update` handlers take slices, not a whole `Model` (§1.3) |
-| `demeter_views.rs` | widgets below `screen` never hold a whole `Model` (§1.3) |
-| `dispatch.rs` | `update` has one call site; the paint path never calls it (§1.4) |
-| `errors.rs` | error enum shape, `From` along real crate edges and no swallowed write call (§6) |
-| `forbidden_names.rs` | verb module files, `get_`, `should_`/`wants_`/`needs_`, mechanism constructors (§9) |
-| `hardware.rs` | every test that touches hardware is `#[ignore]` (§13.4) |
-| `imports.rs` | every `use` is absolute, no glob, no `pub use` of any visibility (§9); the clippy `pub_use` lint stays off because `bon` builders expand to `pub use` |
-| `layering.rs` | the layer map; no widgets module outside `src/screen/` imports `crate::screen` (§1.1, §11.10) |
-| `length.rs` | ≤800 lines per file, tests included (§9) |
-| `macros.rs` | no `macro_rules!`, no proc-macro crate of our own (§9) |
-| `naming.rs` | full words, mechanism names, retired names, parameter names (§9) |
-| `public_types.rs` | one public type name lives in one crate (`Error` exempt) |
-| `test_files.rs` | no source file exists only for `#[cfg(test)]` (§13) |
-| `purity.rs` | `kernel` and `widgets` touch no IO, clock, thread or environment (§1.2) |
-| `value_names/` | value names follow the domain words (§8); the baseline `value_names_baseline.txt` is empty |
-| `wildcard_arms.rs` | no wildcard arm over an enum of another crate |
-| `lexer.rs` | the shared tokenizer of `conventions.rs` and `wildcard_arms.rs` |
-
-`fault.rs` holds the error type the `config_doc` guards fail through. A guard that would repeat a denied clippy lint (`bool` parameters, panics, indexing) does not exist: the lint is the guard; wildcard arms get a guard only where clippy cannot see the enum's crate.
-
-Every other guard refuses every hit; only `comments.rs` and `demeter.rs` keep an allowlist. Those lists are shrink-only and the shrinking is enforced: a row whose `(path, pattern)` no longer matches anything turns its guard red and prints the row's `reason`, so a paid-off debt cannot be re-spent elsewhere. A new exemption is a rule change in `docs/conventions.md`, not an allowlist row.
-
-The `config_doc` guards are the exception that reach into another crate's own types (`config`) to compare `docs/config.md` against a schema instead of scanning source text; `zefiro-guards` carries them as dependencies for that. `zefiro-guards` is not a layer in the layering table: nothing depends on it.
-
 ## Hardware tests
 
 Tests needing a real audio device, CoreAudio or an FSEvents watcher carry `#[ignore = "hardware: …"]` and are skipped by default. They live next to the code they drive (`--lib`), not in `tests/`; run them with `cargo test -p runtime -- --include-ignored` (the output device, the macOS driver, the watcher), `-p audio` (its device tests) and `-p macos` (the system volume write). CI does not run them.

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: fmt
+        run: cargo fmt --all -- --check
+
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: bench compile check
+        run: cargo bench --workspace --no-run
+
+      - name: test
+        run: cargo test --workspace --no-fail-fast
+        env:
+          # Explicit belt-and-suspenders for `insta` snapshot tests: fail on
+          # any mismatch instead of writing a `.snap.new` file, regardless of
+          # `insta`'s own CI auto-detection. See docs/testing.md.
+          INSTA_UPDATE: "no"
+
+  # Nothing else in this workflow builds `--release`, so a size regression
+  # was invisible until someone shipped one. This job builds the real
+  # release binary on each platform and writes its size into the run's own
+  # summary — a number to read per platform over time, not a gate: the
+  # backends differ enough (CoreAudio/souvlaki vs ALSA vs WASAPI) that the
+  # platforms are not comparable against each other. Baseline at the profile
+  # change that landed fat LTO + panic=abort: 5,491,632 B / 5.24 MiB on
+  # macOS. See docs/superpowers/plans/2026-09-13-binary-size-audit.md.
+  size:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `cpal`'s ALSA backend is the only native dependency any platform
+      # needs; `souvlaki` is behind `cfg(target_os = "macos")`, so no
+      # libdbus here.
+      - name: alsa headers (cpal)
+        if: startsWith(matrix.os, 'ubuntu')
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+
+      - name: build
+        run: cargo build --release -p zefiro --locked
+
+      # `bash` explicitly: the default shell on the Windows runner is
+      # PowerShell, and `stat` is not a cmdlet there.
+      - name: record size
+        shell: bash
+        run: |
+          BIN=target/release/zefiro
+          # An `&&` chain here would fail the step under `set -e` on every
+          # platform that *isn't* Windows, where the `.exe` is absent.
+          if [ -f "$BIN.exe" ]; then
+            BIN="$BIN.exe"
+          fi
+          BYTES=$(stat -c %s "$BIN" 2>/dev/null || stat -f %z "$BIN")
+          MIB=$(awk "BEGIN { printf \"%.2f\", $BYTES / 1048576 }")
+          printf '`%s` release binary: **%s bytes** (%s MiB)\n' \
+            "${{ matrix.os }}" "$BYTES" "$MIB" >> "$GITHUB_STEP_SUMMARY"

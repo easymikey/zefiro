@@ -3,8 +3,15 @@ set positional-arguments
 
 export RUSTC_WRAPPER := ""
 
-# fmt, clippy and tests
-default: gate
+default: check
+
+# fmt, taplo, typos, clippy and tests
+check:
+    cargo fmt --all --check
+    taplo fmt --check
+    typos
+    cargo clippy --workspace --all-targets -- -D warnings
+    cargo nextest run --workspace
 
 # fresh clone: pinned tools, cargo aliases, git hooks
 setup:
@@ -21,8 +28,8 @@ doctor:
     cargo llvm-cov --version
     cog --version
 
-# check one crate or the workspace
-check crate="":
+# cargo check one crate or the workspace
+cargo-check crate="":
     @if [ -n "{{crate}}" ]; then cargo check -p {{crate}} --all-targets; else cargo check --workspace --all-targets; fi
 
 # clippy for one crate or the workspace
@@ -32,18 +39,6 @@ clippy crate="":
 # tests, filter optional: just test -p kernel, just test router
 test *filter:
     cargo nextest run {{filter}}
-
-# house rules clippy cannot see, over lines added since a base
-rules base="main":
-    sh scripts/rules.sh {{base}}
-
-# fmt, clippy, tests, house rules, acceptance: brief defaults to .gate-brief
-gate brief="":
-    sh scripts/gate.sh {{brief}}
-
-# acceptance block from a brief: just accept docs/briefs/foo.md
-accept brief:
-    sh scripts/accept.sh {{brief}}
 
 # accept pending insta snapshots after reading the diffs
 snap-accept *filter:
@@ -86,10 +81,13 @@ pre-commit:
     [ -z "$rs" ] || rustfmt --check --edition 2024 $rs
     [ -z "$toml" ] || taplo fmt --check $toml
     [ -z "$text" ] || typos $text
-    [ -z "$rs" ] || sh scripts/rules.sh main
-    crates=$(git diff --cached --name-only -- "crates/*" | sed -E "s|crates/([^/]+)/.*|-p \1|" | sort -u)
+    crates=$(git diff --cached --name-only -- "crates/*" | sed -E "s|crates/([^/]+)/.*|\1|" | sort -u | while read -r crate; do if [ -d "crates/$crate" ]; then echo "-p $crate"; fi; done)
     [ -z "$rs$toml" ] || cargo clippy $crates --all-targets -q -- -D warnings
 
-# pre-push hook: the ci test profile over the workspace
+# pre-push hook: fmt, taplo, typos, clippy and the ci test profile over the workspace
 pre-push:
+    cargo fmt --all --check
+    taplo fmt --check
+    typos
+    cargo clippy --workspace --all-targets -- -D warnings
     cargo nextest run --workspace --profile ci

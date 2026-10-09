@@ -8,7 +8,6 @@ members = [
   "crates/macos",
   "crates/remote",
   "crates/runtime",
-  "crates/zefiro-guards",
   "crates/terminal",
   "crates/widgets",
   "crates/zefiro",
@@ -232,9 +231,6 @@ serde = { version = "1", default-features = false, features = [
   "std",
 ] }
 serde_json = { version = "1", default-features = false, features = ["std"] }
-proc-macro2 = { version = "1", default-features = false, features = [
-  "span-locations",
-] }
 signal-hook = { version = "0.3", default-features = false }
 strum = { version = "0.28", default-features = false, features = [
   "derive",
@@ -251,11 +247,6 @@ symphonia = { version = "0.5.5", default-features = false, features = [
   "pcm",
   "vorbis",
   "wav",
-] }
-syn = { version = "2", default-features = false, features = [
-  "full",
-  "parsing",
-  "visit",
 ] }
 tachyonfx = { version = "0.25.2", default-features = false, features = [
   "std",

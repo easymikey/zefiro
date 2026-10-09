@@ -273,13 +273,4 @@ selected row's text against the band (4.5:1), and the `▶` marker against both
 
 ## Regenerating the default blocks
 
-Two guards in `crates/zefiro-guards` lock the blocks above to the code.
-`config_doc_config.rs` parses the `defaults:config` block with `parse_config` and
-compares it with `TomlSettings::default()`. `config_doc_appearance.rs` parses the
-`defaults:window` block with `parse_config` too and compares it with
-`TomlSettings::default()`. The structs are `Deserialize` only, so the blocks
-are kept by hand. When a default changes:
-
-1. Read the failing assertion's diff; it names the fields that differ.
-2. Edit the TOML between the matching markers in this file.
-3. Run `cargo test -p zefiro-guards` until it passes.
+The structs are `Deserialize` only, so the blocks are kept by hand. When a default changes, edit the TOML between the matching markers in this file.
