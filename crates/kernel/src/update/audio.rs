@@ -395,12 +395,20 @@ fn track_changed(
     Ok(cmd)
 }
 
+fn anchor(playlist: &Playlist) -> Option<ViewIndex> {
+    playlist.playing_index().filter(|_index| {
+        playlist
+            .current()
+            .is_some_and(|track| track.local_path().is_some())
+    })
+}
+
 fn was_following(workspace: &Workspace, playlist: &Playlist) -> bool {
-    playlist.playing_index() == Some(workspace.browse.selected())
+    anchor(playlist) == Some(workspace.browse.selected())
 }
 
 fn follow_playback(workspace: &mut Workspace, playlist: &Playlist) {
-    if let Some(anchor) = playlist.playing_index() {
+    if let Some(anchor) = anchor(playlist) {
         workspace.browse.cursor = Cursor::at(playlist.tracks.len(), anchor.get());
     }
 }

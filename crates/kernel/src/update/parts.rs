@@ -25,6 +25,7 @@ pub(crate) fn config_parts(model: &mut Model) -> config::ConfigParts<'_> {
         catalog_name: _,
         catalogs: _,
         play_reports: _,
+        covers: _,
     } = model;
     config::ConfigParts {
         workspace,
@@ -57,6 +58,7 @@ pub(crate) fn playback_parts(model: &mut Model) -> player::events::PlaybackParts
         catalog_name: _,
         catalogs: _,
         play_reports: _,
+        covers: _,
     } = model;
     player::events::PlaybackParts {
         player,
@@ -93,6 +95,7 @@ pub(crate) fn browse_parts(model: &mut Model) -> browse::BrowseParts<'_> {
         catalog_name,
         catalogs,
         play_reports: _,
+        covers: _,
     } = model;
     browse::BrowseParts {
         playback_parts: player::events::PlaybackParts {
@@ -138,6 +141,7 @@ pub(crate) fn library_parts(model: &mut Model) -> library::LibraryParts<'_> {
         catalog_name: _,
         catalogs: _,
         play_reports: _,
+        covers: _,
     } = model;
     library::LibraryParts {
         library,
@@ -166,8 +170,8 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         music_dir: _,
         revisions,
         workspace,
-        playlist: _,
-        playlist_source: _,
+        playlist,
+        playlist_source,
         queue: _,
         transport: _,
         settings: _,
@@ -176,6 +180,7 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         catalog_name,
         catalogs,
         play_reports,
+        covers: _,
     } = model;
     server::ServerParts {
         servers,
@@ -185,7 +190,9 @@ pub(crate) fn server_parts(model: &mut Model) -> server::ServerParts<'_> {
         catalogs,
         revisions,
         favorites,
-        overlay: &mut workspace.overlay,
+        workspace,
+        playlist,
+        playlist_source,
         play_reports,
     }
 }

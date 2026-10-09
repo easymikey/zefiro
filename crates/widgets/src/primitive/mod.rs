@@ -13,6 +13,7 @@ pub(crate) mod list_chrome;
 pub(crate) mod marker;
 pub(crate) mod span;
 pub(crate) mod spectrum_meter;
+pub mod spinner;
 pub(crate) mod time_text;
 pub(crate) mod track_row;
 pub(crate) mod truncate;

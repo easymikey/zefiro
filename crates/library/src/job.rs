@@ -52,6 +52,11 @@ pub enum LibraryJob {
         path: PathBuf,
         revision: Revision,
     },
+    Subfolders {
+        path: PathBuf,
+        revision: Revision,
+        audio_extensions: &'static [&'static str],
+    },
 }
 
 impl LibraryJob {
@@ -113,11 +118,31 @@ impl LibraryJob {
                 audio_extensions,
             } => scan::list_dir(&music_dir, audio_extensions)
                 .map(|listing| listed(listing, revision)),
-            LibraryJob::Probe { path, revision } => Ok(LibraryMessage::Checked {
-                verdict: scan::probe(&path),
+            LibraryJob::Probe { path, revision } => Ok(checked(&path, revision)),
+            LibraryJob::Subfolders {
+                path,
                 revision,
-            }),
+                audio_extensions,
+            } => Ok(subfolders(&path, revision, audio_extensions)),
         }
+    }
+}
+
+fn checked(path: &Path, revision: Revision) -> LibraryMessage {
+    LibraryMessage::Checked {
+        verdict: scan::probe(path),
+        revision,
+    }
+}
+
+fn subfolders(
+    path: &Path,
+    revision: Revision,
+    audio_extensions: &[&str],
+) -> LibraryMessage {
+    LibraryMessage::Subfolders {
+        subfolders: scan::subfolders(path, audio_extensions),
+        revision,
     }
 }
 

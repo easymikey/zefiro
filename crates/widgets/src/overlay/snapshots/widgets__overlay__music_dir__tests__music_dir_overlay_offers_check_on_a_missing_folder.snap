@@ -13,7 +13,7 @@ expression: "frame(&entry(\"/Users/me/Gone\", None), Some(Verdict::Missing), (80
 "                                                                                "
 "                                                                                "
 "                  ╭ LIBRARY FOLDER ──────────────────────────╮                  "
-"                  │ > /Users/me/Gone_                        │                  "
+"                  │ > /Users/me/Gone                         │                  "
 "                  │ no such path                             │                  "
 "                  │ Enter check · Esc cancel                 │                  "
 "                  ╰──────────────────────────────────────────╯                  "

@@ -7,11 +7,12 @@ use std::{
 };
 
 use kernel::domain::{
-    favorites::Favorite,
+    favorites::{Favorite, Favorites},
     io_error::IoError,
     revision::Revision,
     server::{
         Account,
+        Artwork,
         CacheKey,
         Connection,
         Credential,
@@ -29,6 +30,7 @@ use kernel::domain::{
         Session,
     },
     time::Moment,
+    track::CatalogRow,
 };
 use keyring_core::Entry;
 use ureq::Agent;
@@ -39,18 +41,18 @@ use crate::{
     subsonic::{
         cache_error,
         catalog_rows,
+        cover_bytes,
         download,
         get,
         ping,
         query,
         scrobble,
-        search_query,
         search_rows,
         star,
     },
 };
 
-pub const KEYCHAIN_SERVICE: &str = "zefiro";
+pub const KEYCHAIN_SERVICE: &str = "dev.zefiro";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteJob {
@@ -75,8 +77,7 @@ pub enum RemoteJob {
     },
     Search {
         server_name: ServerName,
-        session: Session,
-        input: String,
+        link: String,
         revision: Revision,
     },
     Star {
@@ -86,12 +87,22 @@ pub enum RemoteJob {
         favorite: Favorite,
     },
     Report(Vec<SignedReport>),
+    Cover {
+        session: Session,
+        cover_fetch: CoverFetch,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignedReport {
     pub session: Session,
     pub play_report: PlayReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoverFetch {
+    pub artwork: Artwork,
+    pub path: PathBuf,
 }
 
 impl RemoteJob {
@@ -132,12 +143,10 @@ impl RemoteJob {
             },
             RemoteJob::Search {
                 server_name,
-                session,
-                input,
+                link,
                 revision,
             } => RemoteMessage::Found {
-                result: get(agent, &server_name, search_query(&input, &session))
-                    .and_then(|answer| search_rows(&server_name, &answer)),
+                result: found(agent, &server_name, link),
                 server_name,
                 revision,
             },
@@ -153,6 +162,10 @@ impl RemoteJob {
                 favorite,
             },
             RemoteJob::Report(signed_reports) => reported(agent, signed_reports),
+            RemoteJob::Cover {
+                session,
+                cover_fetch,
+            } => covered(agent, &session, cover_fetch),
         }
     }
 
@@ -165,7 +178,8 @@ impl RemoteJob {
             }
             RemoteJob::Fetch { .. }
             | RemoteJob::Prefetch { .. }
-            | RemoteJob::Star { .. } => None,
+            | RemoteJob::Star { .. }
+            | RemoteJob::Cover { .. } => None,
             RemoteJob::Report(_signed_reports) => None,
         }
     }
@@ -176,12 +190,46 @@ impl RemoteJob {
             RemoteJob::Forget(account) => Some(&account.server_name),
             RemoteJob::List { server_name, .. }
             | RemoteJob::Search { server_name, .. }
-            | RemoteJob::Star { server_name, .. } => Some(server_name),
+            | RemoteJob::Star { server_name, .. }
+            | RemoteJob::Cover {
+                cover_fetch:
+                    CoverFetch {
+                        artwork: Artwork { server_name, .. },
+                        ..
+                    },
+                ..
+            } => Some(server_name),
             RemoteJob::Fetch { media_fetch, .. }
             | RemoteJob::Prefetch { media_fetch, .. } => Some(&media_fetch.server_name),
             RemoteJob::Report(_signed_reports) => None,
         }
     }
+}
+
+fn found(
+    agent: &Agent,
+    server_name: &ServerName,
+    link: String,
+) -> Result<(Vec<CatalogRow>, Favorites), RemoteError> {
+    get(agent, server_name, link).and_then(|answer| search_rows(server_name, &answer))
+}
+
+fn covered(agent: &Agent, session: &Session, cover_fetch: CoverFetch) -> RemoteMessage {
+    let CoverFetch { artwork, path } = cover_fetch;
+    let result = if path.is_file() {
+        Ok(path)
+    } else {
+        cover_bytes(agent, session, &artwork).and_then(|bytes| {
+            let part_path = path.with_extension("part");
+            path.parent()
+                .map_or(Ok(()), fs::create_dir_all)
+                .and_then(|()| fs::write(&part_path, bytes))
+                .and_then(|()| fs::rename(&part_path, &path))
+                .map(|()| path)
+                .map_err(|error| cache_error(&artwork.server_name, &error))
+        })
+    };
+    RemoteMessage::Cover { artwork, result }
 }
 
 fn reported(agent: &Agent, signed_reports: Vec<SignedReport>) -> RemoteMessage {
@@ -366,7 +414,10 @@ fn password(account: &Account) -> Result<Secret, RemoteError> {
         server_name: server_name.clone(),
     };
     let password = entry(account)?.get_password().map_err(|error| {
-        if matches!(error, keyring_core::Error::NoEntry) {
+        if matches!(
+            error,
+            keyring_core::Error::NoEntry | keyring_core::Error::PlatformFailure(_)
+        ) {
             no_password()
         } else {
             keychain(server_name, &error)
@@ -378,7 +429,11 @@ fn password(account: &Account) -> Result<Secret, RemoteError> {
 fn store(account: &Account, secret: &Secret) -> Result<(), RemoteError> {
     entry(account)?
         .set_password(secret.as_str())
-        .map_err(|error| keychain(&account.server_name, &error))
+        .map_err(|error| keychain(&account.server_name, &error))?;
+    if let Ok(entry) = Entry::new("zefiro", &account.keychain_account()) {
+        drop(entry.delete_credential());
+    }
+    Ok(())
 }
 
 fn forget(account: &Account) -> Result<(), RemoteError> {

@@ -15,6 +15,7 @@ use kernel::domain::{
         AlbumId,
         AlbumOrder,
         ApiCode,
+        Artwork,
         Connection,
         Endpoint,
         Fetched,
@@ -24,11 +25,13 @@ use kernel::domain::{
         PAGE_ROWS,
         Page,
         PlayReport,
+        PlaylistId,
         RemoteError,
         Scrobble,
         Secret,
         ServerAlbum,
         ServerName,
+        ServerPlaylist,
         ServerTrackId,
         Session,
     },
@@ -68,11 +71,48 @@ pub(crate) fn get(
         .and_then(|response| answer(server_name, response))
 }
 
-fn answer(
+pub(crate) fn cover_bytes(
+    agent: &Agent,
+    session: &Session,
+    artwork: &Artwork,
+) -> Result<Vec<u8>, RemoteError> {
+    let Artwork { server_name, id } = artwork;
+    let link = format!(
+        "{}/rest/getCoverArt?id={}&{}",
+        session.endpoint,
+        encoded(id),
+        session.query
+    );
+    fetched(server_name, link, |current| agent.get(current))
+        .and_then(|response| media(server_name, response))
+        .and_then(|response| body(server_name, response))
+}
+
+fn media(
+    server_name: &ServerName,
+    response: Response<Body>,
+) -> Result<Response<Body>, RemoteError> {
+    let protocol = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains("json") || value.contains("xml"));
+    if !protocol {
+        return Ok(response);
+    }
+    answer(server_name, response).and_then(|_answer| {
+        Err(RemoteError::Api {
+            server_name: server_name.clone(),
+            api_code: ApiCode(0),
+        })
+    })
+}
+
+fn body(
     server_name: &ServerName,
     mut response: Response<Body>,
-) -> Result<Value, RemoteError> {
-    let body = response
+) -> Result<Vec<u8>, RemoteError> {
+    response
         .body_mut()
         .with_config()
         .limit(API_BYTES)
@@ -86,7 +126,14 @@ fn answer(
                     source: IoError::from(error.into_io().kind()),
                 }
             }
-        })?;
+        })
+}
+
+fn answer(
+    server_name: &ServerName,
+    response: Response<Body>,
+) -> Result<Value, RemoteError> {
+    let body = body(server_name, response)?;
     let answer: Value = serde_json::from_slice(&body)
         .map_err(|error| read_error(server_name, &error))?;
     let status_value = answer
@@ -109,7 +156,11 @@ fn answer(
 }
 
 pub(crate) fn query(listing: &Listing, page: Page, session: &Session) -> String {
+    let first_row = page.0.saturating_mul(PAGE_ROWS);
     let path = match listing {
+        Listing::Songs => format!(
+            "search3?query=&artistCount=0&albumCount=0&songCount={PAGE_ROWS}&songOffset={first_row}&"
+        ),
         Listing::Albums(album_order) => {
             let album_type = match album_order {
                 AlbumOrder::Newest => "newest",
@@ -119,16 +170,19 @@ pub(crate) fn query(listing: &Listing, page: Page, session: &Session) -> String 
                 AlbumOrder::Alphabetical => "alphabeticalByName",
                 AlbumOrder::Random => "random",
             };
-            let first_row = page.0.saturating_mul(PAGE_ROWS);
             format!(
-                "getAlbumList2?type={album_type}&size={PAGE_ROWS}&offset={first_row}"
+                "getAlbumList2?type={album_type}&size={PAGE_ROWS}&offset={first_row}&"
             )
         }
         Listing::Album(album_id) => {
-            format!("getAlbum?id={}", encoded(album_id.as_str()))
+            format!("getAlbum?id={}&", encoded(album_id.as_str()))
+        }
+        Listing::Playlists => "getPlaylists?".to_owned(),
+        Listing::Playlist(playlist_id) => {
+            format!("getPlaylist?id={}&", encoded(playlist_id.as_str()))
         }
     };
-    format!("{}/rest/{path}&{}", session.endpoint, session.query)
+    format!("{}/rest/{path}{}", session.endpoint, session.query)
 }
 
 pub(crate) fn catalog_rows(
@@ -136,20 +190,32 @@ pub(crate) fn catalog_rows(
     listing: &Listing,
     answer: &Value,
 ) -> Result<(Vec<CatalogRow>, Favorites), RemoteError> {
-    match listing {
-        Listing::Albums(_album_order) => Ok((
-            albums(server_name, answer, "/subsonic-response/albumList2/album")
-                .collect::<Result<_, _>>()?,
-            Favorites::default(),
-        )),
-        Listing::Album(_album_id) => {
-            let songs = "/subsonic-response/album/song";
-            Ok((
-                tracks(server_name, answer, songs).collect::<Result<_, _>>()?,
-                favorites(server_name, answer, songs),
-            ))
+    let songs = match listing {
+        Listing::Albums(_album_order) => {
+            return Ok((
+                albums(server_name, answer, "/subsonic-response/albumList2/album")
+                    .collect::<Result<_, _>>()?,
+                Favorites::default(),
+            ));
         }
-    }
+        Listing::Playlists => {
+            return Ok((
+                entries(answer, "/subsonic-response/playlists/playlist")
+                    .map(|playlist| {
+                        server_playlist(server_name, playlist).map(CatalogRow::Playlist)
+                    })
+                    .collect::<Result<_, _>>()?,
+                Favorites::default(),
+            ));
+        }
+        Listing::Album(_album_id) => "/subsonic-response/album/song",
+        Listing::Playlist(_playlist_id) => "/subsonic-response/playlist/entry",
+        Listing::Songs => "/subsonic-response/searchResult3/song",
+    };
+    Ok((
+        tracks(server_name, answer, songs).collect::<Result<_, _>>()?,
+        favorites(server_name, answer, songs),
+    ))
 }
 
 fn favorites(server_name: &ServerName, answer: &Value, pointer: &str) -> Favorites {
@@ -195,9 +261,20 @@ pub(crate) fn scrobble(play_report: &PlayReport, session: &Session) -> String {
     )
 }
 
-pub(crate) fn search_query(input: &str, session: &Session) -> String {
+pub(crate) fn search_query(
+    input: &str,
+    listing: &Listing,
+    session: &Session,
+) -> String {
+    let (album_count, song_count) = match listing {
+        Listing::Albums(_album_order) => (PAGE_ROWS, 0),
+        Listing::Songs
+        | Listing::Album(_)
+        | Listing::Playlists
+        | Listing::Playlist(_) => (0, PAGE_ROWS),
+    };
     format!(
-        "{}/rest/search3?query={}&artistCount=0&albumCount=20&songCount=50&{}",
+        "{}/rest/search3?query={}&artistCount=0&albumCount={album_count}&songCount={song_count}&{}",
         session.endpoint,
         encoded(input),
         session.query
@@ -262,6 +339,18 @@ fn server_album(
     })
 }
 
+fn server_playlist(
+    server_name: &ServerName,
+    playlist: &Value,
+) -> Result<ServerPlaylist, RemoteError> {
+    Ok(ServerPlaylist {
+        playlist_id: PlaylistId::new(id(server_name, playlist)?),
+        name: Arc::from(field(playlist, "name").unwrap_or("")),
+        track_count: field(playlist, "songCount").unwrap_or(0),
+        duration: Duration::from_secs(field(playlist, "duration").unwrap_or(0)),
+    })
+}
+
 fn track(server_name: &ServerName, record: &Value) -> Result<Track, RemoteError> {
     let source = TrackSource::Server {
         server_name: server_name.clone(),
@@ -293,7 +382,13 @@ fn track(server_name: &ServerName, record: &Value) -> Result<Track, RemoteError>
             .map(Decibels),
     };
     let duration = Duration::from_secs(field(record, "duration").unwrap_or(0));
-    Ok(Track::tagged(source, duration, tags).with_audio_format(audio_format))
+    let artwork = field::<&str>(record, "coverArt").map(|id| Artwork {
+        server_name: server_name.clone(),
+        id: Arc::from(id),
+    });
+    Ok(Track::tagged(source, duration, tags)
+        .with_audio_format(audio_format)
+        .with_cover(artwork))
 }
 
 fn id<'a>(server_name: &ServerName, record: &'a Value) -> Result<&'a str, RemoteError> {
@@ -339,20 +434,8 @@ pub fn download(
             .config()
             .timeout_global(Some(FETCH_TIMEOUT))
             .build()
-    })?;
-    let protocol = response
-        .headers()
-        .get("content-type")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.contains("json") || value.contains("xml"));
-    if protocol {
-        return answer(server_name, response).and_then(|_answer| {
-            Err(RemoteError::Api {
-                server_name: server_name.clone(),
-                api_code: ApiCode(0),
-            })
-        });
-    }
+    })
+    .and_then(|response| media(server_name, response))?;
     let (start, total, limit) = span(&response, server_name)?;
     let part_path = media_dir.join(format!("{}.part", media_fetch.cache_key.as_str()));
     let mut reader = response.body_mut().as_reader().take(limit);

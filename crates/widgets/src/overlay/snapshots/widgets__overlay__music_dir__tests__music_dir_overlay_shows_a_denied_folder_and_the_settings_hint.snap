@@ -13,7 +13,7 @@ expression: "frame(&entry(\"/Users/me/Desktop\", None), Some(Verdict::Denied), (
 "                                                                                                    "
 "                                                                                                    "
 "           ╭ LIBRARY FOLDER ────────────────────────────────────────────────────────────╮           "
-"           │ > /Users/me/Desktop_                                                       │           "
+"           │ > /Users/me/Desktop                                                        │           "
 "           │ no permission: allow the terminal in Privacy & Security, Files and Folders │           "
 "           │ Enter open Privacy & Security · Esc cancel                                 │           "
 "           ╰────────────────────────────────────────────────────────────────────────────╯           "

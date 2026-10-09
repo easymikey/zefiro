@@ -25,7 +25,11 @@ use kernel::domain::{
         Session,
     },
 };
-use remote::{http::agent, job::RemoteJob, message::RemoteMessage};
+use remote::{
+    http::agent,
+    job::{CoverFetch, RemoteJob},
+    message::RemoteMessage,
+};
 use rstest::rstest;
 
 use crate::unit::subsonic::{answer, serve};
@@ -479,4 +483,48 @@ fn an_error_answer_with_status_200_is_an_api_error_and_leaves_no_file() {
     assert!(!media_dir.join("home/tr-1.flac.part").exists());
     assert!(handle.join().is_ok());
     assert!(!media_dir.exists() || fs::remove_dir_all(&media_dir).is_ok());
+}
+
+#[test]
+fn a_cover_is_asked_once_by_its_id_and_then_answered_from_the_file() {
+    let image = "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: 4\r\nConnection: close\r\n\r\npng!";
+    let (link, handle) = serve(vec![image.to_owned()]);
+    let covers_dir = media_dir("covers");
+    let path = covers_dir.join("home/al-1/cover.jpg");
+    let job = |endpoint_link: &str| {
+        Some(RemoteJob::Cover {
+            session: Session::new(
+                Endpoint::parse(endpoint_link).ok()?,
+                "u=ann&t=token&s=salt",
+            ),
+            cover_fetch: CoverFetch {
+                artwork: kernel::domain::server::Artwork {
+                    server_name: ServerName::new("home"),
+                    id: Arc::from("al-1"),
+                },
+                path: path.clone(),
+            },
+        })
+    };
+    let result = |remote_job: Option<RemoteJob>| {
+        let RemoteMessage::Cover { result, .. } = remote_job?.run(&agent()) else {
+            return None;
+        };
+        Some(result)
+    };
+
+    let asked = result(job(&link));
+    let cached = result(job(&closed_link()));
+
+    assert_eq!(asked, Some(Ok(path.clone())));
+    assert_eq!(cached, Some(Ok(path.clone())));
+    assert_eq!(fs::read(&path).ok(), Some(b"png!".to_vec()));
+    assert_eq!(
+        handle.join().ok(),
+        Some(vec![
+            "GET /rest/getCoverArt?id=al-1&u=ann&t=token&s=salt HTTP/1.1\r\n"
+                .to_owned()
+        ])
+    );
+    assert!(fs::remove_dir_all(&covers_dir).is_ok());
 }

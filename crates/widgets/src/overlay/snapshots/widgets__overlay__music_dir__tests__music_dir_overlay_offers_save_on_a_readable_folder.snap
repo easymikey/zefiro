@@ -13,7 +13,7 @@ expression: "frame(&entry(\"/Users/me/Music\", None), Some(Verdict::Readable), (
 "                                                                                "
 "                                                                                "
 "                  ╭ LIBRARY FOLDER ──────────────────────────╮                  "
-"                  │ > /Users/me/Music_                       │                  "
+"                  │ > /Users/me/Music                        │                  "
 "                  │ a readable folder                        │                  "
 "                  │ Enter save · Esc cancel                  │                  "
 "                  ╰──────────────────────────────────────────╯                  "

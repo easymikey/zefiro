@@ -1,6 +1,18 @@
 use kernel::domain::{
     appearance::{Breakpoints, CoverMode, KeyHints, LayoutMode},
+    catalog::{BrowseLevel, Catalog, CatalogName},
     geometry::Cells,
+    server::{
+        Account,
+        AlbumOrder,
+        Endpoint,
+        Listing,
+        PlaylistId,
+        Server,
+        ServerName,
+        ServerStatus,
+        UserName,
+    },
 };
 use ratatui::layout::Rect;
 use rstest::rstest;
@@ -98,6 +110,65 @@ fn a_vinyl_cover_at_the_full_floor_still_leaves_the_title_visible() {
         (breakpoints.full_min_width.0, breakpoints.full_min_height.0),
     );
     assert!(text.contains("Vinyl Floor Song"), "got {text:?}");
+}
+
+fn albums_top() -> Catalog {
+    Catalog {
+        albums_level: BrowseLevel::new(Listing::Albums(AlbumOrder::Newest)),
+        ..Catalog::new(ServerName::new("home"))
+    }
+}
+
+fn inside_a_playlist() -> Catalog {
+    Catalog {
+        albums_level: BrowseLevel::new(Listing::Playlists),
+        album_level: Some(BrowseLevel::new(Listing::Playlist(PlaylistId::new("pl-0")))),
+        ..Catalog::new(ServerName::new("home"))
+    }
+}
+
+#[rstest]
+#[case::local_with_a_server("local_with_a_server", CatalogName::Local, None)]
+#[case::server_songs_top(
+    "server_songs_top",
+    CatalogName::Server(ServerName::new("home")),
+    Some(Catalog::new(ServerName::new("home")))
+)]
+#[case::server_albums_top(
+    "server_albums_top",
+    CatalogName::Server(ServerName::new("home")),
+    Some(albums_top())
+)]
+#[case::server_inside_a_playlist(
+    "server_inside_a_playlist",
+    CatalogName::Server(ServerName::new("home")),
+    Some(inside_a_playlist())
+)]
+fn the_key_hints_name_the_keys_of_the_tab(
+    #[case] suffix: &str,
+    #[case] catalog_name: CatalogName,
+    #[case] catalog: Option<Catalog>,
+) {
+    let mut sources = SceneSources::new(model_with_tracks(3));
+    sources.model.servers = vec![Server {
+        account: Account {
+            server_name: ServerName::new("home"),
+            endpoint: Endpoint::parse("https://music.example").unwrap(),
+            user_name: UserName::new("mikey").unwrap(),
+        },
+        server_status: ServerStatus::Connecting,
+    }];
+    sources.model.catalog_name = catalog_name;
+    sources.model.catalogs = catalog.into_iter().collect();
+    let text = frame(sources.scene(), (120, 40));
+    let hints = text
+        .lines()
+        .filter(|line| line.contains("Help"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    insta::with_settings!({ snapshot_suffix => suffix }, {
+        insta::assert_snapshot!(hints);
+    });
 }
 
 #[rstest]

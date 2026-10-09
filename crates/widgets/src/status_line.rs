@@ -5,7 +5,7 @@ use kernel::domain::{
     geometry::Cells,
     index::ViewIndex,
     model::ScanStatus,
-    playlist::RepeatMode,
+    playlist::{PlaylistSource, RepeatMode},
     server::{Server, ServerStatus},
     startup::Shuffle,
     time::Moment,
@@ -15,14 +15,9 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::{
     primitive::{
-        glyphs::{
-            CONNECTING_GLYPH,
-            CREDENTIALS_GLYPH,
-            DOT_SEPARATOR,
-            OFFLINE_GLYPH,
-            TITLE_SEPARATOR,
-        },
+        glyphs::{CREDENTIALS_GLYPH, DOT_SEPARATOR, OFFLINE_GLYPH, TITLE_SEPARATOR},
         span::{StyledText, line, text},
+        spinner::Spinner,
         truncate::truncate_line,
     },
     repaint::{Presence, ceil_minutes, next_sleep_minute},
@@ -44,13 +39,13 @@ pub(crate) struct StatusLineView<'a> {
     pub(crate) playlist_len: usize,
     pub(crate) scan_status: ScanStatus,
     pub(crate) scanning_label: &'a str,
+    pub(crate) spinner: Spinner,
     pub(crate) theme_name: &'a str,
     pub(crate) remaining: Option<Duration>,
     pub(crate) servers: &'a [Server],
     pub(crate) catalog_name: &'a CatalogName,
+    pub(crate) playlist_source: &'a PlaylistSource,
 }
-
-const NAME: &str = "Playlist";
 
 fn counts<'a>(status_line_view: StatusLineView<'a>) -> Cow<'a, str> {
     match status_line_view.scan_status {
@@ -66,9 +61,9 @@ fn counts<'a>(status_line_view: StatusLineView<'a>) -> Cow<'a, str> {
     }
 }
 
-fn glyph(server_status: &ServerStatus) -> Option<&'static str> {
+fn glyph(server_status: &ServerStatus, spinner: Spinner) -> Option<&'static str> {
     match server_status {
-        ServerStatus::Connecting => Some(CONNECTING_GLYPH),
+        ServerStatus::Connecting => Some(spinner.glyph()),
         ServerStatus::Online(_session) => None,
         ServerStatus::Offline(remote_error) => Some(if remote_error.is_credentials() {
             CREDENTIALS_GLYPH
@@ -78,8 +73,8 @@ fn glyph(server_status: &ServerStatus) -> Option<&'static str> {
     }
 }
 
-fn chip(server: &Server) -> impl Iterator<Item = &str> {
-    let state = glyph(&server.server_status);
+fn chip(server: &Server, spinner: Spinner) -> impl Iterator<Item = &str> {
+    let state = glyph(&server.server_status, spinner);
     [
         Some(server.account.server_name.as_str()),
         state.and(Some(" ")),
@@ -113,6 +108,43 @@ fn sleep_label(remaining: Duration) -> String {
     format!("{}m", ceil_minutes(remaining))
 }
 
+fn chips<'a>(
+    status_line_view: StatusLineView<'a>,
+    colors: &Colors<Color>,
+    room: usize,
+) -> impl Iterator<Item = StyledText<'a>> {
+    let spinner = status_line_view.spinner;
+    status_line_view
+        .servers
+        .iter()
+        .scan(0, move |used, server| {
+            *used += DOT_SEPARATOR.width()
+                + chip(server, spinner)
+                    .map(UnicodeWidthStr::width)
+                    .sum::<usize>();
+            (*used <= room).then_some(server)
+        })
+        .flat_map(move |server| {
+            let tone = tone(status_line_view, Some(server), colors);
+            [text(DOT_SEPARATOR).fg(colors.muted_foreground)]
+                .into_iter()
+                .chain(
+                    chip(server, spinner)
+                        .zip([
+                            tone,
+                            tone,
+                            match server.server_status {
+                                ServerStatus::Connecting => colors.accent,
+                                ServerStatus::Online(_) | ServerStatus::Offline(_) => {
+                                    tone
+                                }
+                            },
+                        ])
+                        .map(|(piece, color)| text(piece).fg(color)),
+                )
+        })
+}
+
 #[must_use]
 pub(crate) fn status_line<'a>(
     status_line_view: StatusLineView<'a>,
@@ -134,29 +166,28 @@ pub(crate) fn status_line<'a>(
         ]
     };
     let flag_separator = || text(DOT_SEPARATOR).fg(colors.muted_foreground);
+    let spinner = status_line_view.spinner;
+    let mark = match status_line_view.scan_status {
+        ScanStatus::Idle => None,
+        ScanStatus::Scanning | ScanStatus::Tagging { .. } => Some(spinner.mark(colors)),
+    };
+    let name = match status_line_view.playlist_source {
+        PlaylistSource::Named => "Playlist",
+        PlaylistSource::Library
+        | PlaylistSource::Server(_)
+        | PlaylistSource::Songs(_) => "Library",
+    };
+    let lead_width = 2 * usize::from(mark.is_some());
+    let room = row_width.count().saturating_sub(
+        name.width() + 2 * TITLE_SEPARATOR.width() + lead_width + pos_total.width(),
+    );
 
-    let chips = status_line_view
-        .servers
-        .iter()
-        .scan(
-            NAME.width() + 2 * TITLE_SEPARATOR.width() + pos_total.width(),
-            |used, server| {
-                *used += DOT_SEPARATOR.width()
-                    + chip(server).map(UnicodeWidthStr::width).sum::<usize>();
-                (*used <= row_width.count()).then_some(server)
-            },
-        )
-        .flat_map(|server| {
-            let tone = tone(status_line_view, Some(server), colors);
-            [text(DOT_SEPARATOR).fg(colors.muted_foreground)]
-                .into_iter()
-                .chain(chip(server).map(move |piece| text(piece).fg(tone)))
-        });
-    let head = [text(NAME).fg(tone(status_line_view, None, colors))]
+    let head = [text(name).fg(tone(status_line_view, None, colors))]
         .into_iter()
-        .chain(chips)
+        .chain(chips(status_line_view, colors, room))
+        .chain([text(TITLE_SEPARATOR).fg(colors.muted_foreground)])
+        .chain(mark.into_iter().flatten())
         .chain([
-            text(TITLE_SEPARATOR).fg(colors.muted_foreground),
             text(pos_total).fg(colors.accent),
             text(TITLE_SEPARATOR).fg(colors.muted_foreground),
         ]);
@@ -244,11 +275,26 @@ mod tests {
             playlist_len: 12,
             scan_status: ScanStatus::Idle,
             scanning_label: "Scanning…",
+            spinner: crate::primitive::spinner::Spinner::default(),
             theme_name: "rose-pine",
             remaining: None,
             servers: &[],
             catalog_name: &CatalogName::Local,
+            playlist_source: &kernel::domain::playlist::PlaylistSource::Named,
         }
+    }
+
+    #[test]
+    fn the_local_tab_is_titled_library_while_a_server_track_plays() {
+        let playlist_source =
+            kernel::domain::playlist::PlaylistSource::Songs(ServerName::new("home"));
+        let status_line_view = StatusLineView {
+            playlist_source: &playlist_source,
+            ..view()
+        };
+        insta::assert_snapshot!(
+            status_line(status_line_view, &colors(), Cells(80)).to_string()
+        );
     }
 
     #[test]
@@ -400,6 +446,7 @@ mod tests {
         let status_line_view = StatusLineView {
             servers: &servers,
             catalog_name: &catalog_name,
+            playlist_source: &kernel::domain::playlist::PlaylistSource::Named,
             ..view()
         };
         let line = status_line(status_line_view, &colors(), Cells(100));

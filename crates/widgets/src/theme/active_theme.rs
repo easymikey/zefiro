@@ -1,18 +1,22 @@
 use kernel::domain::appearance::{ProgressBar, Rgb};
 use ratatui::style::Color;
 
-use crate::theme::{
-    Theme,
-    colors::Colors,
-    rgb::{ColorDepth, color_at_depth, shade},
+use crate::{
+    primitive::spinner::Spinner,
+    theme::{
+        Theme,
+        colors::Colors,
+        rgb::{ColorDepth, color_at_depth, shade},
+    },
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct ActiveTheme<'a> {
     pub(crate) theme: &'a Theme,
     pub(crate) color_depth: ColorDepth,
-    fill: Option<Rgb>,
-    groove: Option<Rgb>,
+    pub(crate) fill: Option<Rgb>,
+    pub(crate) groove: Option<Rgb>,
+    pub(crate) spinner: Spinner,
 }
 
 impl<'a> ActiveTheme<'a> {
@@ -23,6 +27,7 @@ impl<'a> ActiveTheme<'a> {
             color_depth,
             fill: None,
             groove: None,
+            spinner: Spinner::default(),
         }
     }
 

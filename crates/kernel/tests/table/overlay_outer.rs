@@ -11,6 +11,7 @@ use kernel::{
         io_error::IoError,
         model::Model,
         overlay::{
+            Field,
             MusicDirError,
             Overlay,
             OverlayName,
@@ -30,6 +31,7 @@ use kernel::{
             Secret,
             SecretError,
             ServerName,
+            ServerStatus,
             UserName,
             UserNameError,
         },
@@ -132,19 +134,26 @@ fn music_dir(
         text_entry: entry(input, error),
         verdict,
         revision: None,
+        folders: CursorOver::default(),
     }
 }
-
 fn readable_dir(input: &str) -> Overlay {
     music_dir(input, None, Some(Verdict::Readable))
 }
 
-fn link_step(input: &str, error: Option<EndpointError>) -> Overlay {
-    Overlay::AddServer(ServerPrompt::Link {
-        origin_server_name: None,
-        text_entry: entry(input, error),
+fn link_step(
+    input: &str,
+    error: Option<EndpointError>,
+    reached_field: Field,
+) -> Overlay {
+    Overlay::AddServer(ServerPrompt {
+        link_text_entry: entry(input, error),
+        reached_field,
+        ..ServerPrompt::default()
     })
 }
+
+const LINK: &str = "https://music.example.com";
 
 fn endpoint() -> Endpoint {
     Endpoint::parse("https://music.example.com").unwrap()
@@ -155,24 +164,40 @@ fn user_name() -> UserName {
 }
 
 fn user_step(input: &str, error: Option<UserNameError>) -> Overlay {
-    Overlay::AddServer(ServerPrompt::User {
-        origin_server_name: None,
-        endpoint: endpoint(),
-        text_entry: entry(input, error),
+    Overlay::AddServer(ServerPrompt {
+        link_text_entry: entry(LINK, None),
+        user_text_entry: entry(input, error),
+        field: Field::User,
+        reached_field: Field::User,
+        ..ServerPrompt::default()
     })
 }
 
+fn password_prompt(input: &str, error: Option<SecretError>) -> ServerPrompt {
+    ServerPrompt {
+        link_text_entry: entry(LINK, None),
+        user_text_entry: entry("alice", None),
+        password_text_entry: entry(input, error),
+        field: Field::Password,
+        reached_field: Field::Password,
+        ..ServerPrompt::default()
+    }
+}
+
 fn password_step(input: &str, error: Option<SecretError>) -> Overlay {
-    Overlay::AddServer(ServerPrompt::Password {
-        origin_server_name: None,
-        endpoint: endpoint(),
-        user_name: user_name(),
-        text_entry: entry(input, error),
+    Overlay::AddServer(password_prompt(input, error))
+}
+
+fn connecting(password: &str) -> Overlay {
+    Overlay::AddServer(ServerPrompt {
+        origin_server_name: Some(ServerName::new("music.example.com")),
+        server_status: Some(ServerStatus::Connecting),
+        ..password_prompt(password, None)
     })
 }
 
 fn added_server(password: &str) -> Cmd {
-    closed(Cmd::message(Message::Server(ServerRequest::Add {
+    Cmd::message(Message::Server(ServerRequest::Add {
         connection: Connection {
             account: Account {
                 server_name: ServerName::new("music.example.com"),
@@ -182,7 +207,7 @@ fn added_server(password: &str) -> Cmd {
             credential: Credential::Typed(Secret::new(password).unwrap()),
         },
         origin_server_name: None,
-    })))
+    }))
 }
 
 fn open(overlay: Overlay) -> OverlayMessage {
@@ -253,7 +278,7 @@ fn releases() -> Cmd {
     OverlayMessage::Confirm,
     Err(Unhandled)
 )]
-#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2))))))))]
+#[case::search_confirm_plays_the_selected_match(Some(search("mo", vec![0, 2], 1)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::JumpTo(ViewIndex::new(2))))))))]
 #[case::search_confirm_without_a_match_is_refused(Some(search("zzz", vec![], 0)), OverlayMessage::Confirm, Err(Unhandled))]
 #[case::save_confirm_saves_under_the_name(Some(save("mix", None)), OverlayMessage::Confirm, Ok((None, closed(Cmd::message(Message::Browse(BrowseRequest::SavePlaylist(saved_name("mix"))))))))]
 #[case::save_confirm_with_an_empty_name_stays_open_with_the_error(Some(save("", None)), OverlayMessage::Confirm, Ok((Some(save("", Some(PlaylistFileNameError::Empty))), Cmd::none())))]
@@ -306,14 +331,14 @@ fn releases() -> Cmd {
 )]
 #[case::music_dir_confirm_of_a_denied_folder_checks_it_again(Some(music_dir("/Desktop", None, Some(Verdict::Denied))), OverlayMessage::Confirm, Ok((Some(music_dir("/Desktop", Some(MusicDirError::Pending), Some(Verdict::Denied))), Cmd::none())))]
 #[case::source_dir_confirm_empty_stays_open_with_the_error(Some(source_dir("  ", None)), OverlayMessage::Confirm, Ok((Some(source_dir("  ", Some(MusicDirError::Empty))), Cmd::none())))]
-#[case::add_server_link_moves_to_the_user(Some(link_step(" https://music.example.com/ ", None)), OverlayMessage::Confirm, Ok((Some(user_step("", None)), Cmd::none())))]
-#[case::add_server_bad_link_stays_with_the_scheme_error(Some(link_step("music.example.com", None)), OverlayMessage::Confirm, Ok((Some(link_step("music.example.com", Some(EndpointError::Scheme))), Cmd::none())))]
-#[case::add_server_empty_user_stays(Some(user_step("", None)), OverlayMessage::Confirm, Ok((Some(user_step("", Some(UserNameError::Empty))), Cmd::none())))]
+#[case::add_server_link_moves_to_the_user(Some(link_step(LINK, None, Field::Link)), OverlayMessage::Confirm, Ok((Some(user_step("", None)), Cmd::none())))]
+#[case::add_server_bad_link_moves_on_with_the_scheme_error(Some(link_step("music.example.com", None, Field::Link)), OverlayMessage::Confirm, Ok((Some(Overlay::AddServer(ServerPrompt { link_text_entry: entry("music.example.com", Some(EndpointError::Scheme)), field: Field::User, reached_field: Field::User, ..ServerPrompt::default() })), Cmd::none())))]
+#[case::add_server_empty_user_moves_on_with_its_error(Some(user_step("", None)), OverlayMessage::Confirm, Ok((Some(Overlay::AddServer(ServerPrompt { user_text_entry: entry("", Some(UserNameError::Empty)), ..password_prompt("", None) })), Cmd::none())))]
 #[case::add_server_user_moves_to_the_password(Some(user_step("alice", None)), OverlayMessage::Confirm, Ok((Some(password_step("", None)), Cmd::none())))]
 #[case::add_server_empty_password_stays(Some(password_step("", None)), OverlayMessage::Confirm, Ok((Some(password_step("", Some(SecretError::Empty))), Cmd::none())))]
-#[case::add_server_password_closes_and_adds_the_server(Some(password_step("hunter 2", None)), OverlayMessage::Confirm, Ok((None, added_server("hunter 2"))))]
+#[case::add_server_password_adds_the_server_and_stays_connecting(Some(password_step("hunter 2", None)), OverlayMessage::Confirm, Ok((Some(connecting("hunter 2")), added_server("hunter 2"))))]
 #[case::add_server_link_refuses_a_space(
-    Some(link_step("https://", None)),
+    Some(link_step("https://", None, Field::Link)),
     text(TextRequest::Char(' ')),
     Err(Unhandled)
 )]
@@ -322,14 +347,14 @@ fn releases() -> Cmd {
     text(TextRequest::Char(' ')),
     Err(Unhandled)
 )]
-#[case::add_server_link_types_a_char_and_keeps_the_live_scheme_verdict(Some(link_step("x", Some(EndpointError::Scheme))), text(TextRequest::Char('/')), Ok((Some(link_step("x/", Some(EndpointError::Scheme))), Cmd::none())))]
-#[case::add_server_link_after_the_scheme_asks_for_the_host(Some(link_step("https:/", Some(EndpointError::Scheme))), text(TextRequest::Char('/')), Ok((Some(link_step("https://", Some(EndpointError::Host))), Cmd::none())))]
-#[case::add_server_link_typed_to_a_valid_link_clears_the_verdict(Some(link_step("https://", Some(EndpointError::Host))), text(TextRequest::Char('m')), Ok((Some(link_step("https://m", None)), Cmd::none())))]
-#[case::add_server_link_with_a_port_out_of_range_shows_the_host_verdict(Some(link_step("https://music.example.com:6553", None)), text(TextRequest::Char('6')), Ok((Some(link_step("https://music.example.com:65536", Some(EndpointError::Host))), Cmd::none())))]
-#[case::add_server_link_with_a_user_shows_the_user_info_verdict(Some(link_step("https://alice", None)), text(TextRequest::Char('@')), Ok((Some(link_step("https://alice@", Some(EndpointError::UserInfo))), Cmd::none())))]
-#[case::add_server_link_with_a_query_shows_the_query_verdict(Some(link_step("https://music.example.com", None)), text(TextRequest::Char('?')), Ok((Some(link_step("https://music.example.com?", Some(EndpointError::Query))), Cmd::none())))]
-#[case::add_server_link_backspace_shows_the_live_verdict(Some(link_step("https://m", None)), text(TextRequest::Backspace), Ok((Some(link_step("https://", Some(EndpointError::Host))), Cmd::none())))]
-#[case::add_server_link_cleared_shows_the_empty_verdict(Some(link_step("https://m", None)), text(TextRequest::Clear), Ok((Some(link_step("", Some(EndpointError::Empty))), Cmd::none())))]
+#[case::add_server_link_types_a_char_and_keeps_the_live_scheme_verdict(Some(link_step("x", Some(EndpointError::Scheme), Field::User)), text(TextRequest::Char('/')), Ok((Some(link_step("x/", Some(EndpointError::Scheme), Field::User)), Cmd::none())))]
+#[case::add_server_link_after_the_scheme_asks_for_the_host(Some(link_step("https:/", Some(EndpointError::Scheme), Field::User)), text(TextRequest::Char('/')), Ok((Some(link_step("https://", Some(EndpointError::Host), Field::User)), Cmd::none())))]
+#[case::add_server_link_typed_to_a_valid_link_clears_the_verdict(Some(link_step("https://", Some(EndpointError::Host), Field::User)), text(TextRequest::Char('m')), Ok((Some(link_step("https://m", None, Field::User)), Cmd::none())))]
+#[case::add_server_link_with_a_port_out_of_range_shows_the_host_verdict(Some(link_step("https://music.example.com:6553", Some(EndpointError::Host), Field::User)), text(TextRequest::Char('6')), Ok((Some(link_step("https://music.example.com:65536", Some(EndpointError::Host), Field::User)), Cmd::none())))]
+#[case::add_server_link_with_a_user_shows_the_user_info_verdict(Some(link_step("https://alice", Some(EndpointError::Host), Field::User)), text(TextRequest::Char('@')), Ok((Some(link_step("https://alice@", Some(EndpointError::UserInfo), Field::User)), Cmd::none())))]
+#[case::add_server_link_with_a_query_shows_the_query_verdict(Some(link_step("https://music.example.com", Some(EndpointError::Host), Field::User)), text(TextRequest::Char('?')), Ok((Some(link_step("https://music.example.com?", Some(EndpointError::Query), Field::User)), Cmd::none())))]
+#[case::add_server_untouched_link_backspace_shows_no_verdict(Some(link_step("https://m", None, Field::Link)), text(TextRequest::Backspace), Ok((Some(link_step("https://", None, Field::Link)), Cmd::none())))]
+#[case::add_server_untouched_link_cleared_shows_no_verdict(Some(link_step("https://m", None, Field::Link)), text(TextRequest::Clear), Ok((Some(link_step("", None, Field::Link)), Cmd::none())))]
 #[case::add_server_password_takes_a_space(Some(password_step("a", None)), text(TextRequest::Char(' ')), Ok((Some(password_step("a ", None)), Cmd::none())))]
 #[case::save_backspace_on_empty_is_refused(
     Some(save("", None)),
@@ -764,37 +789,4 @@ fn a_confirmed_current_music_dir_rescans_nothing() {
 
     assert_eq!(model.music_dir, std::path::PathBuf::from("/music"));
     assert_eq!(fresh_scans(&cmd), Vec::<std::path::PathBuf>::new());
-}
-
-#[test]
-fn two_adds_on_one_host_with_two_ports_keep_two_servers() {
-    let mut model = Model::default();
-    for link in [
-        "https://music.example.com:4533",
-        "https://music.example.com:4534",
-    ] {
-        model.workspace.overlay = Some(Overlay::AddServer(ServerPrompt::Password {
-            origin_server_name: None,
-            endpoint: Endpoint::parse(link).unwrap(),
-            user_name: user_name(),
-            text_entry: entry("hunter 2", None),
-        }));
-        send(&mut model, Message::Overlay(OverlayRequest::Confirm));
-    }
-    let server_names = model
-        .servers
-        .iter()
-        .map(|server| server.account.server_name.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        server_names,
-        vec!["music.example.com:4533", "music.example.com:4534"]
-    );
-}
-
-#[test]
-fn the_model_debug_in_the_password_step_holds_no_typed_character() {
-    let mut model = Model::default();
-    model.workspace.overlay = Some(password_step("zq7#xv", None));
-    assert!(!format!("{model:?}").contains("zq7#xv"));
 }

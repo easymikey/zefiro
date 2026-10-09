@@ -62,7 +62,6 @@ pub(crate) fn update(
         PlaybackRequest::AbMark => mark_ab(playback_parts, now),
         PlaybackRequest::SeekTo(target) => seek_to(playback_parts, target, now),
         PlaybackRequest::SeekTenths(tenths) => seek_tenths(playback_parts, tenths, now),
-        PlaybackRequest::JumpTo(index) => audio::jump_to(playback_parts, index, now),
     }
 }
 

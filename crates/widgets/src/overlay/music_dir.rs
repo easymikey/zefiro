@@ -1,17 +1,24 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, iter};
 
 use kernel::domain::{
+    cursor_over::CursorOver,
     geometry::Cells,
-    overlay::{MusicDirError, TextEntry, Verdict},
+    overlay::{Folders, MusicDirError, Subfolder, TextEntry, Verdict},
 };
+use ratatui::text::Line;
 
 use crate::{
     overlay::modal::prompt::{PromptBody, PromptWidget},
-    primitive::glyphs,
+    primitive::{
+        glyphs,
+        span::{line, text},
+    },
+    repaint::Presence,
     theme::active_theme::ActiveTheme,
 };
 
 const MIN_WIDTH: Cells = Cells(40);
+const ROWS: usize = 8;
 
 pub(crate) fn prompt<'a>(
     text_entry: &'a TextEntry<MusicDirError>,
@@ -33,6 +40,77 @@ pub(crate) fn prompt<'a>(
     .min_width(MIN_WIDTH)
     .verdict(verdict)
     .error(text_entry.error.as_ref())
+    .spinner(Presence::from(
+        text_entry.error == Some(MusicDirError::Pending),
+    ))
+}
+
+pub(crate) fn rows<'a>(
+    folders: &'a CursorOver<Folders>,
+    active_theme: ActiveTheme<'a>,
+) -> Vec<Line<'a>> {
+    let CursorOver {
+        cursor,
+        content:
+            Folders {
+                path: _,
+                subfolders,
+                matches,
+                revision: _,
+            },
+    } = folders;
+    let colors = active_theme.colors();
+    let entries = subfolders
+        .as_ref()
+        .map_or(&[][..], |listing| listing.subfolders.as_slice());
+    matches
+        .iter()
+        .enumerate()
+        .skip(cursor.index().saturating_sub(ROWS - 1))
+        .take(ROWS)
+        .filter_map(|(position, index)| {
+            let subfolder = entries.get(*index)?;
+            let (marker, color) = if position == cursor.index() {
+                (glyphs::music_dir::SELECTED_MARKER, colors.foreground)
+            } else {
+                (
+                    glyphs::music_dir::UNSELECTED_MARKER,
+                    colors.muted_foreground,
+                )
+            };
+            let glyph = match subfolder {
+                Subfolder::Audio(_) => glyphs::music_dir::AUDIO,
+                Subfolder::Plain(_) => glyphs::music_dir::PLAIN,
+            };
+            Some(line([
+                text(marker).fg(color),
+                text(glyph).fg(colors.highlight),
+                text(subfolder.name()).fg(color),
+            ]))
+        })
+        .chain(iter::repeat_with(Line::default))
+        .take(ROWS)
+        .collect()
+}
+
+pub(crate) fn listed(
+    folders: &CursorOver<Folders>,
+    verdict: Option<Verdict>,
+) -> Option<Verdict> {
+    let listed = folders
+        .content
+        .subfolders
+        .as_ref()
+        .filter(|_| folders.content.revision.is_none())?;
+    match listed.verdict {
+        Verdict::Readable => None,
+        Verdict::Missing
+        | Verdict::NotADirectory
+        | Verdict::Denied
+        | Verdict::Unreadable(_) => {
+            (verdict != Some(listed.verdict)).then_some(listed.verdict)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -152,7 +230,9 @@ mod tests {
             (80, 24),
         );
         assert!(
-            screen.lines().any(|row| row.contains("checking")),
+            screen
+                .lines()
+                .any(|row| row.contains("⣾ checking the folder")),
             "the prompt must say the folder is being checked:\n{screen}"
         );
     }
@@ -193,7 +273,7 @@ mod tests {
     fn a_long_path_keeps_its_tail_and_cursor_in_view() {
         let screen = frame(&entry(&("/a".repeat(60) + "/end"), None), None, (80, 24));
         assert!(
-            screen.lines().any(|row| row.contains("end_")),
+            screen.lines().any(|row| row.contains("/end ")),
             "the input row must show the typed tail and the cursor:\n{screen}"
         );
     }

@@ -1,0 +1,10 @@
+---
+source: crates/widgets/src/playlist/catalog.rs
+expression: "lines.join(\"\\n\")"
+---
+┏ home · Songs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃    Miles Davis — So What                       ┃
+┃    Bill Evans — Blue in Green                  ┃
+┃                                                ┃
+┃                                                ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

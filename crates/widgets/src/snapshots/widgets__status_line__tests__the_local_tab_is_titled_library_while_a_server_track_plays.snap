@@ -1,0 +1,5 @@
+---
+source: crates/widgets/src/status_line.rs
+expression: "status_line(status_line_view, &colors(), Cells(80)).to_string()"
+---
+Library ── 3/12 ── shuffle on · repeat all · queue 7 · theme rose-pine

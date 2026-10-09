@@ -3,14 +3,19 @@ use kernel::domain::{
     index::ViewIndex,
     server::{Server, ServerStatus},
 };
-use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Span};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::Style,
+    text::{Line, Span},
+};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
     overlay::modal::frame::{Modal, ModalAreas, ModalSize},
     primitive::{
         canvas::Canvas,
-        span::{StyledText, line, text},
+        span::{line, text},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -23,7 +28,7 @@ const MIN_WIDTH: Cells = Cells(44);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServersTable<'a> {
-    rows: Vec<[Span<'a>; 5]>,
+    rows: Vec<[Line<'a>; 5]>,
     starts: [usize; 5],
     content_width: Cells,
 }
@@ -47,16 +52,22 @@ fn columns(server: &Server) -> [&str; 3] {
 fn status(
     server_status: &ServerStatus,
     active_theme: &ActiveTheme<'_>,
-) -> StyledText<'static> {
+) -> Line<'static> {
     let colors = active_theme.colors();
     match server_status {
-        ServerStatus::Connecting => text("connecting…").fg(colors.muted_foreground),
-        ServerStatus::Online(_) => text("online").fg(colors.foreground),
+        ServerStatus::Connecting => line(
+            active_theme
+                .spinner
+                .mark(&colors)
+                .into_iter()
+                .chain([text("connecting…").fg(colors.muted_foreground)]),
+        ),
+        ServerStatus::Online(_) => line([text("online").fg(colors.foreground)]),
         ServerStatus::Offline(error) if error.is_credentials() => {
-            text("wrong user or password").fg(active_theme.alert())
+            line([text("wrong user or password").fg(active_theme.alert())])
         }
         ServerStatus::Offline(error) => {
-            text(format!("offline: {error}")).fg(active_theme.alert())
+            line([text(format!("offline: {error}")).fg(active_theme.alert())])
         }
     }
 }
@@ -98,14 +109,14 @@ impl<'a> ServersTable<'a> {
                     "  "
                 };
                 let [name, host, user] = columns(server).map(|column| {
-                    Span::styled(column, Style::new().fg(colors.foreground))
+                    Line::from(Span::styled(column, Style::new().fg(colors.foreground)))
                 });
                 [
-                    Span::styled(marker, Style::new().fg(colors.accent)),
+                    Line::from(Span::styled(marker, Style::new().fg(colors.accent))),
                     name,
                     host,
                     user,
-                    status(&server.server_status, active_theme).into(),
+                    status(&server.server_status, active_theme),
                 ]
             })
             .collect::<Vec<_>>();
@@ -200,9 +211,9 @@ impl<'a> ServersWidget<'a> {
             .zip(body.y..body.bottom())
             .enumerate()
         {
-            for (span, start) in row.iter().zip(starts) {
+            for (cell, start) in row.iter().zip(starts) {
                 if let Some(x) = place(start) {
-                    buffer.set_span(x, y, span, body.right() - x);
+                    buffer.set_line(x, y, cell, body.right() - x);
                 }
             }
             if index == self.selected.get() {

@@ -1,6 +1,6 @@
-use std::{cmp::Reverse, path::Path, sync::Arc};
+use std::{cmp::Reverse, path::Path};
 
-use crate::domain::{index::ViewIndex, track::Track};
+use crate::domain::{index::ViewIndex, playlist::PlaylistRows, track::Track};
 
 const MATCH_SCORE: i32 = 16;
 const CONSECUTIVE_BONUS: i32 = 15;
@@ -70,34 +70,34 @@ fn score_chars(query_chars: &[char], haystack: &str) -> Option<i32> {
 }
 
 #[must_use]
-pub fn rank(tracks: &[Arc<Track>], query: &str) -> Vec<ViewIndex> {
+pub fn rank(rows: PlaylistRows<'_>, query: &str) -> Vec<ViewIndex> {
     if query.is_empty() {
-        return (0..tracks.len()).map(ViewIndex::new).collect();
+        return (0..rows.len()).map(ViewIndex::new).collect();
     }
-    ranked(tracks, query, 0..tracks.len())
+    ranked(rows, query, 0..rows.len())
 }
 
 #[must_use]
 pub(crate) fn narrow(
-    tracks: &[Arc<Track>],
+    rows: PlaylistRows<'_>,
     query: &str,
     matches: &[ViewIndex],
 ) -> Vec<ViewIndex> {
     if query.is_empty() {
-        return rank(tracks, query);
+        return rank(rows, query);
     }
-    ranked(tracks, query, matches.iter().map(|index| index.get()))
+    ranked(rows, query, matches.iter().map(|index| index.get()))
 }
 
 fn ranked(
-    tracks: &[Arc<Track>],
+    rows: PlaylistRows<'_>,
     query: &str,
     candidates: impl Iterator<Item = usize>,
 ) -> Vec<ViewIndex> {
     let query_chars: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
     let mut scored: Vec<(usize, i32)> = candidates
         .filter_map(|index| {
-            let track = tracks.get(index)?;
+            let track = rows.get(ViewIndex::new(index))?;
             best_track_score(&query_chars, track).map(|score| (index, score))
         })
         .collect();

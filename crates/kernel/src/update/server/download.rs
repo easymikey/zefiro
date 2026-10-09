@@ -31,7 +31,9 @@ pub(crate) fn fetched(
         catalogs: _,
         revisions: _,
         favorites: _,
-        overlay: _,
+        workspace: _,
+        playlist: _,
+        playlist_source: _,
         play_reports: _,
     } = server_parts;
     let download = downloads

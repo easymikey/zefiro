@@ -139,7 +139,8 @@ The contexts (`KeyContext`), and what is in focus in each:
 |---|---|
 | `global` | the whole app |
 | `playlist` | the browsing list |
-| `text_prompt` | the save-playlist and source-folder prompts |
+| `text_prompt` | the save-playlist and add-server prompts |
+| `music_dir` | the music folder prompt (Left and Right step through subfolders) |
 | `search` | the search overlay |
 | `help` | the help overlay |
 | `history` | the history overlay |

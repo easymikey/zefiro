@@ -6,7 +6,7 @@ use kernel::{
         favorites::Favorites,
         history::HistoryEntry,
         io_error::IoError,
-        overlay::Verdict,
+        overlay::{Subfolders, Verdict},
         revision::Revision,
         track::Track,
     },
@@ -50,6 +50,10 @@ pub enum LibraryMessage {
     Trashed(PathBuf),
     Checked {
         verdict: Verdict,
+        revision: Revision,
+    },
+    Subfolders {
+        subfolders: Subfolders,
         revision: Revision,
     },
     HistoryLoaded {

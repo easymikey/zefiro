@@ -1,0 +1,10 @@
+---
+source: crates/widgets/src/playlist/catalog.rs
+expression: painted_lines(&playlists())
+---
+┏ home · Playlists ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃    Late Night                12 tracks · 52:00 ┃
+┃    Morning                     1 track · 04:00 ┃
+┃                                                ┃
+┃                                                ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

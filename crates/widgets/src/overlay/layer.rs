@@ -1,14 +1,13 @@
-use std::sync::Arc;
+use std::borrow::Cow;
 
 use kernel::{
     domain::{
         history::HistoryEntry,
         index::RowIndex,
         overlay::{Overlay, TextEntry},
-        playlist::PlaylistFileNameError,
+        playlist::{PlaylistFileNameError, PlaylistRows},
         server::Server,
         time::Moment,
-        track::Track,
     },
     update::keymap::chord::KeyBinding,
 };
@@ -16,7 +15,7 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
-    text::{Line, Span},
+    text::Line,
     widgets::{Paragraph, Widget},
 };
 
@@ -30,15 +29,19 @@ use crate::{
         jump_to_time,
         modal::{
             placement::{ModalContainer, OverlayAreas},
-            prompt::PromptWidget,
+            prompt::{PromptWidget, cursor},
         },
         music_dir,
-        search::{SearchWidget, matches::Query, search_title},
+        search::{SearchWidget, search_title},
         servers::{ServersTable, ServersWidget},
         settings::{SettingsTable, SettingsWidget, view::SettingsView},
         track_details::{TrackDetailsRow, TrackDetailsWidget},
     },
-    primitive::{canvas::Canvas, glyphs},
+    primitive::{
+        canvas::Canvas,
+        glyphs,
+        span::{line, text},
+    },
     screen::frame_layout::{FrameLayout, OverlayContent},
     theme::active_theme::ActiveTheme,
 };
@@ -46,7 +49,7 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct OverlayView<'a> {
     pub(crate) overlay: Option<&'a Overlay>,
-    pub(crate) tracks: &'a [Arc<Track>],
+    pub(crate) rows: PlaylistRows<'a>,
     pub(crate) history: &'a [HistoryEntry],
     pub(crate) servers: &'a [Server],
     pub(crate) active_theme: ActiveTheme<'a>,
@@ -64,11 +67,9 @@ impl<'a> OverlayView<'a> {
                 screen,
             )),
             Overlay::Search(search) => {
-                OverlayContent::Search(search, search_title(search, self.tracks.len()))
+                OverlayContent::Search(search, search_title(search, self.rows.len()))
             }
-            Overlay::ServerSearch(server_query) => {
-                OverlayContent::ServerSearch(server_query)
-            }
+            Overlay::ServerSearch => return None,
             Overlay::SavePlaylist(entry) => OverlayContent::SavePlaylist(entry),
             Overlay::History(cursor) => {
                 OverlayContent::History(cursor, HistoryMeasures::of(self.history))
@@ -90,8 +91,11 @@ impl<'a> OverlayView<'a> {
                 text_entry,
                 verdict,
                 revision,
+                folders,
             } => {
-                let prompt = music_dir::prompt(text_entry, *verdict, self.active_theme);
+                let prompt = music_dir::prompt(text_entry, *verdict, self.active_theme)
+                    .rows(music_dir::rows(folders, self.active_theme))
+                    .listing_verdict(music_dir::listed(folders, *verdict));
                 OverlayContent::Prompt(match revision {
                     Some(_) => prompt.hint(glyphs::music_dir::HINT),
                     None => prompt,
@@ -217,9 +221,11 @@ impl<'a> SaveLine<'a> {
 
     fn line(self) -> Line<'a> {
         match self {
-            Self::Typing(input) => {
-                Line::from(vec![Span::raw("Save playlist: "), Span::raw(input)])
-            }
+            Self::Typing(input) => line(
+                [text("Save playlist: ")]
+                    .into_iter()
+                    .chain(cursor(Cow::Borrowed(input), "")),
+            ),
             Self::Failed(reason) => Line::from(reason.to_string()),
         }
     }
@@ -279,15 +285,9 @@ impl<'a> OverlayWidget<'a> {
                 ActiveOverlay::Help(HelpWidget::new(help_columns, theme).avoid(avoid))
             }
             OverlayContent::Search(search, title) => ActiveOverlay::Search(
-                SearchWidget::new(Query::Search(search), theme)
+                SearchWidget::new(search, theme)
                     .title(title)
-                    .tracks(self.view.tracks)
-                    .bounds(self.frame_layout.search_bounds)
-                    .container(self.container(avoid)),
-            ),
-            OverlayContent::ServerSearch(server_query) => ActiveOverlay::Search(
-                SearchWidget::new(Query::ServerSearch(server_query), theme)
-                    .title(server_query.content.server_name.as_str())
+                    .rows(self.view.rows)
                     .bounds(self.frame_layout.search_bounds)
                     .container(self.container(avoid)),
             ),
@@ -348,9 +348,10 @@ mod tests {
         appearance::CoverMode,
         model::Model,
         overlay::{Overlay, TextEntry},
+        playlist::PlaylistRows,
         time::Moment,
     };
-    use ratatui::layout::Rect;
+    use ratatui::{layout::Rect, style::Modifier};
 
     use crate::{
         overlay::{
@@ -375,7 +376,11 @@ mod tests {
     ) -> OverlayView<'a> {
         OverlayView {
             overlay: model.workspace.overlay.as_ref(),
-            tracks: &model.playlist.tracks,
+            rows: PlaylistRows::new(
+                &model.playlist_source,
+                model.library.as_ref(),
+                &model.playlist,
+            ),
             history: &model.history,
             servers: &model.servers,
             active_theme: ActiveTheme::new(theme, ColorDepth::TrueColor),
@@ -433,6 +438,12 @@ mod tests {
             .map(|x| buffer[(x, 27)].symbol())
             .collect::<String>();
         assert_eq!(banner.trim_end(), "Save playlist: mixtape");
+        let typed_end = u16::try_from("Save playlist: mixtape".len()).unwrap();
+        assert_eq!(
+            [typed_end - 1, typed_end, typed_end + 1]
+                .map(|x| buffer[(x, 27)].modifier.contains(Modifier::REVERSED)),
+            [false, true, false]
+        );
         assert_eq!(
             buffer[(0, 27)].fg,
             accent(

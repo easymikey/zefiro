@@ -96,10 +96,10 @@ pub(crate) fn row_window(fit: &WindowFit) -> RowWindow {
 
 fn queue_numbers<'a>(
     queue: &[TrackSource],
-    tracks: &'a [Arc<Track>],
+    tracks: impl IntoIterator<Item = &'a Arc<Track>>,
 ) -> HashMap<&'a TrackSource, QueueNumber> {
     let track_sources: HashSet<&TrackSource> =
-        tracks.iter().map(|track| track.source()).collect();
+        tracks.into_iter().map(|track| track.source()).collect();
     let mut positions = HashMap::new();
     for (index, queued) in queue.iter().enumerate() {
         if let Some(&source) = track_sources.get(queued) {
@@ -112,7 +112,7 @@ fn queue_numbers<'a>(
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct PlaylistRows<'a> {
+pub(crate) struct PlaylistRowsWidget<'a> {
     pub(crate) view: PlaylistView<'a>,
     pub(crate) theme: ActiveTheme<'a>,
     pub(crate) rows: Rect,
@@ -155,27 +155,30 @@ fn build_line<'a>(
     track_row::track_row_line(&track_row, &playlist_row_parts.colors)
 }
 
-pub(crate) fn paint_rows(buffer: &mut Buffer, playlist_rows: PlaylistRows<'_>) {
-    let PlaylistRows {
+pub(crate) fn paint_rows(
+    buffer: &mut Buffer,
+    playlist_rows_widget: PlaylistRowsWidget<'_>,
+) {
+    let PlaylistRowsWidget {
         view,
         theme,
         rows,
         window,
         selected_area,
-    } = playlist_rows;
+    } = playlist_rows_widget;
     let colors = theme.colors();
     let start = window.start;
     let end = window.end;
-    let visible_tracks = view.playlist.tracks.get(start..end).unwrap_or(&[]);
+    let visible_tracks =
+        (start..end).map_while(|index| view.rows.get(ViewIndex::new(index)));
     let playlist_row_parts = PlaylistRowParts {
         view,
         row_width: Cells(rows.width),
         colors,
-        positions: queue_numbers(view.queue, visible_tracks),
+        positions: queue_numbers(view.queue, visible_tracks.clone()),
     };
 
     let lines: Vec<ratatui::text::Line<'_>> = visible_tracks
-        .iter()
         .enumerate()
         .map(|(relative_index, track)| {
             build_line(

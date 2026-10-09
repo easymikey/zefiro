@@ -33,8 +33,27 @@ impl Machine for Playlist {
             }
             PlaylistMessage::ShuffleRolled(order) => match &self.play_order {
                 PlayOrder::Linear => return Err(Unhandled),
-                PlayOrder::ShufflePending | PlayOrder::Shuffled(_) => {
+                PlayOrder::ShufflePending => {
                     self.play_order = PlayOrder::Shuffled(order);
+                    Cmd::none()
+                }
+                PlayOrder::Shuffled(previous) => {
+                    let kept = self
+                        .position()
+                        .and_then(|position| previous.get(..=position))
+                        .unwrap_or(&[]);
+                    let mut seen = vec![false; order.len()];
+                    for track_index in kept {
+                        if let Some(slot) = seen.get_mut(track_index.get()) {
+                            *slot = true;
+                        }
+                    }
+                    let unplayed = order.into_iter().filter(|track_index| {
+                        seen.get(track_index.get()) != Some(&true)
+                    });
+                    self.play_order = PlayOrder::Shuffled(
+                        kept.iter().copied().chain(unplayed).collect(),
+                    );
                     Cmd::none()
                 }
             },

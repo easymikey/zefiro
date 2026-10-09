@@ -7,7 +7,6 @@ use crate::domain::{
     bounded::Bounded,
     chord::ChordPrefix,
     config::{ConfigError, ConfigName, Diagnostic},
-    cursor_over::CursorOver,
     device::{DeviceName, ListedDevice, OutputDevice},
     direction::Direction,
     driver::{DriverError, DriverName},
@@ -18,11 +17,12 @@ use crate::domain::{
     io_error::IoError,
     key::KeyPress,
     keymap::KeymapOverrides,
-    overlay::{OverlayName, Verdict},
+    overlay::{OverlayName, Subfolders, Verdict},
     percent::Percent,
     playlist::PlaylistFileName,
     revision::Revision,
     server::{
+        Artwork,
         Connection,
         Fetched,
         Listing,
@@ -138,6 +138,7 @@ pub enum OverlayRequest {
     Text(TextRequest),
     History(HistoryRequest),
     Navigate(Direction),
+    Step(Direction),
     Reconnect,
 }
 
@@ -213,7 +214,6 @@ pub enum PlaybackRequest {
     StepSpeed(Direction),
     SeekTo(Duration),
     SeekTenths(SeekTenths),
-    JumpTo(ViewIndex),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -247,13 +247,14 @@ pub enum BrowseRequest {
     SelectFirst,
     SelectLast,
     PlaySelected,
+    JumpTo(ViewIndex),
     CycleSort,
+    CycleView,
     Rescan,
     ToggleFavorite,
     PageBy(Direction),
     StepCatalog(Direction),
     LevelUp,
-    Open(CursorOver<Vec<CatalogRow>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
@@ -287,6 +288,10 @@ pub enum LibraryEvent {
     Trashed(PathBuf),
     Checked {
         verdict: Verdict,
+        revision: Revision,
+    },
+    Subfolders {
+        subfolders: Subfolders,
         revision: Revision,
     },
     Error(LibraryError),
@@ -398,6 +403,10 @@ pub enum RemoteEvent {
     Starred(ServerFavorite),
     Restored(Result<Vec<PlayReport>, IoError>),
     Unsaved(IoError),
+    Cover {
+        artwork: Artwork,
+        result: Result<PathBuf, RemoteError>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]

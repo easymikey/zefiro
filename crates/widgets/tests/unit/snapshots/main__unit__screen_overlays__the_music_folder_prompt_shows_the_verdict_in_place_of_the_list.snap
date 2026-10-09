@@ -1,0 +1,28 @@
+---
+source: crates/widgets/tests/unit/screen_overlays.rs
+expression: frame_with_overlay(in_a_denied_folder())
+---
+"                                                                                "
+" ╭ Zefiro ────────────────────────────────────────────────────────────────────╮ "
+" │                                                                            │ "
+" │  No track                                                      ■ Stopped   │ "
+" │                                                                            │ "
+" │  00:00 / 00:00  » 1×                                                       │ "
+" │╭ LIBRARY FOLDER ──────────────────────────────────────────────────────────╮│ "
+" ││ > /Users/me/                                                             ││ "
+" ││ a readable folder                                                        ││ "
+" ││ no permission: allow the terminal in Privacy & Security, Files and Fold… ││ "
+" ││                                                                          ││ "
+" ││                                                                          ││ "
+" ╰│                                                                          │╯ "
+" ┏│                                                                          │┓ "
+" ┃│                                                                          │┃ "
+" ┃│                                                                          │┃ "
+" ┃│                                                                          │┃ "
+" ┃│ Enter save · Esc cancel                                                  │┃ "
+" ┃╰──────────────────────────────────────────────────────────────────────────╯┃ "
+" ┃                                                                            ┃ "
+" ┃                                                                            ┃ "
+" ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ "
+"  Space  Play  Enter  Open  a  Queue  /  Find  ?/Ctrl+K  Help  q  Quit          "
+"                                                                                "

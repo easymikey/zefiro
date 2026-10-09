@@ -41,6 +41,7 @@ fn lane(key_context: KeyContext) -> KeyContext {
     match key_context {
         KeyContext::Global | KeyContext::Playlist => KeyContext::Global,
         overlay @ (KeyContext::TextPrompt
+        | KeyContext::MusicDir
         | KeyContext::Search
         | KeyContext::Help
         | KeyContext::History

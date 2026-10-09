@@ -20,6 +20,7 @@ objc2-core-audio = { workspace = true }
 objc2-core-foundation = { workspace = true }
 objc2-foundation = { workspace = true }
 objc2-media-player = { workspace = true }
+security-framework = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]

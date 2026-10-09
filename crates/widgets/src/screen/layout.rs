@@ -1,7 +1,10 @@
 use kernel::domain::{
     appearance::{CoverMode, KeyHints, ProgressTime},
+    catalog::Paging,
     geometry::Cells,
-    overlay::Overlay,
+    model::ScanStatus,
+    overlay::{MusicDirError, Overlay},
+    server::ServerStatus,
 };
 use ratatui::layout::{Constraint, Layout, Rect};
 
@@ -13,7 +16,11 @@ use crate::{
         metrics::CardMetrics,
     },
     overlay::layer::{OverlayView, OverlayWidget},
-    playlist::{pane::PlaylistWidget, row::PlaylistAreas, view::PlaylistView},
+    playlist::{
+        pane::PlaylistWidget,
+        row::PlaylistAreas,
+        view::{CatalogView, LibraryStatus, PlaylistView},
+    },
     primitive::bar::remaining_label,
     repaint::{OnScreen, Presence},
     scene::Scene,
@@ -68,7 +75,53 @@ impl<'a> FrameLayout<'a> {
                 self.playlist_areas.is_some() && scene.transport.sleep_timer.is_some(),
             ),
             spectrum: Presence::from(self.is_spectrum_shown(scene)),
+            spinner: Presence::from(self.waits(scene)),
         }
+    }
+
+    fn waits(&self, scene: &Scene<'_>) -> bool {
+        let loading = match scene.library_status {
+            LibraryStatus::Loading => scene.rows.is_empty(),
+            LibraryStatus::Ready => false,
+        };
+        let paging =
+            CatalogView::from_scene(scene).is_some_and(
+                |catalog_view| match catalog_view.level().paging {
+                    Paging::Queued(_) | Paging::Loading(_) => true,
+                    Paging::Next(_) | Paging::Complete => false,
+                },
+            );
+        let connecting = scene
+            .servers
+            .iter()
+            .any(|server| server.server_status == ServerStatus::Connecting);
+        let pane = self.playlist_areas.is_some()
+            && (scene.scan_status != ScanStatus::Idle
+                || loading
+                || paging
+                || connecting);
+        let card = self.is_card_shown() && scene.transport.buffering_revision.is_some();
+        let overlay = match scene.overlay {
+            Some(Overlay::Servers(_)) => connecting,
+            Some(Overlay::MusicDir { text_entry, .. }) => {
+                text_entry.error == Some(MusicDirError::Pending)
+            }
+            Some(
+                Overlay::Help
+                | Overlay::Search(_)
+                | Overlay::ServerSearch
+                | Overlay::SavePlaylist(_)
+                | Overlay::History(_)
+                | Overlay::Settings(_)
+                | Overlay::ConfirmTrash(_)
+                | Overlay::JumpToTime(_)
+                | Overlay::TrackDetails(_)
+                | Overlay::AddServer(_)
+                | Overlay::ConfirmRemove(_),
+            )
+            | None => false,
+        };
+        pane || card || overlay
     }
 
     fn is_card_shown(&self) -> bool {
@@ -266,6 +319,21 @@ mod tests {
         assert_eq!(layout.breakpoint, Breakpoint::Compact);
         assert_eq!(layout.search_bounds, layout.playlist_pane);
         assert!(layout.search_bounds.bottom() <= layout.content.bottom());
+    }
+
+    #[rstest]
+    #[case::a_quiet_screen(kernel::domain::model::ScanStatus::Idle, Presence::Hidden)]
+    #[case::a_scan(kernel::domain::model::ScanStatus::Scanning, Presence::Shown)]
+    fn only_a_wait_on_screen_asks_spinner_frames(
+        #[case] scan_status: kernel::domain::model::ScanStatus,
+        #[case] expected: Presence,
+    ) {
+        let mut model = model_with_tracks(3);
+        model.scan_status = scan_status;
+        let sources = SceneSources::new(model);
+        let scene = sources.scene();
+        let layout = FrameLayout::from_scene(&scene, screen());
+        assert_eq!(layout.on_screen(&scene).spinner, expected);
     }
 
     #[derive(Debug, Clone, Copy)]

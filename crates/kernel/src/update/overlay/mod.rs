@@ -1,3 +1,4 @@
+pub(crate) mod folders;
 pub mod history;
 pub mod jump;
 mod machine;
@@ -10,23 +11,16 @@ use std::path::Path;
 use crate::{
     cmd::{Cmd, DiskCmd, Effect, LibraryCmd},
     domain::{
-        catalog::CatalogName,
+        catalog::{Catalog, CatalogName},
         cursor::Cursor,
         cursor_over::CursorOver,
         direction::Direction,
         history::{HISTORY_LIMIT, HistoryEntry},
-        overlay::{
-            Overlay,
-            OverlayName,
-            SearchQuery,
-            ServerPrompt,
-            ServerQuery,
-            TextEntry,
-        },
+        overlay::{Field, Overlay, OverlayName, SearchQuery, ServerPrompt, TextEntry},
         player::Player,
-        playlist::Playlist,
+        playlist::PlaylistRows,
         revision::Revisions,
-        server::{Endpoint, Server, ServerName},
+        server::{Endpoint, Server},
         setting_row::SettingRow,
         workspace::Workspace,
     },
@@ -41,7 +35,6 @@ use crate::{
     update::{
         machine::{Machine, Unhandled},
         overlay::{history::HistoryMessage, settings::SettingRowMessage},
-        player::events::session,
     },
 };
 
@@ -63,12 +56,13 @@ pub enum OverlayContentMessage {
 
 pub(crate) struct OverlayParts<'a> {
     pub(crate) workspace: &'a mut Workspace,
-    pub(crate) playlist: &'a Playlist,
+    pub(crate) rows: PlaylistRows<'a>,
     pub(crate) player: &'a Player,
     pub(crate) history: &'a [HistoryEntry],
     pub(crate) music_dir: &'a Path,
     pub(crate) servers: &'a [Server],
     pub(crate) catalog_name: &'a CatalogName,
+    pub(crate) catalogs: &'a mut [Catalog],
     pub(crate) revisions: &'a mut Revisions,
 }
 
@@ -78,7 +72,7 @@ pub(crate) fn update(
 ) -> Result<Cmd, Unhandled> {
     match request {
         OverlayRequest::Open(name) => open_request(&mut parts, name),
-        OverlayRequest::Close => update_overlay(parts.workspace, OverlayMessage::Close),
+        OverlayRequest::Close => close_request(&mut parts),
         OverlayRequest::Confirm => confirm_request(&mut parts),
         OverlayRequest::Search(request) => search_request(&mut parts, request),
         OverlayRequest::Settings(request) => {
@@ -89,11 +83,26 @@ pub(crate) fn update(
             )
         }
         OverlayRequest::Text(message) => {
+            if let Some(input) =
+                folders::backspaced(parts.workspace.overlay.as_ref(), message)
+            {
+                retyped(parts.workspace, input);
+                return Ok(probe(&mut parts));
+            }
             let cmd = update_overlay(
                 parts.workspace,
                 OverlayMessage::Content(OverlayContentMessage::Text(message)),
             )?;
             Ok(cmd.then(probe(&mut parts)))
+        }
+        OverlayRequest::Step(direction) => {
+            if let Some(Overlay::AddServer(_)) = parts.workspace.overlay {
+                return navigate(&mut parts, direction);
+            }
+            let input = folders::stepped(parts.workspace.overlay.as_ref(), direction)
+                .ok_or(Unhandled)?;
+            retyped(parts.workspace, input);
+            Ok(probe(&mut parts))
         }
         OverlayRequest::History(request) => update_overlay(
             parts.workspace,
@@ -126,22 +135,19 @@ fn selected_server<'a>(
 }
 
 fn confirm_request(parts: &mut OverlayParts<'_>) -> Result<Cmd, Unhandled> {
+    if matches!(parts.workspace.overlay, Some(Overlay::ServerSearch))
+        && search::level(parts.catalogs, parts.catalog_name)
+            .is_some_and(|level| level.query().is_none())
+    {
+        return close_request(parts);
+    }
     if let Some(server) =
         selected_server(parts.workspace.overlay.as_ref(), parts.servers)
     {
-        let overlay = Overlay::AddServer(ServerPrompt::Link {
-            origin_server_name: Some(server.account.server_name.clone()),
-            text_entry: TextEntry {
-                input: server.account.endpoint.as_str().to_owned(),
-                error: None,
-            },
-        });
+        let overlay = Overlay::AddServer(ServerPrompt::from(&server.account));
         return update_overlay(parts.workspace, OverlayMessage::Open(overlay));
     }
-    let from_link = matches!(
-        parts.workspace.overlay,
-        Some(Overlay::AddServer(ServerPrompt::Link { .. }))
-    );
+    let from_link = from_link(parts.workspace.overlay.as_ref());
     let settled = matches!(
         parts.workspace.overlay,
         Some(Overlay::MusicDir {
@@ -156,13 +162,32 @@ fn confirm_request(parts: &mut OverlayParts<'_>) -> Result<Cmd, Unhandled> {
     } else {
         confirmed
     };
-    if from_link
-        && let Some(Overlay::AddServer(ServerPrompt::User {
-            origin_server_name,
-            endpoint,
-            text_entry,
-        })) = parts.workspace.overlay.as_mut()
-        && let Some(known) = parts.servers.iter().find(|server| {
+    if from_link {
+        fill(&mut parts.workspace.overlay, parts.servers);
+    }
+    Ok(cmd)
+}
+
+fn from_link(overlay: Option<&Overlay>) -> bool {
+    matches!(
+        overlay,
+        Some(Overlay::AddServer(ServerPrompt {
+            field: Field::Link,
+            ..
+        }))
+    )
+}
+
+fn fill(overlay: &mut Option<Overlay>, servers: &[Server]) {
+    if let Some(Overlay::AddServer(ServerPrompt {
+        origin_server_name,
+        link_text_entry,
+        user_text_entry,
+        ..
+    })) = overlay
+        && user_text_entry.input.is_empty()
+        && let Ok(endpoint) = Endpoint::parse(&link_text_entry.input)
+        && let Some(known) = servers.iter().find(|server| {
             origin_server_name.as_ref().map_or_else(
                 || server.account.endpoint.host() == endpoint.host(),
                 |origin_server_name| server.account.server_name == *origin_server_name,
@@ -173,15 +198,31 @@ fn confirm_request(parts: &mut OverlayParts<'_>) -> Result<Cmd, Unhandled> {
             .account
             .user_name
             .as_str()
-            .clone_into(&mut text_entry.input);
+            .clone_into(&mut user_text_entry.input);
     }
-    Ok(cmd)
+}
+
+fn retyped(workspace: &mut Workspace, input: String) {
+    if let Some(Overlay::MusicDir { text_entry, .. }) = workspace.overlay.as_mut() {
+        *text_entry = TextEntry { input, error: None };
+    }
 }
 
 fn navigate(
     parts: &mut OverlayParts<'_>,
     direction: Direction,
 ) -> Result<Cmd, Unhandled> {
+    if let Some(Overlay::MusicDir { folders, .. }) = parts.workspace.overlay.as_mut() {
+        return folders::navigate(folders, direction);
+    }
+    let from_link = from_link(parts.workspace.overlay.as_ref());
+    if let Some(Overlay::AddServer(server_prompt)) = parts.workspace.overlay.as_mut() {
+        server_prompt.leave(direction)?;
+        if from_link {
+            fill(&mut parts.workspace.overlay, parts.servers);
+        }
+        return Ok(Cmd::none());
+    }
     let Some(Overlay::Servers(cursor)) = parts.workspace.overlay.as_mut() else {
         return Err(Unhandled);
     };
@@ -207,6 +248,20 @@ fn servers_cursor(overlay: Option<&Overlay>, servers: &[Server]) -> CursorOver<(
         cursor,
         content: (),
     }
+}
+
+fn close_request(parts: &mut OverlayParts<'_>) -> Result<Cmd, Unhandled> {
+    let Some(overlay) = &parts.workspace.overlay else {
+        return search::clear(parts)
+            .map(|_server_query| Cmd::none())
+            .ok_or(Unhandled);
+    };
+    let filtering = matches!(overlay, Overlay::ServerSearch);
+    let cmd = update_overlay(parts.workspace, OverlayMessage::Close)?;
+    if filtering {
+        search::clear(parts);
+    }
+    Ok(cmd)
 }
 
 fn open_request(
@@ -235,6 +290,7 @@ fn prompt(music_dir: &Path) -> Overlay {
         },
         verdict: None,
         revision: None,
+        folders: CursorOver::default(),
     }
 }
 
@@ -243,6 +299,7 @@ fn probe(parts: &mut OverlayParts<'_>) -> Cmd {
         text_entry,
         verdict,
         revision,
+        folders,
     }) = parts.workspace.overlay.as_mut()
     else {
         return Cmd::none();
@@ -251,43 +308,31 @@ fn probe(parts: &mut OverlayParts<'_>) -> Cmd {
     if path.as_os_str().is_empty() {
         *verdict = None;
         *revision = None;
+        *folders = CursorOver::default();
         return Cmd::none();
     }
-    Effect::Library(LibraryCmd::Probe {
+    let issued = *revision.insert(parts.revisions.issue_effect());
+    Cmd::from(Effect::Library(LibraryCmd::Probe {
         path,
-        revision: *revision.insert(parts.revisions.issue_effect()),
-    })
-    .into()
+        revision: issued,
+    }))
+    .then(folders::listing(text_entry, folders, issued))
 }
 
 fn search_request(
     parts: &mut OverlayParts<'_>,
     message: SearchRequest,
 ) -> Result<Cmd, Unhandled> {
-    if matches!(parts.workspace.overlay, Some(Overlay::ServerSearch(_))) {
+    if matches!(parts.workspace.overlay, Some(Overlay::ServerSearch)) {
         return search::server_request(parts, message);
     }
     let cmd = update_overlay(parts.workspace, content_search(message))?;
     if let SearchRequest::Edit(edit) = message
         && let Some(Overlay::Search(search)) = parts.workspace.overlay.as_mut()
     {
-        search::requery(search, &parts.playlist.tracks, edit);
+        search::requery(search, parts.rows, edit);
     }
     Ok(cmd)
-}
-
-fn server_search(
-    servers: &[Server],
-    server_name: &ServerName,
-) -> Result<Overlay, Unhandled> {
-    session(servers, server_name).ok_or(Unhandled)?;
-    let server_query = ServerQuery {
-        server_name: server_name.clone(),
-        input: String::new(),
-        catalog_rows: Vec::new(),
-        revision: None,
-    };
-    Ok(Overlay::ServerSearch(CursorOver::new(server_query, 0)))
 }
 
 fn content_search(message: SearchRequest) -> OverlayMessage {
@@ -298,15 +343,12 @@ fn overlay_for(
     parts: &OverlayParts<'_>,
     name: OverlayName,
 ) -> Result<Overlay, Unhandled> {
-    let track = parts
-        .playlist
-        .tracks
-        .get(parts.workspace.browse.selected().get());
+    let track = parts.rows.get(parts.workspace.browse.selected());
     match name {
         OverlayName::Help => Ok(Overlay::Help),
         OverlayName::Search | OverlayName::ServerSearch => match parts.catalog_name {
             CatalogName::Local => {
-                let matches = crate::search::rank(&parts.playlist.tracks, "");
+                let matches = crate::search::rank(parts.rows, "");
                 let len = matches.len();
                 let query = SearchQuery {
                     input: String::new(),
@@ -314,9 +356,12 @@ fn overlay_for(
                 };
                 Ok(Overlay::Search(CursorOver::new(query, len)))
             }
-            CatalogName::Server(server_name) => {
-                server_search(parts.servers, server_name)
-            }
+            CatalogName::Server(server_name) => parts
+                .catalogs
+                .iter()
+                .any(|catalog| catalog.server_name == *server_name)
+                .then_some(Overlay::ServerSearch)
+                .ok_or(Unhandled),
         },
         OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist(TextEntry::default())),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
@@ -331,13 +376,7 @@ fn overlay_for(
             .ok_or(Unhandled),
         OverlayName::JumpToTime => Ok(Overlay::JumpToTime(TextEntry::default())),
         OverlayName::MusicDir => Ok(prompt(parts.music_dir)),
-        OverlayName::AddServer => Ok(Overlay::AddServer(ServerPrompt::Link {
-            origin_server_name: None,
-            text_entry: TextEntry {
-                input: String::new(),
-                error: Endpoint::parse("").err(),
-            },
-        })),
+        OverlayName::AddServer => Ok(Overlay::AddServer(ServerPrompt::default())),
         OverlayName::Servers => Ok(Overlay::Servers(servers_cursor(
             parts.workspace.overlay.as_ref(),
             parts.servers,
@@ -371,7 +410,7 @@ mod tests {
             cursor_over::CursorOver,
             key::{Key, KeyCode, KeyPress, Modifiers},
             model::Model,
-            overlay::{Overlay, ServerPrompt, TextEntry},
+            overlay::{Field, Overlay, ServerPrompt, TextEntry},
             server::{
                 Account,
                 Connection,
@@ -436,25 +475,24 @@ mod tests {
         )
     }
 
-    fn link(input: &str) -> Overlay {
-        Overlay::AddServer(ServerPrompt::Link {
-            origin_server_name: None,
-            text_entry: TextEntry {
-                input: input.to_owned(),
-                error: Endpoint::parse(input).err(),
+    fn form(field: Field, link: &str, user: &str) -> ServerPrompt {
+        ServerPrompt {
+            link_text_entry: TextEntry {
+                input: link.to_owned(),
+                error: None,
             },
-        })
-    }
-
-    fn user_step(link: &str, user: &str) -> Overlay {
-        Overlay::AddServer(ServerPrompt::User {
-            origin_server_name: None,
-            endpoint: Endpoint::parse(link).unwrap(),
-            text_entry: TextEntry {
+            user_text_entry: TextEntry {
                 input: user.to_owned(),
                 error: None,
             },
-        })
+            field,
+            reached_field: field,
+            ..ServerPrompt::default()
+        }
+    }
+
+    fn add_server(field: Field, link: &str, user: &str) -> Overlay {
+        Overlay::AddServer(form(field, link, user))
     }
 
     #[rstest]
@@ -469,36 +507,33 @@ mod tests {
         KeyCode::Char('k'),
         servers_at(0, 2)
     )]
-    #[case::enter_edits_the_selected_server_at_link_with_its_endpoint_typed_in(
+    #[case::enter_edits_the_selected_server_in_a_form_filled_with_its_link_and_user(
         Some(servers_at(1, 2)),
         KeyCode::Enter,
-        Overlay::AddServer(ServerPrompt::Link {
+        Overlay::AddServer(ServerPrompt {
             origin_server_name: Some(ServerName::new("tunes.example.com")),
-            text_entry: TextEntry {
-                input: "https://tunes.example.com".to_owned(),
-                error: None,
-            },
+            ..form(Field::Link, "https://tunes.example.com", "bob")
         })
     )]
-    #[case::the_user_step_of_a_known_host_starts_with_its_user_typed_in(
-        Some(link("https://tunes.example.com")),
+    #[case::the_user_of_a_known_host_fills_in_on_leaving_the_link(
+        Some(add_server(Field::Link, "https://tunes.example.com", "")),
         KeyCode::Enter,
-        user_step("https://tunes.example.com", "bob")
+        add_server(Field::User, "https://tunes.example.com", "bob")
     )]
-    #[case::the_user_step_of_a_new_host_starts_empty(
-        Some(link("https://other.example.com")),
+    #[case::the_user_of_a_new_host_stays_empty_on_leaving_the_link(
+        Some(add_server(Field::Link, "https://other.example.com", "")),
         KeyCode::Enter,
-        user_step("https://other.example.com", "")
+        add_server(Field::User, "https://other.example.com", "")
     )]
     #[case::d_asks_to_remove_the_selected_server(
         Some(servers_at(1, 2)),
         KeyCode::Char('d'),
         Overlay::ConfirmRemove(ServerName::new("tunes.example.com"))
     )]
-    #[case::u_adds_a_server_from_an_empty_link(
+    #[case::u_adds_a_server_from_an_empty_form(
         Some(servers_at(1, 2)),
         KeyCode::Char('u'),
-        link("")
+        add_server(Field::Link, "", "")
     )]
     fn a_key_in_the_servers_overlays_opens_the_next_step(
         #[case] overlay: Option<Overlay>,
@@ -513,10 +548,13 @@ mod tests {
     }
 
     #[test]
-    fn the_link_step_opens_with_the_verdict_that_clearing_it_gives() {
+    fn the_form_opens_as_clearing_an_untouched_link_leaves_it() {
         let mut opened = model_with(two_servers(), None);
         press(&mut opened, KeyCode::Char('u')).unwrap();
-        let mut cleared = model_with(two_servers(), Some(link("https://m")));
+        let mut cleared = model_with(
+            two_servers(),
+            Some(add_server(Field::Link, "https://m", "")),
+        );
         let key = Key {
             code: KeyCode::Char('u'),
             modifiers: Modifiers::CTRL,

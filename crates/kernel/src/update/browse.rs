@@ -16,9 +16,8 @@ use crate::{
         model::ScanStatus,
         overlay::Overlay,
         player::Player,
-        playlist::{Playlist, PlaylistSource, index_of},
-        revision::Revisions,
-        server::{Listing, Page, ServerStatus},
+        playlist::{Playlist, PlaylistRows, PlaylistSource, index_of},
+        server::{Listing, Page, Server, ServerStatus},
         time::Moment,
         toast::Toast,
         track::{CatalogRow, Track, TrackSource},
@@ -55,19 +54,17 @@ pub(crate) fn update(
         CatalogName::Local => return playlist(parts, request, now),
         CatalogName::Server(server_name) => server_name,
     };
-    let server_status = &parts
+    let server = parts
         .playback_parts
         .servers
         .iter()
         .find(|server| server.account.server_name == *server_name)
-        .ok_or(Unhandled)?
-        .server_status;
+        .ok_or(Unhandled)?;
     let catalog = parts
         .catalogs
         .iter_mut()
         .find(|catalog| catalog.server_name == *server_name)
         .ok_or(Unhandled)?;
-    let revisions = &mut *parts.playback_parts.revisions;
     match request {
         BrowseRequest::CursorBy { .. }
         | BrowseRequest::SelectFirst
@@ -77,62 +74,75 @@ pub(crate) fn update(
             let cursor =
                 moved(level.cursor, &request, visible_rows).ok_or(Unhandled)?;
             replace(&mut level.cursor, cursor)?;
-            Ok(server::catalog::moved(catalog, server_status, revisions))
+            server::catalog::moved(catalog);
         }
         BrowseRequest::PlaySelected => {
+            let source = catalog.playlist_source();
             let level = catalog.level();
-            let Some(album_playlist) = album(&level.catalog_rows, level.cursor) else {
-                let level =
-                    album_level(level.cursor.get(&level.catalog_rows), server_status)?;
+            let Some(selection) = album(level.rows(), level.cursor, source) else {
+                let level = album_level(level.cursor.get(level.rows()), server)?;
                 catalog.album_level = Some(level);
-                return Ok(server::catalog::list(catalog, server_status, revisions));
+                return Ok(list(&mut parts));
             };
-            play_selected(&mut parts, album_playlist, now)
+            return play_selected(&mut parts, selection, now);
         }
-        BrowseRequest::Open(found) => {
-            if let Some(album_playlist) = album(&found.content, found.cursor) {
-                return play_selected(&mut parts, album_playlist, now);
-            }
-            let level = album_level(found.cursor.get(&found.content), server_status)?;
-            catalog.album_level = Some(level);
-            Ok(server::catalog::list(catalog, server_status, revisions))
+        BrowseRequest::CycleSort => cycle_sort(catalog, server)?,
+        BrowseRequest::CycleView => cycle_view(catalog, server)?,
+        BrowseRequest::LevelUp => {
+            catalog.album_level.take().ok_or(Unhandled)?;
+            server::catalog::show(catalog);
         }
-        BrowseRequest::CycleSort => cycle_sort(catalog, server_status, revisions),
-        BrowseRequest::LevelUp => level_up(catalog, server_status, revisions),
-        BrowseRequest::ToggleFavorite => star(catalog, server_status, parts.favorites),
-        BrowseRequest::StepCatalog(_) => playlist(parts, request, now),
+        BrowseRequest::ToggleFavorite => return star(catalog, server, parts.favorites),
+        BrowseRequest::StepCatalog(_) => return playlist(parts, request, now),
         BrowseRequest::Rescan
         | BrowseRequest::SavePlaylist(_)
-        | BrowseRequest::Trash(_) => Err(Unhandled),
+        | BrowseRequest::Trash(_)
+        | BrowseRequest::JumpTo(_) => return Err(Unhandled),
     }
+    Ok(list(&mut parts))
+}
+
+fn list(parts: &mut BrowseParts<'_>) -> Cmd {
+    server::catalog::list(
+        parts.catalogs,
+        parts.playback_parts.servers,
+        parts.playback_parts.revisions,
+    )
 }
 
 fn album_level(
     catalog_row: Option<&CatalogRow>,
-    server_status: &ServerStatus,
+    server: &Server,
 ) -> Result<BrowseLevel, Unhandled> {
-    server::online(server_status)?;
+    server::online(&server.server_status)?;
     match catalog_row.ok_or(Unhandled)? {
-        CatalogRow::Album(server_album) => Ok(BrowseLevel::new(Listing::Album(
-            server_album.album_id.clone(),
-        ))),
+        CatalogRow::Album(server_album) => Ok(BrowseLevel {
+            paging: Paging::Queued(Page::default()),
+            ..BrowseLevel::new(Listing::Album(server_album.album_id.clone()))
+        }),
+        CatalogRow::Playlist(server_playlist) => Ok(BrowseLevel {
+            paging: Paging::Queued(Page::default()),
+            ..BrowseLevel::new(Listing::Playlist(server_playlist.playlist_id.clone()))
+        }),
         CatalogRow::Track(_) => Err(Unhandled),
     }
 }
 
 fn star(
     catalog: &mut Catalog,
-    server_status: &ServerStatus,
+    server: &Server,
     favorites: &mut Favorites,
 ) -> Result<Cmd, Unhandled> {
-    let session = match server_status {
+    let session = match &server.server_status {
         ServerStatus::Online(session) => session,
         ServerStatus::Connecting | ServerStatus::Offline(_) => return Err(Unhandled),
     };
     let level = catalog.level();
-    let track_source = match level.cursor.get(&level.catalog_rows).ok_or(Unhandled)? {
+    let track_source = match level.cursor.get(level.rows()).ok_or(Unhandled)? {
         CatalogRow::Track(track) => track.source(),
-        CatalogRow::Album(_server_album) => return Err(Unhandled),
+        CatalogRow::Album(_) | CatalogRow::Playlist(_) => {
+            return Err(Unhandled);
+        }
     };
     let favorite = !favorites.favorite(track_source);
     let remote_cmd = match track_source {
@@ -154,16 +164,11 @@ fn star(
     ]))
 }
 
-fn level_up(
-    catalog: &mut Catalog,
-    server_status: &ServerStatus,
-    revisions: &mut Revisions,
-) -> Result<Cmd, Unhandled> {
-    catalog.album_level.take().ok_or(Unhandled)?;
-    Ok(server::catalog::show(catalog, server_status, revisions))
-}
-
-fn album(catalog_rows: &[CatalogRow], cursor: Cursor) -> Option<Playlist> {
+fn album(
+    catalog_rows: &[CatalogRow],
+    cursor: Cursor,
+    playlist_source: PlaylistSource,
+) -> Option<Selection> {
     let Some(CatalogRow::Track(selected)) = cursor.get(catalog_rows) else {
         return None;
     };
@@ -171,37 +176,62 @@ fn album(catalog_rows: &[CatalogRow], cursor: Cursor) -> Option<Playlist> {
         .iter()
         .filter_map(|catalog_row| match catalog_row {
             CatalogRow::Track(track) => Some(Arc::clone(track)),
-            CatalogRow::Album(_server_album) => None,
+            CatalogRow::Album(_) | CatalogRow::Playlist(_) => None,
         })
         .collect();
     let index = index_of(&tracks, selected.source())?;
     let mut playlist = Playlist::from_tracks(tracks);
     playlist.jump(ViewIndex::new(index))?;
-    Some(playlist)
+    Some(Selection {
+        playlist,
+        playlist_source,
+    })
+}
+
+struct Selection {
+    playlist: Playlist,
+    playlist_source: PlaylistSource,
 }
 
 fn play_selected(
     parts: &mut BrowseParts<'_>,
-    album_playlist: Playlist,
+    selection: Selection,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let CatalogName::Server(server_name) = &*parts.catalog_name else {
-        return Err(Unhandled);
-    };
-    let track = album_playlist.current().cloned().ok_or(Unhandled)?;
+    let Selection {
+        playlist,
+        playlist_source,
+    } = selection;
+    let track = playlist.current().cloned().ok_or(Unhandled)?;
     let cmd = match player::start(&mut parts.playback_parts, track, now) {
         Ok(cmd) => cmd,
         Err(offline_toast) => return Ok(offline_toast),
     };
-    relist(
-        album_playlist.tracks,
-        ResyncParts {
-            workspace: &mut *parts.playback_parts.workspace,
-            player: &*parts.playback_parts.player,
-            playlist: &mut *parts.playback_parts.playlist,
-        },
-    );
-    *parts.playlist_source = PlaylistSource::Server(server_name.clone());
+    let anchor = playlist.playing_index();
+    parts
+        .playback_parts
+        .playlist
+        .relist(playlist.tracks, anchor);
+    *parts.playlist_source = playlist_source;
+    if let Some(library) = parts.library.as_ref() {
+        resync_playlist(
+            parts.playlist_source,
+            library,
+            ResyncParts {
+                workspace: &mut *parts.playback_parts.workspace,
+                player: parts.playback_parts.player,
+                playlist: parts.playback_parts.playlist,
+            },
+        );
+    } else {
+        let rows = PlaylistRows::new(
+            parts.playlist_source,
+            None,
+            parts.playback_parts.playlist,
+        );
+        let browse = &mut parts.playback_parts.workspace.browse;
+        browse.cursor = browse.cursor.resize(rows.len());
+    }
     Ok(cmd)
 }
 
@@ -222,12 +252,13 @@ fn moved(
         BrowseRequest::Trash(_)
         | BrowseRequest::SavePlaylist(_)
         | BrowseRequest::PlaySelected
+        | BrowseRequest::JumpTo(_)
         | BrowseRequest::CycleSort
+        | BrowseRequest::CycleView
         | BrowseRequest::Rescan
         | BrowseRequest::ToggleFavorite
         | BrowseRequest::StepCatalog(_)
-        | BrowseRequest::LevelUp
-        | BrowseRequest::Open(_) => None,
+        | BrowseRequest::LevelUp => None,
     }
 }
 
@@ -261,11 +292,8 @@ fn catalog(
         .find(|catalog| catalog.server_name == server.account.server_name)
         .ok_or(Unhandled)?;
     *parts.catalog_name = CatalogName::Server(catalog.server_name.clone());
-    Ok(server::catalog::show(
-        catalog,
-        &server.server_status,
-        parts.playback_parts.revisions,
-    ))
+    server::catalog::show(catalog);
+    Ok(list(parts))
 }
 
 fn playlist(
@@ -307,25 +335,55 @@ fn playlist(
         BrowseRequest::ToggleFavorite => toggle_favorite(&mut parts),
         BrowseRequest::PlaySelected => {
             let selected = workspace.browse.selected();
-            audio::jump_to(&mut parts.playback_parts, selected, now)
+            jump_to(&mut parts, selected, now)
         }
+        BrowseRequest::JumpTo(index) => jump_to(&mut parts, index, now),
         BrowseRequest::Rescan => full_scan(&mut parts),
         BrowseRequest::SavePlaylist(name) => {
             Ok(Effect::Library(LibraryCmd::Disk(DiskCmd::SavePlaylist {
                 name,
-                tracks: parts.playback_parts.playlist.tracks.clone(),
+                tracks: PlaylistRows::new(
+                    parts.playlist_source,
+                    parts.library.as_ref(),
+                    parts.playback_parts.playlist,
+                )
+                .iter()
+                .map(Arc::clone)
+                .collect(),
             }))
             .into())
         }
         BrowseRequest::Trash(source) => trash_track(&parts, &source),
         BrowseRequest::StepCatalog(direction) => catalog(&mut parts, direction),
-        BrowseRequest::LevelUp | BrowseRequest::Open(_) => Err(Unhandled),
+        BrowseRequest::CycleView | BrowseRequest::LevelUp => Err(Unhandled),
     }
+}
+
+fn jump_to(
+    parts: &mut BrowseParts<'_>,
+    index: ViewIndex,
+    now: Moment,
+) -> Result<Cmd, Unhandled> {
+    if parts.playlist_source.server_name().is_some() {
+        let library = parts.library.as_ref().ok_or(Unhandled)?;
+        library.view_track(index).ok_or(Unhandled)?;
+        *parts.playlist_source = PlaylistSource::Library;
+        resync_playlist(
+            parts.playlist_source,
+            library,
+            ResyncParts {
+                workspace: &mut *parts.playback_parts.workspace,
+                player: parts.playback_parts.player,
+                playlist: parts.playback_parts.playlist,
+            },
+        );
+    }
+    audio::jump_to(&mut parts.playback_parts, index, now)
 }
 
 pub(crate) struct QueueParts<'a> {
     pub(crate) catalog_name: &'a CatalogName,
-    pub(crate) playlist: &'a Playlist,
+    pub(crate) rows: PlaylistRows<'a>,
     pub(crate) history: &'a [HistoryEntry],
     pub(crate) browse: &'a mut Browse,
     pub(crate) queue: &'a mut Vec<TrackSource>,
@@ -337,13 +395,13 @@ pub(crate) fn queue(
 ) -> Result<Cmd, Unhandled> {
     let QueueParts {
         catalog_name,
-        playlist,
+        rows,
         history,
         browse,
         queue,
     } = parts;
     let at_cursor =
-        || source_at(playlist, ViewIndex::new(browse.cursor.index())).ok_or(Unhandled);
+        || source_at(rows, ViewIndex::new(browse.cursor.index())).ok_or(Unhandled);
     match request {
         QueueRequest::Toggle
         | QueueRequest::PlayNext
@@ -353,12 +411,12 @@ pub(crate) fn queue(
         {
             Err(Unhandled)
         }
-        QueueRequest::ToggleAt(index) => source_at(playlist, index)
+        QueueRequest::ToggleAt(index) => source_at(rows, index)
             .map(|source| toggle_queued(queue, source))
             .ok_or(Unhandled),
         QueueRequest::ToggleHistoryEntry(position) => {
             let history_entry = history.get(position).ok_or(Unhandled)?;
-            Ok(enqueue_history_entry(queue, playlist, history_entry))
+            Ok(enqueue_history_entry(queue, rows, history_entry))
         }
         QueueRequest::Toggle => Ok(toggle_queued(queue, at_cursor()?)),
         QueueRequest::PlayNext => play_next(queue, at_cursor()?),
@@ -369,20 +427,21 @@ pub(crate) fn queue(
 
 fn enqueue_history_entry(
     queue: &mut Vec<TrackSource>,
-    playlist: &Playlist,
+    rows: PlaylistRows<'_>,
     history_entry: &HistoryEntry,
 ) -> Cmd {
-    if index_of(&playlist.tracks, &history_entry.track_source).is_some() {
+    if rows
+        .iter()
+        .any(|track| *track.source() == history_entry.track_source)
+    {
         toggle_queued(queue, history_entry.track_source.clone())
     } else {
         Cmd::message(Message::Toast(Toast::info("Not in library".to_string())))
     }
 }
 
-fn source_at(playlist: &Playlist, index: ViewIndex) -> Option<TrackSource> {
-    playlist
-        .tracks
-        .get(index.get())
+fn source_at(rows: PlaylistRows<'_>, index: ViewIndex) -> Option<TrackSource> {
+    rows.get(index)
         .filter(|track| track.local_path().is_some())
         .map(|track| track.source().clone())
 }
@@ -404,12 +463,13 @@ fn full_scan(parts: &mut BrowseParts<'_>) -> Result<Cmd, Unhandled> {
 
 fn toggle_favorite(parts: &mut BrowseParts<'_>) -> Result<Cmd, Unhandled> {
     let selected = parts.playback_parts.workspace.browse.selected();
-    let track = parts
-        .playback_parts
-        .playlist
-        .tracks
-        .get(selected.get())
-        .ok_or(Unhandled)?;
+    let track = PlaylistRows::new(
+        parts.playlist_source,
+        parts.library.as_ref(),
+        parts.playback_parts.playlist,
+    )
+    .get(selected)
+    .ok_or(Unhandled)?;
     parts.favorites.toggle(track.source().clone());
     Ok(Cmd::from_iter([
         Effect::Library(LibraryCmd::Disk(DiskCmd::SaveFavorites(
@@ -470,22 +530,45 @@ fn move_in_queue(
     Ok(Cue::QueueChanged.into())
 }
 
-fn cycle_sort(
-    catalog: &mut Catalog,
-    server_status: &ServerStatus,
-    revisions: &mut Revisions,
-) -> Result<Cmd, Unhandled> {
-    server::online(server_status)?;
+fn cycle_sort(catalog: &mut Catalog, server: &Server) -> Result<(), Unhandled> {
+    server::online(&server.server_status)?;
     let album_order = match (&catalog.album_level, &catalog.albums_level.listing) {
         (None, Listing::Albums(album_order)) => cycled(*album_order, Direction::Next),
-        (Some(_), Listing::Albums(_) | Listing::Album(_))
-        | (None, Listing::Album(_)) => {
+        (
+            Some(_),
+            Listing::Songs
+            | Listing::Albums(_)
+            | Listing::Album(_)
+            | Listing::Playlists
+            | Listing::Playlist(_),
+        )
+        | (
+            None,
+            Listing::Songs
+            | Listing::Album(_)
+            | Listing::Playlists
+            | Listing::Playlist(_),
+        ) => {
             return Err(Unhandled);
         }
     };
     catalog.albums_level.listing = Listing::Albums(album_order);
-    catalog.albums_level.paging = Paging::Next(Page::default());
-    Ok(server::catalog::list(catalog, server_status, revisions))
+    catalog.albums_level.paging = Paging::Queued(Page::default());
+    Ok(())
+}
+
+fn cycle_view(catalog: &mut Catalog, server: &Server) -> Result<(), Unhandled> {
+    server::online(&server.server_status)?;
+    match catalog.albums_level.listing {
+        Listing::Songs | Listing::Albums(_) | Listing::Playlists => {}
+        Listing::Album(_) | Listing::Playlist(_) => return Err(Unhandled),
+    }
+    catalog.album_level = None;
+    let [next, after] = &mut catalog.browse_levels;
+    mem::swap(&mut catalog.albums_level, next);
+    mem::swap(next, after);
+    server::catalog::show(catalog);
+    Ok(())
 }
 
 pub(crate) struct ResyncParts<'a> {
@@ -523,7 +606,14 @@ pub(crate) fn resync_playlist(
                 .collect();
             relist(tracks, parts);
         }
-        PlaylistSource::Named | PlaylistSource::Server(_) => {}
+        PlaylistSource::Named => {}
+        PlaylistSource::Server(_) | PlaylistSource::Songs(_) => {
+            let browse = &mut parts.workspace.browse;
+            browse.cursor = browse.cursor.resize(library.track_indexes.len());
+            if let Some(Overlay::Search(search)) = parts.workspace.overlay.as_mut() {
+                search::rerank(search, PlaylistRows::Library(library));
+            }
+        }
     }
 }
 
@@ -540,9 +630,8 @@ pub(crate) fn relist(
         .and_then(|track| index_of(&tracks, track.source()))
         .map(ViewIndex::new);
     playlist.relist(tracks, anchor);
-    playlist.play_order = mem::take(&mut playlist.play_order).without_order();
     workspace.browse.cursor = workspace.browse.cursor.resize(playlist.tracks.len());
     if let Some(Overlay::Search(search)) = workspace.overlay.as_mut() {
-        search::rerank(search, &playlist.tracks);
+        search::rerank(search, PlaylistRows::Tracks(&playlist.tracks));
     }
 }

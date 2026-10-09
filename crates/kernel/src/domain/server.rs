@@ -19,6 +19,12 @@ const SCHEMES: [&str; 2] = ["https://", "http://"];
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ServerName(Arc<str>);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Artwork {
+    pub server_name: ServerName,
+    pub id: Arc<str>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scrobble {
     NowPlaying,
@@ -294,7 +300,8 @@ impl CacheKey {
     }
 }
 
-fn file_name(text: &str) -> String {
+#[must_use]
+pub fn file_name(text: &str) -> String {
     let replaced = text.replace(['/', '\\'], "_");
     if matches!(replaced.as_str(), "" | "." | "..") {
         format!("_{replaced}")
@@ -484,6 +491,21 @@ impl AlbumId {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlaylistId(Arc<str>);
+
+impl PlaylistId {
+    #[must_use]
+    pub fn new(id: &str) -> Self {
+        Self(Arc::from(id))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, EnumIter)]
 pub enum AlbumOrder {
     Newest,
@@ -496,8 +518,11 @@ pub enum AlbumOrder {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Listing {
+    Songs,
     Albums(AlbumOrder),
     Album(AlbumId),
+    Playlists,
+    Playlist(PlaylistId),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -509,6 +534,14 @@ pub struct ServerAlbum {
     pub title: Arc<str>,
     pub artist: Arc<str>,
     pub year: Option<u16>,
+    pub track_count: usize,
+    pub duration: Duration,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerPlaylist {
+    pub playlist_id: PlaylistId,
+    pub name: Arc<str>,
     pub track_count: usize,
     pub duration: Duration,
 }

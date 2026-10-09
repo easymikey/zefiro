@@ -1,16 +1,19 @@
+use std::sync::Arc;
+
 use crate::{
     cmd::{Cmd, Effect, RemoteCmd},
     domain::{
-        catalog::{Catalog, PAGE_LEAD, Paging},
+        catalog::{BrowseLevel, Catalog, PAGE_LEAD, Paging},
         cursor::Cursor,
         favorites::Favorites,
-        overlay::Overlay,
+        playlist::PlaylistSource,
         revision::{Freshness, Revision, Revisions},
-        server::{PAGE_ROWS, Page, RemoteError, ServerStatus},
+        server::{Listing, PAGE_ROWS, Page, RemoteError, Server, ServerStatus},
+        toast::Toast,
         track::{CatalogRow, TrackSource},
     },
-    message::{CatalogPage, ServerFavorite},
-    update::{machine::Unhandled, overlay::search, server::ServerParts},
+    message::{CatalogPage, Message, ServerFavorite},
+    update::{machine::Unhandled, overlay::search::narrowed, server::ServerParts},
 };
 
 pub(crate) fn listed(
@@ -33,25 +36,83 @@ pub(crate) fn listed(
         .catalogs
         .iter_mut()
         .find(|catalog| catalog.server_name == server_name)
-        .map(Catalog::level)
+        .ok_or(Unhandled)?
+        .levels()
+        .find(|level| level.listing == listing && level.paging == Paging::Loading(page))
         .ok_or(Unhandled)?;
-    if level.listing != listing || level.paging != Paging::Loading(page) {
-        return Err(Unhandled);
-    }
     stars(server_parts.favorites, &catalog_rows, &favorites);
-    level.paging = if catalog_rows.len() < PAGE_ROWS {
-        Paging::Complete
-    } else {
-        Paging::Next(Page(page.0 + 1))
+    level.paging = match level.listing {
+        Listing::Songs | Listing::Albums(_) if catalog_rows.len() >= PAGE_ROWS => {
+            Paging::Next(Page(page.0 + 1))
+        }
+        Listing::Songs
+        | Listing::Albums(_)
+        | Listing::Album(_)
+        | Listing::Playlists
+        | Listing::Playlist(_) => Paging::Complete,
     };
     if page == Page::default() {
-        level.cursor = Cursor::new(catalog_rows.len());
         level.catalog_rows = catalog_rows;
+        narrowed(level);
+        level.cursor = Cursor::new(level.rows().len());
     } else {
+        if level.listing == Listing::Songs
+            && *server_parts.playlist_source == PlaylistSource::Songs(server_name)
+        {
+            let playlist = &mut *server_parts.playlist;
+            playlist
+                .tracks
+                .extend(catalog_rows.iter().filter_map(
+                    |catalog_row| match catalog_row {
+                        CatalogRow::Track(track) => Some(Arc::clone(track)),
+                        CatalogRow::Album(_) | CatalogRow::Playlist(_) => None,
+                    },
+                ));
+            playlist.cursor = playlist.cursor.resize(playlist.tracks.len());
+        }
         level.catalog_rows.extend(catalog_rows);
-        level.cursor = level.cursor.resize(level.catalog_rows.len());
+        level.cursor = level.cursor.resize(level.rows().len());
     }
-    Ok(Cmd::none())
+    Ok(list(
+        server_parts.catalogs,
+        server_parts.servers,
+        server_parts.revisions,
+    ))
+}
+
+pub(crate) fn upcoming(server_parts: ServerParts<'_>) -> Cmd {
+    let ServerParts {
+        servers,
+        downloads: _,
+        player: _,
+        catalog_name: _,
+        catalogs,
+        revisions,
+        favorites: _,
+        workspace: _,
+        playlist,
+        playlist_source,
+        play_reports: _,
+    } = server_parts;
+    let PlaylistSource::Songs(server_name) = playlist_source else {
+        return Cmd::none();
+    };
+    let Some(position) = playlist.position() else {
+        return Cmd::none();
+    };
+    if position + PAGE_LEAD < playlist.tracks.len() {
+        return Cmd::none();
+    }
+    let level = catalogs
+        .iter_mut()
+        .filter(|catalog| catalog.server_name == *server_name)
+        .flat_map(Catalog::levels)
+        .find(|level| level.listing == Listing::Songs);
+    let Some(level) = level else {
+        return Cmd::none();
+    };
+    level.queue();
+    list(catalogs, servers, revisions)
 }
 
 pub(crate) fn found(
@@ -59,19 +120,37 @@ pub(crate) fn found(
     result: Result<(Vec<CatalogRow>, Favorites), RemoteError>,
     revision: Revision,
 ) -> Result<Cmd, Unhandled> {
+    let (cursor, server_query) = server_parts
+        .catalogs
+        .iter_mut()
+        .flat_map(Catalog::levels)
+        .find_map(|level| {
+            let BrowseLevel {
+                listing: _,
+                catalog_rows: _,
+                cursor,
+                paging: _,
+                server_query,
+            } = level;
+            server_query
+                .as_mut()
+                .filter(|server_query| server_query.revision == Some(revision))
+                .map(|server_query| (cursor, server_query))
+        })
+        .ok_or(Unhandled)?;
+    server_query.revision = None;
     let (catalog_rows, found_favorites) = match result {
         Ok(answer) => answer,
-        Err(error) => return search::found(server_parts.overlay, Err(error), revision),
+        Err(error) => {
+            return Ok(Cmd::message(Message::Toast(Toast::error(
+                error.to_string(),
+            ))));
+        }
     };
-    let cmd = search::found(server_parts.overlay, Ok(catalog_rows), revision)?;
-    if let Some(Overlay::ServerSearch(server_query)) = server_parts.overlay.as_ref() {
-        stars(
-            server_parts.favorites,
-            &server_query.content.catalog_rows,
-            &found_favorites,
-        );
-    }
-    Ok(cmd)
+    stars(server_parts.favorites, &catalog_rows, &found_favorites);
+    *cursor = Cursor::new(catalog_rows.len());
+    server_query.catalog_rows = catalog_rows;
+    Ok(Cmd::none())
 }
 
 pub(crate) fn starred(
@@ -95,26 +174,42 @@ pub(crate) fn starred(
 }
 
 pub(crate) fn list(
-    catalog: &mut Catalog,
-    server_status: &ServerStatus,
+    catalogs: &mut [Catalog],
+    servers: &[Server],
     revisions: &mut Revisions,
 ) -> Cmd {
-    let server_name = catalog.server_name.clone();
-    let level = catalog.level();
-    let (session, page) = match (server_status, level.paging) {
-        (ServerStatus::Online(session), Paging::Next(page) | Paging::Loading(page)) => {
-            (session.clone(), page)
-        }
-        (ServerStatus::Online(_), Paging::Complete)
-        | (ServerStatus::Connecting | ServerStatus::Offline(_), _) => {
-            return Cmd::none();
-        }
+    let loading =
+        catalogs
+            .iter_mut()
+            .flat_map(Catalog::levels)
+            .any(|level| match level.paging {
+                Paging::Loading(_) => true,
+                Paging::Next(_) | Paging::Queued(_) | Paging::Complete => false,
+            });
+    if loading {
+        return Cmd::none();
+    }
+    let next = catalogs.iter_mut().find_map(|catalog| {
+        let server = servers
+            .iter()
+            .find(|server| server.account.server_name == catalog.server_name)?;
+        let session = match &server.server_status {
+            ServerStatus::Online(session) => session,
+            ServerStatus::Connecting | ServerStatus::Offline(_) => return None,
+        };
+        catalog.levels().find_map(|level| match level.paging {
+            Paging::Queued(page) => Some((server, session, level, page)),
+            Paging::Next(_) | Paging::Loading(_) | Paging::Complete => None,
+        })
+    });
+    let Some((server, session, level, page)) = next else {
+        return Cmd::none();
     };
     level.paging = Paging::Loading(page);
     revisions.list = revisions.issue_effect();
     Effect::Remote(RemoteCmd::List {
-        server_name,
-        session,
+        server_name: server.account.server_name.clone(),
+        session: session.clone(),
         listing: level.listing.clone(),
         page,
         revision: revisions.list,
@@ -122,34 +217,19 @@ pub(crate) fn list(
     .into()
 }
 
-pub(crate) fn show(
-    catalog: &mut Catalog,
-    server_status: &ServerStatus,
-    revisions: &mut Revisions,
-) -> Cmd {
+pub(crate) fn show(catalog: &mut Catalog) {
     let level = catalog.level();
-    match level.paging {
-        Paging::Loading(_) => list(catalog, server_status, revisions),
-        Paging::Next(_) if level.catalog_rows.is_empty() => {
-            list(catalog, server_status, revisions)
-        }
-        Paging::Next(_) | Paging::Complete => Cmd::none(),
+    if level.catalog_rows.is_empty() {
+        level.queue();
     }
 }
 
-pub(crate) fn moved(
-    catalog: &mut Catalog,
-    server_status: &ServerStatus,
-    revisions: &mut Revisions,
-) -> Cmd {
+pub(crate) fn moved(catalog: &mut Catalog) {
     let level = catalog.level();
-    match level.paging {
-        Paging::Next(_)
-            if level.cursor.index() + PAGE_LEAD >= level.catalog_rows.len() =>
-        {
-            list(catalog, server_status, revisions)
-        }
-        Paging::Next(_) | Paging::Loading(_) | Paging::Complete => Cmd::none(),
+    if level.query().is_none()
+        && level.cursor.index() + PAGE_LEAD >= level.catalog_rows.len()
+    {
+        level.queue();
     }
 }
 
@@ -166,7 +246,7 @@ fn stars(
                     listed_favorites.favorite(track.source()),
                 );
             }
-            CatalogRow::Album(_server_album) => {}
+            CatalogRow::Album(_) | CatalogRow::Playlist(_) => {}
         }
     }
 }

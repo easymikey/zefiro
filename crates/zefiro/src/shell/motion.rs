@@ -69,6 +69,7 @@ impl Default for Motion {
                 clock: Presence::Hidden,
                 sleep_label: Presence::Hidden,
                 spectrum: Presence::Hidden,
+                spinner: Presence::Hidden,
             },
             screen_clear: ScreenClear::NotDue,
             painted_cells: Vec::new(),

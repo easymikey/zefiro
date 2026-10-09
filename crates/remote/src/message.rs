@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use kernel::{
     cmd::{Cmds, RemoteCmd},
     domain::{
@@ -5,6 +7,7 @@ use kernel::{
         io_error::IoError,
         revision::Revision,
         server::{
+            Artwork,
             Fetched,
             Listing,
             Page,
@@ -57,6 +60,10 @@ pub enum RemoteMessage {
         result: Result<(), RemoteError>,
     },
     Saved(Result<(), IoError>),
+    Cover {
+        artwork: Artwork,
+        result: Result<PathBuf, RemoteError>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

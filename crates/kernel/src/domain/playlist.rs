@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 use strum::{EnumIter, IntoStaticStr};
 
@@ -6,6 +6,7 @@ use crate::domain::{
     cursor::Cursor,
     direction::Direction,
     index::ViewIndex,
+    library::Library,
     server::ServerName,
     track::{Track, TrackSource},
 };
@@ -73,6 +74,63 @@ pub enum PlaylistSource {
     Library,
     Named,
     Server(ServerName),
+    Songs(ServerName),
+}
+
+impl PlaylistSource {
+    #[must_use]
+    pub fn server_name(&self) -> Option<&ServerName> {
+        match self {
+            Self::Library | Self::Named => None,
+            Self::Server(server_name) | Self::Songs(server_name) => Some(server_name),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PlaylistRows<'a> {
+    Tracks(&'a [Arc<Track>]),
+    Library(&'a Library),
+}
+
+impl<'a> PlaylistRows<'a> {
+    #[must_use]
+    pub fn new(
+        playlist_source: &PlaylistSource,
+        library: Option<&'a Library>,
+        playlist: &'a Playlist,
+    ) -> Self {
+        match (playlist_source.server_name(), library) {
+            (None, _) => Self::Tracks(&playlist.tracks),
+            (Some(_), Some(library)) => Self::Library(library),
+            (Some(_), None) => Self::Tracks(&[]),
+        }
+    }
+
+    #[must_use]
+    pub fn len(self) -> usize {
+        match self {
+            Self::Tracks(tracks) => tracks.len(),
+            Self::Library(library) => library.track_indexes.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn get(self, index: ViewIndex) -> Option<&'a Arc<Track>> {
+        match self {
+            Self::Tracks(tracks) => tracks.get(index.get()),
+            Self::Library(library) => library.view_track(index),
+        }
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = &'a Arc<Track>> {
+        (0..self.len()).map_while(move |index| self.get(ViewIndex::new(index)))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -146,6 +204,7 @@ impl Playlist {
         let index = anchor_index.map_or_else(|| self.cursor.index(), ViewIndex::get);
         self.cursor = Cursor::at(tracks.len(), index);
         self.tracks = tracks;
+        self.play_order = mem::take(&mut self.play_order).without_order();
     }
 
     pub fn skip(&mut self, direction: Direction) -> Option<&Arc<Track>> {
@@ -154,24 +213,28 @@ impl Playlist {
         self.current()
     }
 
+    #[must_use]
+    pub(crate) fn position(&self) -> Option<usize> {
+        let current = self.playing_index()?;
+        Some(self.play_order.order().map_or(current.get(), |order| {
+            order
+                .iter()
+                .position(|track_index| *track_index == current)
+                .unwrap_or(0)
+        }))
+    }
+
     pub(crate) fn next_index(&self, direction: Direction) -> Option<usize> {
-        if self.cursor.is_empty() {
-            return None;
-        }
-        let current = self.cursor.index();
+        let position = self.position()?;
         let len = self.cursor.len();
         self.play_order.order().map_or_else(
             || match self.repeat_mode {
-                RepeatMode::All => Some(direction.wrapped(current, len)),
-                RepeatMode::Off | RepeatMode::One => current
+                RepeatMode::All => Some(direction.wrapped(position, len)),
+                RepeatMode::Off | RepeatMode::One => position
                     .checked_add_signed(direction.sign())
                     .filter(|&next| next < len),
             },
             |order| {
-                let position = order
-                    .iter()
-                    .position(|track_index| track_index.get() == current)
-                    .unwrap_or(0);
                 order
                     .get(direction.wrapped(position, order.len()))
                     .map(|index| index.get())

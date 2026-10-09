@@ -2,7 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use kernel::{
     cmd::{Cmd, CoverJob, DiskCmd, LibraryCmd, ScanMode},
-    domain::{revision::Revision, track::Track},
+    domain::{overlay::Subfolders, revision::Revision, track::Track},
     message::LibraryEvent,
     update::machine::{LoopCmd, LoopEffect, Machine, Unhandled, each_handled},
 };
@@ -106,6 +106,13 @@ impl<P> LibraryDriver<P> {
                     revision,
                 })))
             }
+            LibraryCmd::Subfolders { path, revision } => {
+                Ok(Cmd::effect(LoopEffect::Run(LibraryJob::Subfolders {
+                    path,
+                    revision,
+                    audio_extensions: self.audio_extensions,
+                })))
+            }
         }
     }
 
@@ -179,6 +186,13 @@ fn cached(
     }
 }
 
+fn listed(subfolders: Subfolders, revision: Revision) -> LibraryLoopCmd {
+    Cmd::message(LibraryEvent::Subfolders {
+        subfolders,
+        revision,
+    })
+}
+
 fn reported_error(error: &Error) -> LibraryLoopCmd {
     Cmd::message(LibraryEvent::Error(error.into()))
 }
@@ -247,6 +261,10 @@ impl<P> Machine for LibraryDriver<P> {
             LibraryMessage::Checked { verdict, revision } => {
                 Ok(Cmd::message(LibraryEvent::Checked { verdict, revision }))
             }
+            LibraryMessage::Subfolders {
+                subfolders,
+                revision,
+            } => Ok(listed(subfolders, revision)),
             LibraryMessage::HistoryLoaded { entries, skipped } => {
                 Ok(reported(LibraryEvent::HistoryLoaded(entries), skipped))
             }
@@ -396,6 +414,9 @@ mod tests {
             } => format!("list {} @ {}", music_dir.display(), revision.get()),
             LibraryJob::Probe { path, revision } => {
                 format!("probe {} @ {}", path.display(), revision.get())
+            }
+            LibraryJob::Subfolders { path, revision, .. } => {
+                format!("subfolders {} @ {}", path.display(), revision.get())
             }
         }
     }

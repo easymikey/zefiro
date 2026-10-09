@@ -58,7 +58,7 @@ fn server_track(track_number: usize, format: &str) -> Track {
     })
 }
 
-fn album_model(server_status: ServerStatus, format: &str) -> Model {
+pub(crate) fn album_model(server_status: ServerStatus, format: &str) -> Model {
     let mut model = server_model(server_status, 1);
     let mut album_level = BrowseLevel::new(Listing::Album(AlbumId::new("al-0")));
     album_level.catalog_rows = (0..3)
@@ -72,13 +72,13 @@ fn album_model(server_status: ServerStatus, format: &str) -> Model {
     model
 }
 
-fn album_sources() -> Vec<TrackSource> {
+pub(crate) fn album_sources() -> Vec<TrackSource> {
     (0..3)
         .map(|track_number| server_track(track_number, "flac").source().clone())
         .collect()
 }
 
-fn playlist_sources(model: &Model) -> Vec<TrackSource> {
+pub(crate) fn playlist_sources(model: &Model) -> Vec<TrackSource> {
     model
         .playlist
         .tracks
@@ -350,7 +350,7 @@ fn playing_a_server_track_orders_a_fetch_from_byte_zero_with_a_new_revision(
 }
 
 #[test]
-fn enter_on_the_second_track_makes_the_album_the_playlist_and_keeps_the_browse_cursor_inside_it()
+fn enter_on_the_second_track_makes_the_album_the_playlist_and_empties_the_local_cursor_with_no_library()
  {
     let mut model = album_model(online(), "flac");
     model.workspace.browse.cursor = Cursor::at(60, 50);
@@ -360,8 +360,7 @@ fn enter_on_the_second_track_makes_the_album_the_playlist_and_keeps_the_browse_c
     assert!(answer.is_ok());
     assert_eq!(playlist_sources(&model), album_sources());
     assert_eq!(model.playlist_source, PlaylistSource::Server(home()));
-    assert_eq!(model.workspace.browse.cursor.len(), 3);
-    assert!(model.workspace.browse.cursor.index() < 3);
+    assert_eq!(model.workspace.browse.cursor, Cursor::at(0, 0));
 }
 
 fn go_offline(model: &mut Model) {
@@ -386,10 +385,6 @@ fn last_toast(model: &Model) -> Option<&str> {
 )]
 #[case::next(entered_album_model(), Message::Playback(PlaybackRequest::Next))]
 #[case::previous(playing_album_model(), Message::Playback(PlaybackRequest::Previous))]
-#[case::jump(
-    playing_album_model(),
-    Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2)))
-)]
 #[case::toggle_from_stopped(
     stopped_album_model(),
     Message::Playback(PlaybackRequest::Toggle)
@@ -640,4 +635,118 @@ fn remove_of_the_server_of_the_preloaded_track_plays_it_when_the_engine_keeps_th
         Player::Playing { track, .. } if track.source() == successor.source()
     ));
     assert_eq!(model.downloads, downloads);
+}
+
+fn artwork() -> kernel::domain::server::Artwork {
+    kernel::domain::server::Artwork {
+        server_name: home(),
+        id: Arc::from("al-0"),
+    }
+}
+
+fn cover_album_model() -> Model {
+    let mut model = album_model(online(), "flac");
+    if let Some(album_level) = model.catalogs[0].album_level.as_mut() {
+        album_level.catalog_rows = (0..3)
+            .map(|track_number| {
+                CatalogRow::Track(Arc::new(
+                    server_track(track_number, "flac").with_cover(Some(artwork())),
+                ))
+            })
+            .collect();
+    }
+    model.workspace.cover_side = Some(kernel::domain::geometry::Pixels(300));
+    model
+}
+
+fn cover_effects(model: &mut Model, message: Message) -> Vec<Effect> {
+    kernel::update::update(model, message, Moment::default())
+        .unwrap()
+        .into_iter()
+        .filter(|effect| {
+            matches!(
+                effect,
+                Effect::Remote(RemoteCmd::Cover { .. })
+                    | Effect::Library(kernel::cmd::LibraryCmd::DecodeCover(_))
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_server_track_asks_for_its_cover_once_and_the_next_track_of_the_album_asks_nothing()
+{
+    let mut model = cover_album_model();
+
+    let started =
+        cover_effects(&mut model, Message::Browse(BrowseRequest::PlaySelected));
+    let answered = cover_effects(
+        &mut model,
+        Message::Remote(RemoteEvent::Cover {
+            artwork: artwork(),
+            result: Ok(PathBuf::from("/cache/covers/home/al-0/cover.jpg")),
+        }),
+    );
+    let next = cover_effects(&mut model, Message::Playback(PlaybackRequest::Next));
+
+    assert_eq!(
+        started,
+        vec![Effect::Remote(RemoteCmd::Cover {
+            session: session(),
+            artwork: artwork(),
+        })]
+    );
+    assert_eq!(
+        answered,
+        vec![Effect::Library(kernel::cmd::LibraryCmd::DecodeCover(
+            kernel::cmd::CoverJob {
+                path: PathBuf::from("/cache/covers/home/al-0/cover.jpg"),
+                side: kernel::domain::geometry::Pixels(300),
+            }
+        ))]
+    );
+    assert_eq!(next, Vec::new());
+}
+
+#[test]
+fn a_failed_cover_fetch_leaves_the_empty_cover_and_no_toast() {
+    let mut model = cover_album_model();
+    drop(browse(&mut model, BrowseRequest::PlaySelected));
+
+    let effects = cover_effects(
+        &mut model,
+        Message::Remote(RemoteEvent::Cover {
+            artwork: artwork(),
+            result: Err(RemoteError::Moved {
+                server_name: home(),
+            }),
+        }),
+    );
+
+    assert_eq!(effects, Vec::new());
+    assert!(model.covers.is_empty());
+    assert!(model.workspace.toasts.is_empty());
+}
+
+#[test]
+fn a_stored_artwork_of_another_server_with_the_same_id_asks_for_the_cover() {
+    let mut model = cover_album_model();
+    model.covers.insert(
+        kernel::domain::server::Artwork {
+            server_name: ServerName::new("work"),
+            id: Arc::from("al-0"),
+        },
+        PathBuf::from("/cache/covers/work/al-0/cover.jpg"),
+    );
+
+    let started =
+        cover_effects(&mut model, Message::Browse(BrowseRequest::PlaySelected));
+
+    assert_eq!(
+        started,
+        vec![Effect::Remote(RemoteCmd::Cover {
+            session: session(),
+            artwork: artwork(),
+        })]
+    );
 }

@@ -456,19 +456,60 @@ pub(crate) fn search_cmd(input: &str, revision: Revision) -> Option<RemoteMessag
             server_name: ServerName::new("a"),
             session: session()?,
             input: input.to_owned(),
+            listing: Listing::Songs,
             revision,
         }],
         at: Instant::now(),
     }))
 }
 
-fn search_job(input: &str, revision: Revision) -> Option<RemoteJob> {
+fn search_job(input: &str, counts: &str, revision: Revision) -> Option<RemoteJob> {
     Some(RemoteJob::Search {
         server_name: ServerName::new("a"),
-        session: session()?,
-        input: input.to_owned(),
+        link: format!(
+            "{}/rest/search3?query={input}&artistCount=0&{counts}&u=alice",
+            session()?.endpoint
+        ),
         revision,
     })
+}
+
+#[rstest]
+#[case::songs(Listing::Songs, "albumCount=0&songCount=200")]
+#[case::albums(Listing::Albums(AlbumOrder::Newest), "albumCount=200&songCount=0")]
+fn a_search_asks_search3_for_the_open_kind_only(
+    #[case] listing: Listing,
+    #[case] counts: &str,
+) {
+    let revision = Revision::default().next();
+    let mut driver =
+        RemoteDriver::new(env::temp_dir(), env::temp_dir().join("zefiro-reports.json"));
+    let asked = session().map(|session| {
+        RemoteMessage::Cmds(Cmds {
+            cmds: vec![RemoteCmd::Search {
+                server_name: ServerName::new("a"),
+                session,
+                input: "kind of".to_owned(),
+                listing,
+                revision,
+            }],
+            at: Instant::now(),
+        })
+    });
+    assert!(
+        asked
+            .and_then(|message| answered(&mut driver, message))
+            .is_some()
+    );
+    assert_eq!(
+        jobs(answered(&mut driver, elapsed(revision))),
+        Some((
+            search_job("kind%20of", counts, revision)
+                .into_iter()
+                .collect(),
+            vec![]
+        ))
+    );
 }
 
 pub(crate) type Waits = (Vec<(Duration, RemoteTimer)>, Vec<RemoteEvent>);
@@ -519,7 +560,12 @@ fn three_searches_within_the_wait_give_one_job_with_the_last_input() {
     }
     assert_eq!(
         jobs(answered(&mut driver, elapsed(third))),
-        Some((search_job("mil", third).into_iter().collect(), vec![]))
+        Some((
+            search_job("mil", "albumCount=0&songCount=200", third)
+                .into_iter()
+                .collect(),
+            vec![]
+        ))
     );
     assert!(matches!(driver.transition(elapsed(third)), Err(Unhandled)));
 }

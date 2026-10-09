@@ -1,10 +1,10 @@
 ---
 source: crates/widgets/src/overlay/search/mod.rs
-assertion_line: 419
-expression: "painted(&overlay, 80, 28)"
+assertion_line: 399
+expression: "rendered(80, 28, |frame|\nframe.render_widget(&overlay, frame.area())).to_string()"
 ---
 "╭ SEARCH ──────────────────────────────────────────────────────────────────────╮"
-"│ / a_   2 matches of 2 total                                                  │"
+"│ / a    2 matches of 2 total                                                  │"
 "│   Alpha                                                                      │"
 "│ > Beta                                                                       │"
 "╰──────────────────────────────────────────────────────────────────────────────╯"

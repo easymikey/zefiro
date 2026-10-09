@@ -19,9 +19,10 @@ mod successor;
 mod transport;
 mod workspace;
 
-use std::{mem, sync::Arc};
+use std::{mem, path::PathBuf, sync::Arc};
 
 use parts::{browse_parts, config_parts, library_parts, playback_parts, server_parts};
+use player::events::session;
 
 use crate::{
     cmd::{
@@ -39,9 +40,9 @@ use crate::{
         cue::Cue,
         geometry::Pixels,
         model::Model,
-        playlist::{PlayOrder, Playlist},
+        playlist::{PlayOrder, Playlist, PlaylistRows},
         revision::{Freshness, Revision},
-        server::PlayReport,
+        server::{Artwork, PlayReport, RemoteError},
         settings::Settings,
         supervision::{Announcement, Decision},
         time::Moment,
@@ -138,17 +139,31 @@ fn decode_cover(
     shown_cover(model)
         .filter(|(track, side)| {
             before.is_none_or(|(shown, shown_side)| {
-                (shown.local_path(), shown_side) != (track.local_path(), side)
+                (shown.local_path(), shown.artwork(), shown_side)
+                    != (track.local_path(), track.artwork(), side)
             })
         })
-        .and_then(|(track, side)| {
-            track.local_path().map(|path| {
-                Effect::Library(LibraryCmd::DecodeCover(CoverJob {
-                    path: path.to_path_buf(),
-                    side,
-                }))
-            })
-        })
+        .and_then(
+            |(track, side)| match (track.local_path(), track.artwork()) {
+                (Some(path), _) => Some(decode(path.to_path_buf(), side)),
+                (None, Some(artwork)) => model.covers.get(artwork).map_or_else(
+                    || {
+                        session(&model.servers, &artwork.server_name).map(|session| {
+                            Effect::Remote(RemoteCmd::Cover {
+                                session: session.clone(),
+                                artwork: artwork.clone(),
+                            })
+                        })
+                    },
+                    |path| Some(decode(path.clone(), side)),
+                ),
+                (None, None) => None,
+            },
+        )
+}
+
+fn decode(path: PathBuf, side: Pixels) -> Effect {
+    Effect::Library(LibraryCmd::DecodeCover(CoverJob { path, side }))
 }
 
 fn drain(
@@ -240,8 +255,11 @@ impl Input {
 }
 
 fn roll_pending(playlist: &Playlist) -> Option<Effect> {
-    match playlist.play_order {
+    match &playlist.play_order {
         PlayOrder::ShufflePending => Some(Effect::RollShuffle(playlist.tracks.len())),
+        PlayOrder::Shuffled(order) if order.len() < playlist.tracks.len() => {
+            Some(Effect::RollShuffle(playlist.tracks.len()))
+        }
         PlayOrder::Linear | PlayOrder::Shuffled(_) => None,
     }
 }
@@ -390,12 +408,17 @@ fn update_overlay(
     overlay::update(
         overlay::OverlayParts {
             workspace: &mut model.workspace,
-            playlist: &model.playlist,
+            rows: PlaylistRows::new(
+                &model.playlist_source,
+                model.library.as_ref(),
+                &model.playlist,
+            ),
             player: &model.player,
             history: &model.history,
             music_dir: &model.music_dir,
             servers: &model.servers,
             catalog_name: &model.catalog_name,
+            catalogs: &mut model.catalogs,
             revisions: &mut model.revisions,
         },
         request,
@@ -409,7 +432,11 @@ fn update_queue(
     browse::queue(
         browse::QueueParts {
             catalog_name: &model.catalog_name,
-            playlist: &model.playlist,
+            rows: PlaylistRows::new(
+                &model.playlist_source,
+                model.library.as_ref(),
+                &model.playlist,
+            ),
             history: &model.history,
             browse: &mut model.workspace.browse,
             queue: &mut model.queue,
@@ -425,6 +452,8 @@ fn remote(model: &mut Model, event: RemoteEvent) -> Result<Cmd, Unhandled> {
         Cmd::message(Message::Toast(Toast::error(format!(
             "Play reports are unsaved: {io_error}"
         ))))
+    } else if let RemoteEvent::Cover { artwork, result } = event {
+        covered(model, artwork, result)?
     } else {
         server::update(server_parts(model), event)?
     };
@@ -432,6 +461,24 @@ fn remote(model: &mut Model, event: RemoteEvent) -> Result<Cmd, Unhandled> {
         &model.servers,
         &mut model.play_reports,
     )))
+}
+
+fn covered(
+    model: &mut Model,
+    artwork: Artwork,
+    result: Result<PathBuf, RemoteError>,
+) -> Result<Cmd, Unhandled> {
+    if model.player.current().and_then(|track| track.artwork()) != Some(&artwork) {
+        return Err(Unhandled);
+    }
+    Ok(match result {
+        Ok(path) => {
+            let side = cover_side(&model.workspace, &model.settings);
+            model.covers.insert(artwork, path.clone());
+            side.map_or_else(Cmd::none, |side| Cmd::effect(decode(path, side)))
+        }
+        Err(_remote_error) => Cmd::none(),
+    })
 }
 
 fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhandled> {
@@ -459,6 +506,7 @@ fn branch(model: &mut Model, message: Message, now: Moment) -> Result<Cmd, Unhan
         Message::Config(event) => config::update(config_parts(model), event),
         Message::Audio(audio_event) => {
             audio::update(&mut playback_parts(model), audio_event, now)
+                .map(|cmd| cmd.then(server::catalog::upcoming(server_parts(model))))
         }
         Message::Macos(event) => macos::update(&mut playback_parts(model), event, now),
         Message::Remote(event) => remote(model, event),

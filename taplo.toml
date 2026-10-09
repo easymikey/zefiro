@@ -1,5 +1,4 @@
 include = ["**/*.toml"]
-# exclude = [".bin/**", "target/**"]
 
 [formatting]
 align_entries = false

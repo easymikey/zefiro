@@ -11,7 +11,7 @@ expression: frame(&servers)
 "                                                                                                    "
 "      ╭ Servers ─────────────────────────────────────────────────────────────────────────────╮      "
 "      │   home    music.example.com  alice  online                                           │      "
-"      │ > office  tunes.example.org  bob    connecting…                                      │      "
+"      │ > office  tunes.example.org  bob    ⣾ connecting…                                    │      "
 "      │   attic   10.0.0.2           carol  offline: attic is out of reach: an unknown error │      "
 "      │   lab     lab.example.net    dave   wrong user or password                           │      "
 "      │ Enter edit · t reconnect · d remove · u add · Esc close                              │      "

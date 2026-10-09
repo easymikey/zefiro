@@ -1,11 +1,11 @@
-use std::mem;
-
 use crate::{
     cmd::{Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
         cue::Cue,
         cursor_over::CursorOver,
+        direction::Direction,
         overlay::{
+            Field,
             MusicDirError,
             Overlay,
             SearchQuery,
@@ -19,8 +19,10 @@ use crate::{
             Connection,
             Credential,
             Endpoint,
+            RemoteError,
             Secret,
             ServerName,
+            ServerStatus,
             UserName,
         },
         time::{TimecodeError, parse_timecode},
@@ -29,6 +31,7 @@ use crate::{
         BrowseRequest,
         ConfigEvent,
         Message,
+        OverlayRequest,
         PlaybackRequest,
         ServerRequest,
         TextRequest,
@@ -78,7 +81,7 @@ fn opened_playback(previous: Option<&Overlay>, overlay: &Overlay) -> Cmd {
         }
         Overlay::Help
         | Overlay::Search(_)
-        | Overlay::ServerSearch(_)
+        | Overlay::ServerSearch
         | Overlay::SavePlaylist(_)
         | Overlay::History(_)
         | Overlay::ConfirmTrash(_)
@@ -96,7 +99,7 @@ fn closed_playback(overlay: &Overlay) -> Cmd {
         Overlay::Settings(..) => release(),
         Overlay::Help
         | Overlay::Search(_)
-        | Overlay::ServerSearch(_)
+        | Overlay::ServerSearch
         | Overlay::SavePlaylist(_)
         | Overlay::History(_)
         | Overlay::ConfirmTrash(_)
@@ -111,7 +114,7 @@ fn closed_playback(overlay: &Overlay) -> Cmd {
 
 enum Confirmed {
     Close(Cmd),
-    Stay,
+    Stay(Cmd),
 }
 
 fn confirm(overlay: &mut Option<Overlay>) -> Result<Cmd, Unhandled> {
@@ -121,26 +124,14 @@ fn confirm(overlay: &mut Option<Overlay>) -> Result<Cmd, Unhandled> {
             *overlay = None;
             Ok(cued_close(cmd))
         }
-        Confirmed::Stay => Ok(Cmd::none()),
+        Confirmed::Stay(cmd) => Ok(cmd),
     }
 }
 
 fn confirm_cmd(overlay: &mut Overlay) -> Result<Confirmed, Unhandled> {
     match overlay {
         Overlay::Search(search) => confirm_search(search).map(Confirmed::Close),
-        Overlay::ServerSearch(server_query) => {
-            server_query
-                .cursor
-                .get(&server_query.content.catalog_rows)
-                .ok_or(Unhandled)?;
-            let found = CursorOver {
-                cursor: server_query.cursor,
-                content: mem::take(&mut server_query.content.catalog_rows),
-            };
-            Ok(Confirmed::Close(Cmd::message(Message::Browse(
-                BrowseRequest::Open(found),
-            ))))
-        }
+        Overlay::ServerSearch => Ok(Confirmed::Close(Cmd::none())),
         Overlay::SavePlaylist(text_entry) => confirm_save_playlist(text_entry),
         Overlay::ConfirmTrash(track) => Ok(Confirmed::Close(Cmd::message(
             Message::Browse(BrowseRequest::Trash(track.source().clone())),
@@ -150,6 +141,7 @@ fn confirm_cmd(overlay: &mut Overlay) -> Result<Confirmed, Unhandled> {
             text_entry,
             verdict,
             revision,
+            folders: _,
         } => confirm_music_dir(text_entry, verdict.filter(|_| revision.is_none())),
         Overlay::AddServer(server_prompt) => server_prompt.confirm(),
         Overlay::ConfirmRemove(server_name) => Ok(Confirmed::Close(Cmd::message(
@@ -165,9 +157,7 @@ fn confirm_cmd(overlay: &mut Overlay) -> Result<Confirmed, Unhandled> {
 
 fn confirm_search(search_query: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
     let index = search_query.selected_match().ok_or(Unhandled)?;
-    Ok(Cmd::message(Message::Playback(PlaybackRequest::JumpTo(
-        index,
-    ))))
+    Ok(Cmd::message(Message::Browse(BrowseRequest::JumpTo(index))))
 }
 
 fn confirm_jump(
@@ -177,9 +167,8 @@ fn confirm_jump(
         Ok(target) => Ok(Confirmed::Close(Cmd::message(Message::Playback(
             PlaybackRequest::SeekTo(target),
         )))),
-        Err(error) => {
-            replace(&mut text_entry.error, Some(error)).map(|()| Confirmed::Stay)
-        }
+        Err(error) => replace(&mut text_entry.error, Some(error))
+            .map(|()| Confirmed::Stay(Cmd::none())),
     }
 }
 
@@ -190,9 +179,8 @@ fn confirm_save_playlist(
         Ok(name) => Ok(Confirmed::Close(Cmd::message(Message::Browse(
             BrowseRequest::SavePlaylist(name),
         )))),
-        Err(reason) => {
-            replace(&mut text_entry.error, Some(reason)).map(|()| Confirmed::Stay)
-        }
+        Err(reason) => replace(&mut text_entry.error, Some(reason))
+            .map(|()| Confirmed::Stay(Cmd::none())),
     }
 }
 
@@ -203,7 +191,7 @@ fn confirm_music_dir(
     let music_dir = text_entry.path();
     if music_dir.as_os_str().is_empty() {
         return replace(&mut text_entry.error, Some(MusicDirError::Empty))
-            .map(|()| Confirmed::Stay);
+            .map(|()| Confirmed::Stay(Cmd::none()));
     }
     match verdict {
         Some(Verdict::Readable) => {}
@@ -215,7 +203,7 @@ fn confirm_music_dir(
         )
         | None => {
             return replace(&mut text_entry.error, Some(MusicDirError::Pending))
-                .map(|()| Confirmed::Stay);
+                .map(|()| Confirmed::Stay(Cmd::none()));
         }
     }
     let save = Cmd::from(Effect::Config(ConfigCmd::Save(ConfigPatch {
@@ -228,62 +216,131 @@ fn confirm_music_dir(
 }
 
 impl ServerPrompt {
+    fn connecting(&self) -> Result<(), Unhandled> {
+        match self.server_status {
+            Some(ServerStatus::Connecting) => Err(Unhandled),
+            Some(ServerStatus::Online(_) | ServerStatus::Offline(_)) | None => Ok(()),
+        }
+    }
+
+    pub(crate) fn leave(&mut self, direction: Direction) -> Result<(), Unhandled> {
+        self.connecting()?;
+        let next = match (self.field, direction) {
+            (Field::Link, Direction::Next) | (Field::Password, Direction::Previous) => {
+                Field::User
+            }
+            (Field::User, Direction::Next) => Field::Password,
+            (Field::User, Direction::Previous) => Field::Link,
+            (Field::Link, Direction::Previous) | (Field::Password, Direction::Next) => {
+                return Err(Unhandled);
+            }
+        };
+        match self.field {
+            Field::Link => {
+                self.link_text_entry.error =
+                    Endpoint::parse(&self.link_text_entry.input).err();
+            }
+            Field::User => {
+                self.user_text_entry.error =
+                    UserName::new(&self.user_text_entry.input).err();
+            }
+            Field::Password => {
+                self.password_text_entry.error =
+                    Secret::new(&self.password_text_entry.input).err();
+            }
+        }
+        self.field = next;
+        self.reached_field = self.reached_field.max(next);
+        Ok(())
+    }
+
     fn confirm(&mut self) -> Result<Confirmed, Unhandled> {
-        match self {
-            ServerPrompt::Link {
-                origin_server_name,
-                text_entry,
-            } => match Endpoint::parse(&text_entry.input) {
-                Ok(endpoint) => {
-                    *self = ServerPrompt::User {
-                        origin_server_name: origin_server_name.take(),
-                        endpoint,
-                        text_entry: TextEntry::default(),
-                    };
-                    Ok(Confirmed::Stay)
-                }
-                Err(error) => replace(&mut text_entry.error, Some(error))
-                    .map(|()| Confirmed::Stay),
-            },
-            ServerPrompt::User {
-                origin_server_name,
-                endpoint,
-                text_entry,
-            } => match UserName::new(&text_entry.input) {
-                Ok(user_name) => {
-                    *self = ServerPrompt::Password {
-                        origin_server_name: origin_server_name.take(),
-                        endpoint: endpoint.clone(),
-                        user_name,
-                        text_entry: TextEntry::default(),
-                    };
-                    Ok(Confirmed::Stay)
-                }
-                Err(error) => replace(&mut text_entry.error, Some(error))
-                    .map(|()| Confirmed::Stay),
-            },
-            ServerPrompt::Password {
-                origin_server_name,
-                endpoint,
-                user_name,
-                text_entry,
-            } => match Secret::new(&text_entry.input) {
-                Ok(secret) => Ok(Confirmed::Close(Cmd::message(Message::Server(
+        match self.field {
+            Field::Link | Field::User => {
+                self.leave(Direction::Next)?;
+                return Ok(Confirmed::Stay(Cmd::none()));
+            }
+            Field::Password => self.connecting()?,
+        }
+        match (
+            Endpoint::parse(&self.link_text_entry.input),
+            UserName::new(&self.user_text_entry.input),
+            Secret::new(&self.password_text_entry.input),
+        ) {
+            (Ok(endpoint), Ok(user_name), Ok(secret)) => {
+                let server_name = ServerName::new(endpoint.authority());
+                self.server_status = Some(ServerStatus::Connecting);
+                let origin_server_name =
+                    self.origin_server_name.replace(server_name.clone());
+                Ok(Confirmed::Stay(Cmd::message(Message::Server(
                     ServerRequest::Add {
                         connection: Connection {
                             account: Account {
-                                server_name: ServerName::new(endpoint.authority()),
-                                endpoint: endpoint.clone(),
-                                user_name: user_name.clone(),
+                                server_name,
+                                endpoint,
+                                user_name,
                             },
                             credential: Credential::Typed(secret),
                         },
-                        origin_server_name: origin_server_name.clone(),
+                        origin_server_name,
                     },
-                )))),
-                Err(error) => replace(&mut text_entry.error, Some(error))
-                    .map(|()| Confirmed::Stay),
-            },
+                ))))
+            }
+            (link, user, password) => {
+                let field = match (&link, &user) {
+                    (Err(_), _) => Field::Link,
+                    (Ok(_), Err(_)) => Field::User,
+                    (Ok(_), Ok(_)) => Field::Password,
+                };
+                let link = link.err();
+                let user = user.err();
+                let password = password.err();
+                if field == self.field
+                    && link == self.link_text_entry.error
+                    && user == self.user_text_entry.error
+                    && password == self.password_text_entry.error
+                {
+                    return Err(Unhandled);
+                }
+                self.field = field;
+                self.link_text_entry.error = link;
+                self.user_text_entry.error = user;
+                self.password_text_entry.error = password;
+                Ok(Confirmed::Stay(Cmd::none()))
+            }
+        }
+    }
+
+    pub(crate) fn answered(
+        &mut self,
+        server_name: &ServerName,
+        server_status: &ServerStatus,
+    ) -> Option<Cmd> {
+        let Some(ServerStatus::Connecting) = self.server_status else {
+            return None;
+        };
+        Endpoint::parse(&self.link_text_entry.input)
+            .ok()
+            .filter(|endpoint| ServerName::new(endpoint.authority()) == *server_name)?;
+        match server_status {
+            ServerStatus::Online(_) => {
+                Some(Cmd::message(Message::Overlay(OverlayRequest::Close)))
+            }
+            ServerStatus::Connecting => None,
+            ServerStatus::Offline(error) => {
+                self.field = match error {
+                    RemoteError::Api { .. }
+                    | RemoteError::NoPassword { .. }
+                    | RemoteError::Keychain { .. } => Field::Password,
+                    RemoteError::Unreachable { .. }
+                    | RemoteError::Status { .. }
+                    | RemoteError::Moved { .. }
+                    | RemoteError::Parse { .. }
+                    | RemoteError::Cache { .. } => Field::Link,
+                };
+                self.server_status = Some(ServerStatus::Offline(error.clone()));
+                Some(Cmd::none())
+            }
         }
     }
 }
@@ -293,14 +350,18 @@ impl Machine for ServerPrompt {
     type Effect = Cmd;
 
     fn transition(&mut self, message: TextRequest) -> Result<Cmd, Unhandled> {
-        match self {
-            ServerPrompt::Link { text_entry, .. } => {
-                let cmd = text_entry.transition(message)?;
-                text_entry.error = Endpoint::parse(&text_entry.input).err();
+        self.connecting()?;
+        match self.field {
+            Field::Link => {
+                let cmd = self.link_text_entry.transition(message)?;
+                if self.reached_field > Field::Link {
+                    self.link_text_entry.error =
+                        Endpoint::parse(&self.link_text_entry.input).err();
+                }
                 Ok(cmd)
             }
-            ServerPrompt::User { text_entry, .. } => text_entry.transition(message),
-            ServerPrompt::Password { text_entry, .. } => text_entry.transition(message),
+            Field::User => self.user_text_entry.transition(message),
+            Field::Password => self.password_text_entry.transition(message),
         }
     }
 }
@@ -336,7 +397,7 @@ fn content_transition(
         (
             Overlay::Help
             | Overlay::Search(_)
-            | Overlay::ServerSearch(_)
+            | Overlay::ServerSearch
             | Overlay::SavePlaylist(_)
             | Overlay::History(_)
             | Overlay::Settings(_)

@@ -31,6 +31,7 @@ use widgets::{
         CoverImage,
         pixmap::{CellPixels, cover_side},
     },
+    primitive::spinner::Spinner,
     repaint::{Presence, progress_frame_due},
     screen::{frame_layout::FrameLayout, root::ScreenWidget},
     spectrum::{SPECTRUM_BANDS, Spectrum, SpectrumFeed},
@@ -293,7 +294,9 @@ where
                 .frame_due(Playback::from(scene.player), next_frame),
             Presence::Hidden => None,
         };
-        [animation, progress, clock, sleep, spectrum]
+        let spinner = Spinner::new(scene.presentation.since_first_paint)
+            .frame_due(self.motion.on_screen.spinner, frame.now);
+        [animation, progress, clock, sleep, spectrum, spinner]
             .into_iter()
             .flatten()
             .min()

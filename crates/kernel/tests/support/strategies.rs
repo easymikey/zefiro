@@ -188,6 +188,7 @@ fn browse() -> impl Strategy<Value = BrowseRequest> {
             BrowseRequest::SelectLast,
             BrowseRequest::PlaySelected,
             BrowseRequest::CycleSort,
+            BrowseRequest::CycleView,
             BrowseRequest::Rescan,
             BrowseRequest::ToggleFavorite,
             BrowseRequest::SavePlaylist(PlaylistFileName::new("mix").unwrap()),
@@ -238,8 +239,8 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
     ]
 }
 
-fn loaded() -> impl Strategy<Value = PlaybackRequest> {
-    playlist_index().prop_map(PlaybackRequest::JumpTo)
+fn loaded() -> impl Strategy<Value = BrowseRequest> {
+    playlist_index().prop_map(BrowseRequest::JumpTo)
 }
 
 fn library() -> impl Strategy<Value = LibraryEvent> {
@@ -339,7 +340,7 @@ pub(crate) fn message() -> impl Strategy<Value = Message> {
         Just(Message::ChordPrefix(ChordPrefix::G)),
         queue().prop_map(Message::Queue),
         audio().prop_map(Message::Audio),
-        loaded().prop_map(Message::Playback),
+        loaded().prop_map(Message::Browse),
         library().prop_map(Message::Library),
         config().prop_map(Message::Config),
         driver(),

@@ -199,7 +199,7 @@ fn paint_status_row(
     let status_color = status.color(&compact_card_widget.theme);
     let elapsed_total = elapsed_text(view.position(), view.duration());
     let status_line = line([
-        text(status.glyph()).fg(status_color),
+        status.mark(&compact_card_widget.theme),
         text(" ").fg(status_color),
         text(status.word()).fg(status_color),
         text("  ").fg(status_color),

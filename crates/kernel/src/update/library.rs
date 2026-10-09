@@ -11,7 +11,7 @@ use crate::{
         model::ScanStatus,
         overlay::{MusicDirError, Overlay, Verdict},
         player::Player,
-        playlist::{Playlist, PlaylistSource},
+        playlist::{Playlist, PlaylistRows, PlaylistSource},
         revision::{Freshness, Revision, Revisions},
         toast::Toast,
         track::{Track, TrackSource},
@@ -21,7 +21,7 @@ use crate::{
     update::{
         browse::{ResyncParts, relist, resync_playlist},
         machine::{Unhandled, replace},
-        overlay::search,
+        overlay::{self, search},
     },
 };
 
@@ -66,6 +66,10 @@ pub(crate) fn update(
         LibraryEvent::Checked { verdict, revision } => {
             checked(parts.workspace, verdict, revision)
         }
+        LibraryEvent::Subfolders {
+            subfolders,
+            revision,
+        } => overlay::folders::listed(parts.workspace, subfolders, revision),
         LibraryEvent::Error(error) => Ok(library_failed(&mut parts, &error)),
     }
 }
@@ -79,6 +83,7 @@ fn checked(
         text_entry,
         verdict: shown,
         revision: asked,
+        folders: _,
     }) = workspace.overlay.as_mut()
     else {
         return Err(Unhandled);
@@ -133,10 +138,12 @@ fn trashed_track(
         playlist: library_parts.playlist,
     };
     match library_parts.playlist_source {
-        PlaylistSource::Library => {
-            resync_playlist(&PlaylistSource::Library, library, resync_parts);
+        playlist_source @ (PlaylistSource::Library
+        | PlaylistSource::Server(_)
+        | PlaylistSource::Songs(_)) => {
+            resync_playlist(playlist_source, library, resync_parts);
         }
-        PlaylistSource::Named | PlaylistSource::Server(_) => {
+        PlaylistSource::Named => {
             let kept = mem::take(&mut resync_parts.playlist.tracks)
                 .into_iter()
                 .filter(|listed| listed.source() != track.source())
@@ -217,7 +224,14 @@ fn tagged_tracks(parts: &mut LibraryParts<'_>, tagged_tracks: &[Arc<Track>]) -> 
     retag_tracks(&mut parts.playlist.tracks, &tagged);
     retag_player(parts.player, &tagged);
     if let Some(Overlay::Search(search)) = parts.workspace.overlay.as_mut() {
-        search::rerank(search, &parts.playlist.tracks);
+        search::rerank(
+            search,
+            PlaylistRows::new(
+                parts.playlist_source,
+                parts.library.as_ref(),
+                parts.playlist,
+            ),
+        );
     }
     tagging_progress(parts.scan_status, read)
 }

@@ -3,7 +3,7 @@ source: crates/widgets/src/scene.rs
 expression: text
 ---
 "┏ home · Albums: newest ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-"┃ No albums                                                                    ┃"
+"┃ No albums on this server                                                     ┃"
 "┃                                                                              ┃"
 "┃                                                                              ┃"
 "┃                                                                              ┃"

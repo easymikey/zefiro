@@ -3,7 +3,6 @@ use ratatui::symbols::block;
 pub(crate) const TITLE_SEPARATOR: &str = " ── ";
 pub(crate) const DOT_SEPARATOR: &str = " · ";
 pub(crate) const ELLIPSIS: &str = "\u{2026}";
-pub(crate) const CONNECTING_GLYPH: &str = "⟳";
 pub(crate) const OFFLINE_GLYPH: &str = "○";
 pub(crate) const CREDENTIALS_GLYPH: &str = "!";
 
@@ -64,7 +63,6 @@ pub(crate) mod help {
 pub(crate) mod search {
     pub(crate) const TITLE_WORD: &str = "SEARCH";
     pub(crate) const HEADER_PREFIX: &str = "/ ";
-    pub(crate) const CURSOR: &str = "_";
     pub(crate) const HEADER_GAP: &str = "   ";
     pub(crate) const SELECTED_MARKER: &str = "> ";
     pub(crate) const UNSELECTED_MARKER: &str = "  ";
@@ -75,7 +73,6 @@ pub(crate) mod search {
     pub(crate) const OF: &str = "of";
     pub(crate) const TOTAL: &str = "total";
     pub(crate) const NO_MATCHES: &str = "No matches";
-    pub(crate) const ARTIST_SEPARATOR: &str = " — ";
 }
 
 pub(crate) mod history {
@@ -132,6 +129,10 @@ pub(crate) mod jump_to_time {
 pub(crate) mod music_dir {
     pub(crate) const TITLE_WORD: &str = "LIBRARY FOLDER";
     pub(crate) const HINT: &str = "Enter check · Esc cancel";
+    pub(crate) const SELECTED_MARKER: &str = "> ";
+    pub(crate) const UNSELECTED_MARKER: &str = "  ";
+    pub(crate) const AUDIO: &str = "\u{266a} ";
+    pub(crate) const PLAIN: &str = "  ";
 
     pub(crate) mod readable {
         pub(crate) const HINT: &str = "Enter save · Esc cancel";

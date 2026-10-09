@@ -14,7 +14,7 @@ use crate::{
         chip::{speed_chip_spans, speed_chip_width},
         span::{line, text},
         time_text::{elapsed_text, elapsed_width},
-        truncate::truncate_owned,
+        truncate::{truncate_line, truncate_owned},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -90,8 +90,13 @@ impl MinimalScreenWidget<'_> {
         let status = self.view.status();
         let color = status.color(&self.theme);
         let title = self.view.title();
-        let label = format!("{} {title}", status.glyph());
-        line([text(truncate_owned(label, width.count())).fg(color)])
+        truncate_line(
+            line([
+                status.mark(&self.theme),
+                text(format!(" {title}")).fg(color),
+            ]),
+            width.count(),
+        )
     }
 
     fn progress_line(&self, width: Cells) -> Line<'static> {

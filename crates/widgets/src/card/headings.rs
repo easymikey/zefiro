@@ -10,7 +10,8 @@ use ratatui::{
 use crate::{
     card::{CardWidget, metrics::CardMetrics},
     primitive::{
-        span::{line, text},
+        span::{StyledText, line, text},
+        spinner::Spinner,
         truncate::{truncate, truncate_line},
     },
     theme::active_theme::ActiveTheme,
@@ -24,8 +25,6 @@ pub(crate) enum CardStatus {
     Stopped,
     OutputLost,
 }
-
-const BUFFERING_GLYPH: &str = "\u{25cc}";
 
 impl CardStatus {
     #[must_use]
@@ -62,10 +61,21 @@ impl CardStatus {
     }
 
     #[must_use]
-    pub(crate) fn glyph(self) -> &'static str {
+    pub(crate) fn mark(self, theme: &ActiveTheme<'_>) -> StyledText<'static> {
+        let color = match self {
+            Self::Buffering => theme.colors().accent,
+            Self::Playing | Self::Paused | Self::Stopped | Self::OutputLost => {
+                self.color(theme)
+            }
+        };
+        text(self.glyph(theme.spinner)).fg(color)
+    }
+
+    #[must_use]
+    pub(crate) fn glyph(self, spinner: Spinner) -> &'static str {
         match self {
             Self::Playing => "\u{25b6}",
-            Self::Buffering => BUFFERING_GLYPH,
+            Self::Buffering => spinner.glyph(),
             Self::Paused => "\u{23f8}",
             Self::Stopped => "\u{25a0}",
             Self::OutputLost => "\u{26a0}",
@@ -98,7 +108,7 @@ pub(crate) fn paint(
     let status_color = status.color(&card_widget.active_theme);
     let status_line = truncate_line(
         line([
-            text(status.glyph()).fg(status_color),
+            status.mark(&card_widget.active_theme),
             text(" ").fg(status_color),
             text(status.word()).fg(status_color),
         ]),
@@ -150,7 +160,7 @@ mod tests {
     #[case::loading_while_stalled(
         loading(),
         Some(Revision::default()),
-        (CardStatus::Buffering, "\u{25cc}", "Buffering")
+        (CardStatus::Buffering, "⣾", "Buffering")
     )]
     #[case::loading_otherwise(loading(), None, (CardStatus::Playing, "\u{25b6}", "Playing"))]
     #[case::paused_while_stalled(
@@ -165,6 +175,7 @@ mod tests {
         #[case] expected: (CardStatus, &str, &str),
     ) {
         let status = CardStatus::new(OutputStatus::Ready, buffering_revision, &player);
-        assert_eq!((status, status.glyph(), status.word()), expected);
+        let glyph = status.glyph(crate::primitive::spinner::Spinner::default());
+        assert_eq!((status, glyph, status.word()), expected);
     }
 }

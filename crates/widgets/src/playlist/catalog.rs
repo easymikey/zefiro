@@ -1,10 +1,11 @@
-use std::iter::once;
+use std::{iter::once, time::Duration};
 
 use kernel::domain::{
-    catalog::Paging,
+    catalog::{Catalog, Paging},
     geometry::Cells,
     index::ViewIndex,
-    server::{AlbumOrder, Listing, Server, ServerAlbum, ServerStatus},
+    overlay::ServerQuery,
+    server::{AlbumOrder, Listing, Server, ServerAlbum, ServerPlaylist, ServerStatus},
     track::CatalogRow,
 };
 use ratatui::{
@@ -74,7 +75,7 @@ impl<'a> CatalogWidget<'a> {
         let window = row_window(&WindowFit {
             selected: ViewIndex::new(level.cursor.index()),
             playing_index: None,
-            playlist_len: level.catalog_rows.len(),
+            playlist_len: level.rows().len(),
             height: scroll_areas.content.height,
         });
         let selected_area =
@@ -108,24 +109,29 @@ impl<'a> CatalogWidget<'a> {
                     .render(areas.banner, buffer);
             }
             ServerStatus::Connecting | ServerStatus::Online(_)
-                if level.catalog_rows.is_empty() =>
+                if level.rows().is_empty() =>
             {
-                match level.paging {
-                    Paging::Complete => {
-                        let label = match level.listing {
-                            Listing::Albums(_) => "No albums",
-                            Listing::Album(_) => "No tracks",
-                        };
-                        Paragraph::new(label)
-                            .style(Style::default().fg(colors.foreground))
-                            .render(listed, buffer);
-                    }
-                    Paging::Next(_) | Paging::Loading(_) => {}
-                }
+                let label = match (level.query(), level.paging) {
+                    (Some(ServerQuery { revision: None, .. }), _) => "Nothing matches",
+                    (None, Paging::Complete) => match level.listing {
+                        Listing::Songs => "No songs on this server",
+                        Listing::Albums(_) => "No albums on this server",
+                        Listing::Playlists => "No playlists on this server",
+                        Listing::Album(_) | Listing::Playlist(_) => "No tracks",
+                    },
+                    (Some(_), _)
+                    | (
+                        None,
+                        Paging::Next(_) | Paging::Queued(_) | Paging::Loading(_),
+                    ) => "",
+                };
+                Paragraph::new(label)
+                    .style(Style::default().fg(colors.foreground))
+                    .render(listed, buffer);
             }
             ServerStatus::Connecting | ServerStatus::Online(_) => {}
         }
-        if listed.width == 0 || listed.height == 0 || level.catalog_rows.is_empty() {
+        if listed.width == 0 || listed.height == 0 || level.rows().is_empty() {
             return;
         }
         self.paint_rows(areas, buffer);
@@ -148,10 +154,7 @@ impl<'a> CatalogWidget<'a> {
         let window = areas.window;
         let rows = areas.scroll_areas.rows;
         let row_width = Cells(rows.width);
-        let visible = level
-            .catalog_rows
-            .get(window.start..window.end)
-            .unwrap_or(&[]);
+        let visible = level.rows().get(window.start..window.end).unwrap_or(&[]);
         let lines: Vec<Line<'_>> = visible
             .iter()
             .zip(window.start..)
@@ -161,9 +164,13 @@ impl<'a> CatalogWidget<'a> {
                 } else {
                     Selected::No
                 };
+                let style = row_style(selected, &colors);
                 match catalog_row {
                     CatalogRow::Album(server_album) => {
-                        album_row(server_album, row_width, row_style(selected, &colors))
+                        album_row(server_album, row_width, style)
+                    }
+                    CatalogRow::Playlist(server_playlist) => {
+                        playlist_row(server_playlist, row_width, style)
                     }
                     CatalogRow::Track(track) => track_row_line(
                         &TrackRow {
@@ -186,7 +193,7 @@ impl<'a> CatalogWidget<'a> {
             CatalogRow::Track(track) => {
                 self.catalog_view.playing(track) == Playing::Yes
             }
-            CatalogRow::Album(_) => false,
+            CatalogRow::Album(_) | CatalogRow::Playlist(_) => false,
         });
         StatefulWidget::render(
             List::new(lines)
@@ -210,14 +217,67 @@ fn title_line<'a>(
     let colors = theme.colors();
     let catalog = catalog_view.catalog;
     let albums_level = &catalog.albums_level;
-    let order = match albums_level.listing {
-        Listing::Albums(album_order) => Some(label(album_order)),
-        Listing::Album(_) => None,
+    let (view, order) = match albums_level.listing {
+        Listing::Songs => ("Songs", None),
+        Listing::Albums(album_order) => ("Albums", Some(label(album_order))),
+        Listing::Album(_) => ("Albums", None),
+        Listing::Playlists | Listing::Playlist(_) => ("Playlists", None),
     };
-    let album = catalog.album_level.as_ref().and_then(|album_level| {
+    let album = open_title(catalog);
+    let level = catalog_view.level();
+    let searching = level
+        .server_query
+        .as_ref()
+        .and_then(|server_query| server_query.revision);
+    let loading = searching
+        .map(|_revision| "searching…")
+        .or(match level.paging {
+            Paging::Queued(_) | Paging::Loading(_) => Some(match level.listing {
+                Listing::Songs => "loading songs…",
+                Listing::Albums(_) => "loading albums…",
+                Listing::Playlists => "loading playlists…",
+                Listing::Album(_) | Listing::Playlist(_) => "loading tracks…",
+            }),
+            Paging::Next(_) | Paging::Complete => None,
+        });
+    let filter = level.query().map(|server_query| {
+        let all = level.catalog_rows.len();
+        format!("{} / {all} · /{}", level.rows().len(), server_query.input)
+    });
+    let muted =
+        |piece: &'a str| -> StyledText<'a> { text(piece).fg(colors.muted_foreground) };
+    let pieces =
+        [
+            text(catalog.server_name.as_str()).fg(colors.accent),
+            muted(DOT_SEPARATOR),
+            text(view).fg(colors.foreground),
+        ]
+        .into_iter()
+        .chain(
+            order
+                .into_iter()
+                .flat_map(|order| [muted(": "), text(order).fg(colors.accent)]),
+        )
+        .chain(
+            album
+                .into_iter()
+                .flat_map(|album| [muted(" › "), text(album).fg(colors.accent)]),
+        )
+        .chain(filter.into_iter().flat_map(|filter| {
+            [muted(DOT_SEPARATOR), text(filter).fg(colors.foreground)]
+        }))
+        .chain(loading.into_iter().flat_map(|loading| {
+            let [glyph, gap] = theme.spinner.mark(&colors);
+            [muted(DOT_SEPARATOR), glyph, gap, muted(loading)]
+        }));
+    truncate_line(line(pieces), title_budget(area).count())
+}
+
+fn open_title(catalog: &Catalog) -> Option<&str> {
+    catalog.album_level.as_ref().and_then(|album_level| {
         match (
             &album_level.listing,
-            albums_level.cursor.get(&albums_level.catalog_rows),
+            catalog.albums_level.cursor.get(catalog.albums_level.rows()),
         ) {
             (Listing::Album(album_id), Some(CatalogRow::Album(server_album)))
                 if server_album.album_id == *album_id =>
@@ -225,44 +285,26 @@ fn title_line<'a>(
                 Some(&*server_album.title)
             }
             (
-                Listing::Album(_) | Listing::Albums(_),
-                Some(CatalogRow::Album(_) | CatalogRow::Track(_)) | None,
+                Listing::Playlist(playlist_id),
+                Some(CatalogRow::Playlist(server_playlist)),
+            ) if server_playlist.playlist_id == *playlist_id => {
+                Some(&*server_playlist.name)
+            }
+            (
+                Listing::Album(_)
+                | Listing::Albums(_)
+                | Listing::Songs
+                | Listing::Playlists
+                | Listing::Playlist(_),
+                Some(
+                    CatalogRow::Album(_)
+                    | CatalogRow::Playlist(_)
+                    | CatalogRow::Track(_),
+                )
+                | None,
             ) => None,
         }
-    });
-    let level = catalog_view.level();
-    let loading = match (level.paging, &level.listing) {
-        (Paging::Loading(_), Listing::Albums(_)) => Some("loading albums…"),
-        (Paging::Loading(_), Listing::Album(_)) => Some("loading tracks…"),
-        (
-            Paging::Next(_) | Paging::Complete,
-            Listing::Albums(_) | Listing::Album(_),
-        ) => None,
-    };
-    let muted =
-        |piece: &'a str| -> StyledText<'a> { text(piece).fg(colors.muted_foreground) };
-    let pieces = [
-        text(catalog.server_name.as_str()).fg(colors.accent),
-        muted(DOT_SEPARATOR),
-        text("Albums").fg(colors.foreground),
-    ]
-    .into_iter()
-    .chain(
-        order
-            .into_iter()
-            .flat_map(|order| [muted(": "), text(order).fg(colors.accent)]),
-    )
-    .chain(
-        album
-            .into_iter()
-            .flat_map(|album| [muted(" › "), text(album).fg(colors.accent)]),
-    )
-    .chain(
-        loading
-            .into_iter()
-            .flat_map(|loading| [muted(DOT_SEPARATOR), muted(loading)]),
-    );
-    truncate_line(line(pieces), title_budget(area).count())
+    })
 }
 
 fn label(album_order: AlbumOrder) -> &'static str {
@@ -292,36 +334,49 @@ fn album_row(
     row_width: Cells,
     row_style: Style,
 ) -> Line<'_> {
-    let tracks = match server_album.track_count {
-        1 => "track",
-        _ => "tracks",
-    };
-    let summary = format!(
-        "{} {tracks}{DOT_SEPARATOR}{}",
-        server_album.track_count,
-        duration_text(server_album.duration)
-    );
+    let summary = summary(server_album.track_count, server_album.duration);
     let info = match server_album.year {
         Some(year) => format!("{year}{DOT_SEPARATOR}{summary}"),
         None => summary,
     };
+    let title = Line::from(vec![
+        Span::raw(&*server_album.artist),
+        Span::raw(" — "),
+        Span::raw(&*server_album.title),
+    ]);
+    summary_row(title, info, row_width).style(row_style)
+}
+
+fn playlist_row(
+    server_playlist: &ServerPlaylist,
+    row_width: Cells,
+    row_style: Style,
+) -> Line<'_> {
+    let summary = summary(server_playlist.track_count, server_playlist.duration);
+    summary_row(Line::from(&*server_playlist.name), summary, row_width).style(row_style)
+}
+
+fn summary(track_count: usize, duration: Duration) -> String {
+    let tracks = match track_count {
+        1 => "track",
+        _ => "tracks",
+    };
+    format!(
+        "{track_count} {tracks}{DOT_SEPARATOR}{}",
+        duration_text(duration)
+    )
+}
+
+fn summary_row<'a>(title: Line<'a>, summary: String, row_width: Cells) -> Line<'a> {
     let markers = usize::from(MARKERS_WIDTH);
     let body_width = row_width.count().saturating_sub(markers);
-    let title_width = body_width.saturating_sub(info.width() + GAP);
-    let title = truncate_line(
-        Line::from(vec![
-            Span::raw(&*server_album.artist),
-            Span::raw(" — "),
-            Span::raw(&*server_album.title),
-        ]),
-        title_width,
-    );
-    let fill = body_width.saturating_sub(title.width() + info.width());
+    let title = truncate_line(title, body_width.saturating_sub(summary.width() + GAP));
+    let fill = body_width.saturating_sub(title.width() + summary.width());
     let pieces = once(Span::raw(blanks(markers))).chain(title.spans).chain([
         Span::raw(blanks(fill)),
-        Span::styled(info, Style::default().add_modifier(Modifier::DIM)),
+        Span::styled(summary, Style::default().add_modifier(Modifier::DIM)),
     ]);
-    truncate_line(Line::from_iter(pieces).style(row_style), row_width.count())
+    truncate_line(Line::from_iter(pieces), row_width.count())
 }
 
 #[cfg(test)]
@@ -334,15 +389,19 @@ mod tests {
         cursor::Cursor,
         favorites::Favorites,
         geometry::Cells,
+        overlay::ServerQuery,
         server::{
             Account,
             AlbumId,
+            AlbumOrder,
             Endpoint,
             Listing,
+            PlaylistId,
             RemoteError,
             Server,
             ServerAlbum,
             ServerName,
+            ServerPlaylist,
             ServerStatus,
             ServerTrackId,
             Session,
@@ -393,6 +452,7 @@ mod tests {
     fn albums(count: usize, cursor_index: usize) -> Catalog {
         let mut catalog = Catalog::new(ServerName::new("home"));
         let level = &mut catalog.albums_level;
+        level.listing = Listing::Albums(AlbumOrder::Newest);
         level.catalog_rows = (0..count)
             .map(|index| {
                 CatalogRow::Album(album(
@@ -409,13 +469,13 @@ mod tests {
     fn open_album(album_id: &str) -> Catalog {
         Catalog {
             album_level: Some(BrowseLevel {
-                listing: Listing::Album(AlbumId::new(album_id)),
                 catalog_rows: vec![
                     CatalogRow::Track(server_track("So What")),
                     CatalogRow::Track(server_track("Blue in Green")),
                 ],
                 cursor: Cursor::at(2, 0),
                 paging: Paging::Complete,
+                ..BrowseLevel::new(Listing::Album(AlbumId::new(album_id)))
             }),
             ..albums(2, 0)
         }
@@ -548,13 +608,16 @@ mod tests {
     }
 
     #[rstest]
-    #[case::the_cursor_album_is_open("a-0", "home · Albums: newest › Album 00")]
-    #[case::another_album_is_open("a-9", "home · Albums: newest")]
+    #[case::the_cursor_album_is_open(
+        open_album("a-0"),
+        "home · Albums: newest › Album 00"
+    )]
+    #[case::another_album_is_open(open_album("a-9"), "home · Albums: newest")]
+    #[case::an_empty_filter_is_open(Catalog { albums_level: BrowseLevel { server_query: Some(ServerQuery::default()), ..albums(2, 0).albums_level }, ..albums(2, 0) }, "home · Albums: newest")]
     fn the_title_names_the_open_album_only_under_the_cursor(
-        #[case] album_id: &str,
+        #[case] catalog: Catalog,
         #[case] expected: &str,
     ) {
-        let catalog = open_album(album_id);
         let server = server(online());
         let favorites = Favorites::default();
         let theme = noir();
@@ -568,12 +631,90 @@ mod tests {
             },
             &ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
+        assert_eq!(title.to_string(), expected);
+    }
+
+    #[test]
+    fn a_songs_view_names_songs_in_the_title_and_lists_tracks() {
+        let mut catalog = Catalog::new(ServerName::new("home"));
+        catalog.albums_level.catalog_rows = vec![
+            CatalogRow::Track(server_track("So What")),
+            CatalogRow::Track(server_track("Blue in Green")),
+        ];
+        catalog.albums_level.cursor = Cursor::at(2, 0);
+        let server = server(online());
+        let favorites = Favorites::default();
+        let theme = noir();
+        let catalog_view = CatalogView {
+            catalog: &catalog,
+            server: &server,
+            favorites: &favorites,
+            playing_track_source: None,
+        };
+        let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
+        let title = title_line(Rect::new(0, 0, 80, 10), catalog_view, &active_theme);
         let text: String = title
             .spans
             .iter()
             .map(|span| span.content.as_ref())
             .collect();
-        assert_eq!(text, expected);
+        assert_eq!(text, "home · Songs");
+        let buffer = painted(catalog_view, active_theme, Rect::new(0, 0, 40, 6));
+        let rows: String = buffer
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect();
+        assert!(rows.contains("So What"), "{rows}");
+        assert!(rows.contains("Blue in Green"), "{rows}");
+    }
+
+    #[test]
+    fn a_songs_view_paints_its_rows_like_local_playlist_rows() {
+        let song = |title: &str, artist: &str| {
+            let source = TrackSource::Server {
+                server_name: ServerName::new("home"),
+                server_track_id: ServerTrackId::new(title),
+            };
+            let tags = Tags {
+                title: Some(title.to_owned()),
+                artist: Some(artist.to_owned()),
+                ..Tags::default()
+            };
+            CatalogRow::Track(Arc::new(Track::tagged(
+                source,
+                Duration::from_secs(545),
+                tags,
+            )))
+        };
+        let mut catalog = Catalog::new(ServerName::new("home"));
+        catalog.albums_level.catalog_rows = vec![
+            song("So What", "Miles Davis"),
+            song("Blue in Green", "Bill Evans"),
+        ];
+        catalog.albums_level.cursor = Cursor::at(2, 0);
+        let server = server(online());
+        let favorites = Favorites::default();
+        let theme = noir();
+        let pane = Rect::new(0, 0, 50, 6);
+        let buffer = painted(
+            CatalogView {
+                catalog: &catalog,
+                server: &server,
+                favorites: &favorites,
+                playing_track_source: None,
+            },
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            pane,
+        );
+        let lines: Vec<String> = (pane.top()..pane.bottom())
+            .map(|y| {
+                (pane.left()..pane.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect()
+            })
+            .collect();
+        insta::assert_snapshot!(lines.join("\n"));
     }
 
     #[test]
@@ -584,5 +725,75 @@ mod tests {
         let text: String = row.spans.iter().map(|span| span.content.as_ref()).collect();
         assert!(text.ends_with(&format!(" {details}")), "got {text:?}");
         assert!(!text.ends_with(&format!("  {details}")), "got {text:?}");
+    }
+
+    fn playlists() -> Catalog {
+        let mut catalog = Catalog::new(ServerName::new("home"));
+        let level = &mut catalog.albums_level;
+        level.listing = Listing::Playlists;
+        level.catalog_rows = [
+            ("pl-0", "Late Night", 12, 3_120),
+            ("pl-1", "Morning", 1, 240),
+        ]
+        .map(|(playlist_id, name, track_count, seconds)| {
+            CatalogRow::Playlist(ServerPlaylist {
+                playlist_id: PlaylistId::new(playlist_id),
+                name: Arc::from(name),
+                track_count,
+                duration: Duration::from_secs(seconds),
+            })
+        })
+        .into();
+        level.cursor = Cursor::at(2, 0);
+        level.paging = Paging::Complete;
+        catalog
+    }
+
+    fn painted_lines(catalog: &Catalog) -> String {
+        let server = server(online());
+        let favorites = Favorites::default();
+        let theme = noir();
+        let pane = Rect::new(0, 0, 50, 6);
+        let buffer = painted(
+            CatalogView {
+                catalog,
+                server: &server,
+                favorites: &favorites,
+                playing_track_source: None,
+            },
+            ActiveTheme::new(&theme, ColorDepth::TrueColor),
+            pane,
+        );
+        let lines: Vec<String> = (pane.top()..pane.bottom())
+            .map(|y| {
+                (pane.left()..pane.right())
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect()
+            })
+            .collect();
+        lines.join("\n")
+    }
+
+    #[test]
+    fn a_playlists_view_paints_each_playlist_with_its_track_count_and_duration() {
+        insta::assert_snapshot!(painted_lines(&playlists()));
+    }
+
+    #[test]
+    fn an_open_playlist_is_named_in_the_title_and_lists_its_tracks() {
+        let catalog = Catalog {
+            album_level: Some(BrowseLevel {
+                listing: Listing::Playlist(PlaylistId::new("pl-0")),
+                catalog_rows: vec![
+                    CatalogRow::Track(server_track("So What")),
+                    CatalogRow::Track(server_track("Blue in Green")),
+                ],
+                cursor: Cursor::at(2, 1),
+                paging: Paging::Complete,
+                server_query: None,
+            }),
+            ..playlists()
+        };
+        insta::assert_snapshot!(painted_lines(&catalog));
     }
 }

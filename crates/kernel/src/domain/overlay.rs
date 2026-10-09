@@ -9,11 +9,11 @@ use crate::domain::{
     playlist::PlaylistFileNameError,
     revision::Revision,
     server::{
-        Endpoint,
+        Account,
         EndpointError,
         SecretError,
         ServerName,
-        UserName,
+        ServerStatus,
         UserNameError,
     },
     setting_row::SettingRow,
@@ -31,7 +31,7 @@ use crate::domain::{
 pub enum Overlay {
     Help,
     Search(CursorOver<SearchQuery>),
-    ServerSearch(CursorOver<ServerQuery>),
+    ServerSearch,
     SavePlaylist(TextEntry<PlaylistFileNameError>),
     History(CursorOver<()>),
     Settings(SettingRow),
@@ -42,6 +42,7 @@ pub enum Overlay {
         text_entry: TextEntry<MusicDirError>,
         verdict: Option<Verdict>,
         revision: Option<Revision>,
+        folders: CursorOver<Folders>,
     },
     AddServer(ServerPrompt),
     Servers(CursorOver<()>),
@@ -53,7 +54,7 @@ impl Overlay {
     pub(crate) fn captures_text(&self) -> bool {
         match self {
             Overlay::Search(_)
-            | Overlay::ServerSearch(_)
+            | Overlay::ServerSearch
             | Overlay::SavePlaylist(_)
             | Overlay::MusicDir { .. }
             | Overlay::AddServer(_) => true,
@@ -118,6 +119,45 @@ impl TextEntry<MusicDirError> {
             PathBuf::from(path)
         }
     }
+
+    #[must_use]
+    pub fn folder(&self) -> Option<(PathBuf, &str)> {
+        let trimmed = self.input.trim();
+        let index = trimmed.rfind('/')?;
+        let (folder, segment) = trimmed.split_at(index);
+        let folder = if folder.is_empty() { "/" } else { folder };
+        Some((PathBuf::from(folder), segment.strip_prefix('/')?))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Subfolder {
+    Audio(String),
+    Plain(String),
+}
+
+impl Subfolder {
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Subfolder::Audio(name) | Subfolder::Plain(name) => name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subfolders {
+    pub path: PathBuf,
+    pub verdict: Verdict,
+    pub subfolders: Vec<Subfolder>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Folders {
+    pub path: PathBuf,
+    pub subfolders: Option<Subfolders>,
+    pub matches: Vec<usize>,
+    pub revision: Option<Revision>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,58 +219,62 @@ impl Accepts for SecretError {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub enum ServerPrompt {
-    Link {
-        origin_server_name: Option<ServerName>,
-        text_entry: TextEntry<EndpointError>,
-    },
-    User {
-        origin_server_name: Option<ServerName>,
-        endpoint: Endpoint,
-        text_entry: TextEntry<UserNameError>,
-    },
-    Password {
-        origin_server_name: Option<ServerName>,
-        endpoint: Endpoint,
-        user_name: UserName,
-        text_entry: TextEntry<SecretError>,
-    },
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Field {
+    #[default]
+    Link,
+    User,
+    Password,
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct ServerPrompt {
+    pub origin_server_name: Option<ServerName>,
+    pub link_text_entry: TextEntry<EndpointError>,
+    pub user_text_entry: TextEntry<UserNameError>,
+    pub password_text_entry: TextEntry<SecretError>,
+    pub field: Field,
+    pub reached_field: Field,
+    pub server_status: Option<ServerStatus>,
 }
 
 impl fmt::Debug for ServerPrompt {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Link {
-                origin_server_name,
-                text_entry,
-            } => formatter
-                .debug_struct("Link")
-                .field("origin_server_name", origin_server_name)
-                .field("text_entry", text_entry)
-                .finish(),
-            Self::User {
-                origin_server_name,
-                endpoint,
-                text_entry,
-            } => formatter
-                .debug_struct("User")
-                .field("origin_server_name", origin_server_name)
-                .field("endpoint", endpoint)
-                .field("text_entry", text_entry)
-                .finish(),
-            Self::Password {
-                origin_server_name,
-                endpoint,
-                user_name,
-                text_entry,
-            } => formatter
-                .debug_struct("Password")
-                .field("origin_server_name", origin_server_name)
-                .field("endpoint", endpoint)
-                .field("user_name", user_name)
-                .field("error", &text_entry.error)
-                .finish_non_exhaustive(),
+        let Self {
+            origin_server_name,
+            link_text_entry,
+            user_text_entry,
+            password_text_entry,
+            field,
+            reached_field,
+            server_status,
+        } = self;
+        formatter
+            .debug_struct("ServerPrompt")
+            .field("origin_server_name", origin_server_name)
+            .field("link_text_entry", link_text_entry)
+            .field("user_text_entry", user_text_entry)
+            .field("password_error", &password_text_entry.error)
+            .field("field", field)
+            .field("reached_field", reached_field)
+            .field("server_status", server_status)
+            .finish_non_exhaustive()
+    }
+}
+
+impl From<&Account> for ServerPrompt {
+    fn from(account: &Account) -> Self {
+        Self {
+            origin_server_name: Some(account.server_name.clone()),
+            link_text_entry: TextEntry {
+                input: account.endpoint.as_str().to_owned(),
+                error: None,
+            },
+            user_text_entry: TextEntry {
+                input: account.user_name.as_str().to_owned(),
+                error: None,
+            },
+            ..Self::default()
         }
     }
 }
@@ -241,9 +285,8 @@ pub struct SearchQuery {
     pub matches: Vec<ViewIndex>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ServerQuery {
-    pub server_name: ServerName,
     pub input: String,
     pub catalog_rows: Vec<CatalogRow>,
     pub revision: Option<Revision>,

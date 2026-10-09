@@ -9,10 +9,20 @@ use crate::{
     playlist::{
         catalog::CatalogWidget,
         chrome::{pane_block, pane_title},
-        row::{self, PlaylistAreas, PlaylistRows, WindowFit, cursor_band, row_window},
+        row::{
+            self,
+            PlaylistAreas,
+            PlaylistRowsWidget,
+            WindowFit,
+            cursor_band,
+            row_window,
+        },
         view::{LibraryStatus, PlaylistView},
     },
-    primitive::list_chrome::{Scrollbar, paint_scrollbar, scroll_areas},
+    primitive::{
+        list_chrome::{Scrollbar, paint_scrollbar, scroll_areas},
+        span::{line, text},
+    },
     theme::active_theme::ActiveTheme,
 };
 
@@ -42,7 +52,7 @@ impl PlaylistWidget<'_> {
         let window = row_window(&WindowFit {
             selected: self.view.selected,
             playing_index: self.view.playing_index,
-            playlist_len: self.view.playlist.tracks.len(),
+            playlist_len: self.view.rows.len(),
             height: scroll_areas.content.height,
         });
         let selected_area =
@@ -99,12 +109,18 @@ fn paint_body(
     let theme = playlist_widget.active_theme;
     let colors = theme.colors();
 
-    if view.playlist.tracks.is_empty() {
-        let text: &str = match view.library_status {
-            LibraryStatus::Loading => theme.theme.scanning_label.as_str(),
-            LibraryStatus::Ready => EMPTY_PLAYLIST_TEXT,
+    if view.rows.is_empty() {
+        let label = match view.library_status {
+            LibraryStatus::Loading => line(
+                theme
+                    .spinner
+                    .mark(&colors)
+                    .into_iter()
+                    .chain([text(theme.theme.scanning_label.as_str())]),
+            ),
+            LibraryStatus::Ready => line([text(EMPTY_PLAYLIST_TEXT)]),
         };
-        Paragraph::new(text)
+        Paragraph::new(label)
             .style(Style::default().fg(colors.foreground))
             .render(inner, buffer);
         return;
@@ -114,7 +130,7 @@ fn paint_body(
 
     row::paint_rows(
         buffer,
-        PlaylistRows {
+        PlaylistRowsWidget {
             view,
             theme,
             rows: areas.scroll_areas.rows,
@@ -146,7 +162,7 @@ mod tests {
         favorites::Favorites,
         index::ViewIndex,
         model::ScanStatus,
-        playlist::Playlist,
+        playlist::{Playlist, PlaylistRows},
         startup::Shuffle,
         track::{Track, TrackParts},
     };
@@ -200,16 +216,18 @@ mod tests {
             playlist_len: playlist.tracks.len(),
             scan_status: ScanStatus::Idle,
             scanning_label: theme.scanning_label.as_str(),
+            spinner: crate::primitive::spinner::Spinner::default(),
             theme_name: theme.name.as_str(),
             remaining: None,
             servers: &[],
             catalog_name: &kernel::domain::catalog::CatalogName::Local,
+            playlist_source: &kernel::domain::playlist::PlaylistSource::Named,
         }
     }
 
     fn view<'a>(playlist: &'a Playlist, theme: &'a Theme) -> PlaylistView<'a> {
         PlaylistView {
-            playlist,
+            rows: PlaylistRows::Tracks(&playlist.tracks),
             queue: &[],
             favorites: &EMPTY_FAVORITES,
             selected: ViewIndex::new(0),
@@ -276,7 +294,7 @@ mod tests {
         }
         let widget = PlaylistWidget::new(
             PlaylistView {
-                playlist: &playlist,
+                rows: PlaylistRows::Tracks(&playlist.tracks),
                 queue: &queue,
                 favorites: &favorites,
                 selected: ViewIndex::new(0),
@@ -300,7 +318,7 @@ mod tests {
         let queue = queued(&playlist, &(1..13).collect::<Vec<_>>());
         let widget = PlaylistWidget::new(
             PlaylistView {
-                playlist: &playlist,
+                rows: PlaylistRows::Tracks(&playlist.tracks),
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
                 selected: ViewIndex::new(0),
@@ -324,7 +342,7 @@ mod tests {
         let queue = queued(&playlist, &[1, 2]);
         let widget = PlaylistWidget::new(
             PlaylistView {
-                playlist: &playlist,
+                rows: PlaylistRows::Tracks(&playlist.tracks),
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
                 selected: ViewIndex::new(0),
@@ -348,7 +366,7 @@ mod tests {
         let queue = queued(&playlist, &[1, 2]);
         let widget = PlaylistWidget::new(
             PlaylistView {
-                playlist: &playlist,
+                rows: PlaylistRows::Tracks(&playlist.tracks),
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
                 selected: ViewIndex::new(0),
@@ -378,7 +396,7 @@ mod tests {
         let queue = queued(&playlist, &[0]);
         let widget = PlaylistWidget::new(
             PlaylistView {
-                playlist: &playlist,
+                rows: PlaylistRows::Tracks(&playlist.tracks),
                 queue: &queue,
                 favorites: &EMPTY_FAVORITES,
                 selected: ViewIndex::new(0),
@@ -413,7 +431,7 @@ mod tests {
 
         let widget = PlaylistWidget::new(
             PlaylistView {
-                playlist: &playlist,
+                rows: PlaylistRows::Tracks(&playlist.tracks),
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
                 selected: ViewIndex::new(2),
@@ -531,7 +549,7 @@ mod tests {
         let theme = noir();
         let widget = PlaylistWidget::new(
             PlaylistView {
-                playlist: &playlist,
+                rows: PlaylistRows::Tracks(&playlist.tracks),
                 queue: &[],
                 favorites: &EMPTY_FAVORITES,
                 selected: ViewIndex::new(9_999),

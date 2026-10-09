@@ -1,5 +1,9 @@
 use kernel::{
-    domain::{keymap::Action, revision::Revision},
+    domain::{
+        keymap::Action,
+        revision::Revision,
+        server::{Listing, Server},
+    },
     update::keymap::chord::KeyBinding,
 };
 use ratatui::{
@@ -18,17 +22,26 @@ use crate::{
     theme::active_theme::ActiveTheme,
 };
 
-const KEY_HINTS: &[(Action, &str)] = &[
-    (Action::PlayPause, "Play"),
-    (Action::PlaySelected, "Open"),
-    (Action::Enqueue, "Queue"),
-    (Action::Search, "Find"),
-    (Action::Help, "Help"),
-    (Action::Quit, "Quit"),
+const KEY_HINTS: &[(Action, &str, Scope)] = &[
+    (Action::PlayPause, "Play", Scope::Everywhere),
+    (Action::PlaySelected, "Open", Scope::Everywhere),
+    (Action::Enqueue, "Queue", Scope::Local),
+    (Action::NextCatalog, "Sources", Scope::Servers),
+    (Action::CycleView, "View", Scope::ServerTab),
+    (Action::CycleSort, "Order", Scope::Albums),
+    (Action::LevelUp, "Back", Scope::Opened),
+    (Action::Search, "Find", Scope::Everywhere),
+    (Action::Help, "Help", Scope::Everywhere),
+    (Action::Quit, "Quit", Scope::Everywhere),
 ];
 
 const KEY_HINTS_COMPACT: &[Action] = &[
     Action::PlayPause,
+    Action::PlaySelected,
+    Action::NextCatalog,
+    Action::CycleView,
+    Action::CycleSort,
+    Action::LevelUp,
     Action::Search,
     Action::Help,
     Action::Quit,
@@ -59,10 +72,21 @@ pub(crate) fn chords(
         .map(|binding| binding.pattern.to_string())
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Scope {
+    Everywhere,
+    Local,
+    Servers,
+    ServerTab,
+    Albums,
+    Opened,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct Chip {
     key: String,
     label: &'static str,
+    scope: Scope,
 }
 
 impl Chip {
@@ -70,6 +94,7 @@ impl Chip {
         Self {
             key: format!(" {chord} "),
             label,
+            scope: Scope::Everywhere,
         }
     }
 }
@@ -151,6 +176,23 @@ impl KeyHintChords {
 pub(crate) struct KeyHintsView<'a> {
     pub(crate) full_chips: &'a [Chip],
     pub(crate) compact_chips: &'a [Chip],
+    pub(crate) listing: Option<&'a Listing>,
+    pub(crate) servers: &'a [Server],
+}
+
+impl KeyHintsView<'_> {
+    fn shows(self, scope: Scope) -> bool {
+        match scope {
+            Scope::Everywhere => true,
+            Scope::Local => self.listing.is_none(),
+            Scope::Servers => !self.servers.is_empty(),
+            Scope::ServerTab => self.listing.is_some(),
+            Scope::Albums => matches!(self.listing, Some(Listing::Albums(_))),
+            Scope::Opened => {
+                matches!(self.listing, Some(Listing::Album(_) | Listing::Playlist(_)))
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -192,15 +234,25 @@ fn chip(
 fn key_chips(bindings: &[KeyBinding], keep: impl Fn(Action) -> bool) -> Vec<Chip> {
     KEY_HINTS
         .iter()
-        .filter(|(action, _)| keep(*action))
-        .filter_map(|(action, label)| chip(bindings, [*action], label))
+        .filter(|(action, _, _)| keep(*action))
+        .filter_map(|(action, label, scope)| {
+            chip(bindings, [*action], label).map(|found| Chip {
+                scope: *scope,
+                ..found
+            })
+        })
         .collect()
 }
 
-fn chips_line<'a>(theme: &ActiveTheme<'_>, chips: &'a [Chip]) -> Line<'a> {
+fn chips_line<'a>(
+    theme: &ActiveTheme<'_>,
+    view: KeyHintsView<'a>,
+    chips: &'a [Chip],
+) -> Line<'a> {
     let colors = theme.colors();
     let chip_background = theme.muted_accent();
-    line(chips.iter().enumerate().flat_map(move |(position, chip)| {
+    let chips = chips.iter().filter(move |chip| view.shows(chip.scope));
+    line(chips.enumerate().flat_map(move |(position, chip)| {
         let separator = (position > 0)
             .then(|| text(glyphs::key_hints::SEPARATOR).fg(colors.muted_foreground));
         separator.into_iter().chain([
@@ -218,11 +270,11 @@ fn key_hints_line<'a>(
     view: KeyHintsView<'a>,
     width: u16,
 ) -> Line<'a> {
-    let full = chips_line(theme, view.full_chips);
+    let full = chips_line(theme, view, view.full_chips);
     let line = if full.width() <= usize::from(width) {
         full
     } else {
-        chips_line(theme, view.compact_chips)
+        chips_line(theme, view, view.compact_chips)
     };
     truncate_line(line, usize::from(width))
 }
@@ -251,6 +303,8 @@ mod tests {
         KeyHintsView {
             full_chips: &chords.chips,
             compact_chips: &chords.compact_chips,
+            listing: None,
+            servers: &[],
         }
     }
 
@@ -258,6 +312,8 @@ mod tests {
         KeyHintsView {
             full_chips: &chords.settings_chips,
             compact_chips: &chords.settings_chips,
+            listing: None,
+            servers: &[],
         }
     }
 

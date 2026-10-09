@@ -20,6 +20,7 @@ use crate::{
         revision::Revision,
         server::{
             Account,
+            Artwork,
             Connection,
             Download,
             Listing,
@@ -198,6 +199,10 @@ pub enum LibraryCmd {
         path: PathBuf,
         revision: Revision,
     },
+    Subfolders {
+        path: PathBuf,
+        revision: Revision,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -233,6 +238,7 @@ pub enum RemoteCmd {
         server_name: ServerName,
         session: Session,
         input: String,
+        listing: Listing,
         revision: Revision,
     },
     Star {
@@ -246,6 +252,10 @@ pub enum RemoteCmd {
         play_report: PlayReport,
     },
     Flush(Vec<PlayReport>),
+    Cover {
+        session: Session,
+        artwork: Artwork,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

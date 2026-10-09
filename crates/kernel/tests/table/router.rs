@@ -18,7 +18,15 @@ use kernel::{
         time::Moment,
         transport::{OutputError, Transport},
     },
-    message::{AudioError, AudioEvent, LibraryEvent, Message, PlaybackRequest, Timer},
+    message::{
+        AudioError,
+        AudioEvent,
+        BrowseRequest,
+        LibraryEvent,
+        Message,
+        PlaybackRequest,
+        Timer,
+    },
     update::{machine::Unhandled, update},
 };
 use rstest::{Context, rstest};
@@ -452,7 +460,7 @@ fn router_trace(
 )]
 #[case::a_jump_past_the_playlist_end_is_refused(
     model_with_tracks(3),
-    Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(9))),
+    Message::Browse(BrowseRequest::JumpTo(ViewIndex::new(9))),
     Unhandled
 )]
 #[case::a_sleep_timer_with_no_sleep_set_is_refused(

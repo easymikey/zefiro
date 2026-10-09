@@ -86,17 +86,51 @@ fn edits(request: fn(TextRequest) -> Message) -> Vec<(KeyPattern, Message)> {
 }
 
 fn text_prompt_rows() -> Vec<KeyBinding> {
-    rows_in(
-        KeyContext::TextPrompt,
-        [
-            vec![
-                (plain(KeyCode::Enter), confirm()),
-                (plain(KeyCode::Esc), close()),
-            ],
-            edits(text),
-        ]
-        .concat(),
-    )
+    let rows = [
+        vec![
+            (plain(KeyCode::Enter), confirm()),
+            (plain(KeyCode::Esc), close()),
+            (
+                held(Modifiers::SHIFT, KeyCode::Tab),
+                overlay(OverlayRequest::Navigate(Direction::Previous)),
+            ),
+            (
+                plain(KeyCode::Up),
+                overlay(OverlayRequest::Navigate(Direction::Previous)),
+            ),
+            (
+                plain(KeyCode::Down),
+                overlay(OverlayRequest::Navigate(Direction::Next)),
+            ),
+            (
+                plain(KeyCode::Tab),
+                overlay(OverlayRequest::Step(Direction::Next)),
+            ),
+        ],
+        edits(text),
+    ]
+    .concat();
+    [
+        rows_in(
+            KeyContext::MusicDir,
+            [
+                rows.clone(),
+                vec![
+                    (
+                        plain(KeyCode::Right),
+                        overlay(OverlayRequest::Step(Direction::Next)),
+                    ),
+                    (
+                        plain(KeyCode::Left),
+                        overlay(OverlayRequest::Step(Direction::Previous)),
+                    ),
+                ],
+            ]
+            .concat(),
+        ),
+        rows_in(KeyContext::TextPrompt, rows),
+    ]
+    .concat()
 }
 
 fn search_rows() -> Vec<KeyBinding> {
@@ -120,6 +154,12 @@ fn search_rows() -> Vec<KeyBinding> {
         ]
         .concat(),
     )
+    .into_iter()
+    .chain(rows_in(
+        KeyContext::Playlist,
+        vec![(plain(KeyCode::Esc), close())],
+    ))
+    .collect()
 }
 
 fn help_rows() -> Vec<KeyBinding> {

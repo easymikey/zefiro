@@ -1,0 +1,10 @@
+---
+source: crates/widgets/src/playlist/catalog.rs
+expression: painted_lines(&catalog)
+---
+┏ home · Playlists › Late Night ━━━━━━━━━━━━━━━━━┓
+┃    So What                                     ┃
+┃    Blue in Green                               ┃
+┃                                                ┃
+┃                                                ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛

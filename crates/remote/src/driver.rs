@@ -14,6 +14,7 @@ use kernel::{
         revision::Revision,
         server::{
             Account,
+            Artwork,
             CacheKey,
             Connection,
             MediaFetch,
@@ -23,6 +24,7 @@ use kernel::{
             ServerName,
             ServerTrackId,
             Session,
+            file_name,
         },
         track::CatalogRow,
     },
@@ -31,8 +33,9 @@ use kernel::{
 };
 
 use crate::{
-    job::{RemoteJob, SignedReport, flush},
+    job::{CoverFetch, RemoteJob, SignedReport, flush},
     message::{RemoteMessage, RemoteTimer},
+    subsonic::search_query,
 };
 
 pub const SEARCH_WAIT: Duration = Duration::from_millis(250);
@@ -150,6 +153,19 @@ impl RemoteDriver {
         })
     }
 
+    fn cleared(
+        &mut self,
+        server_name: ServerName,
+        revision: Revision,
+    ) -> <Self as Machine>::Effect {
+        self.remote_job = None;
+        found(
+            server_name,
+            Ok((Vec::new(), Favorites::default())),
+            revision,
+        )
+    }
+
     fn list(&mut self, job: RemoteJob) -> <Self as Machine>::Effect {
         self.job = Some(job);
         Cmd::none()
@@ -176,26 +192,24 @@ impl RemoteDriver {
             RemoteCmd::Prefetch(media_fetch) => self.prefetch_chunk(media_fetch),
             RemoteCmd::Search {
                 server_name,
-                session,
                 input,
                 revision,
-            } => {
-                if input.trim().is_empty() {
-                    self.remote_job = None;
-                    return found(
-                        server_name,
-                        Ok((Vec::new(), Favorites::default())),
-                        revision,
-                    );
-                }
-                let job = RemoteJob::Search {
+                ..
+            } if input.trim().is_empty() => self.cleared(server_name, revision),
+            RemoteCmd::Search {
+                server_name,
+                session,
+                input,
+                listing,
+                revision,
+            } => self.search(
+                RemoteJob::Search {
                     server_name,
-                    session,
-                    input,
+                    link: search_query(&input, &listing, &session),
                     revision,
-                };
-                self.search(job, revision)
-            }
+                },
+                revision,
+            ),
             RemoteCmd::Star {
                 server_name,
                 session,
@@ -215,7 +229,21 @@ impl RemoteDriver {
                 play_report,
             }),
             RemoteCmd::Flush(play_reports) => self.flush(play_reports),
+            RemoteCmd::Cover { session, artwork } => self.cover(session, artwork),
         }
+    }
+
+    fn cover(&self, session: Session, artwork: Artwork) -> <Self as Machine>::Effect {
+        let path = self
+            .media_dir
+            .with_file_name("covers")
+            .join(file_name(artwork.server_name.as_str()))
+            .join(file_name(&artwork.id))
+            .join("cover.jpg");
+        Cmd::effect(LoopEffect::Run(RemoteJob::Cover {
+            session,
+            cover_fetch: CoverFetch { artwork, path },
+        }))
     }
 
     fn forget(&mut self, account: Account) -> <Self as Machine>::Effect {
@@ -510,6 +538,13 @@ fn played(play_report: &PlayReport) -> bool {
     matches!(play_report.scrobble, Scrobble::Played(_))
 }
 
+fn covered(
+    artwork: Artwork,
+    result: Result<PathBuf, RemoteError>,
+) -> <RemoteDriver as Machine>::Effect {
+    Cmd::message(RemoteEvent::Cover { artwork, result })
+}
+
 fn saved(result: Result<(), IoError>) -> <RemoteDriver as Machine>::Effect {
     result.map_or_else(
         |io_error| Cmd::message(RemoteEvent::Unsaved(io_error)),
@@ -606,6 +641,7 @@ impl Machine for RemoteDriver {
                 result,
             } => self.reported(play_reports, result),
             RemoteMessage::Saved(result) => Ok(saved(result)),
+            RemoteMessage::Cover { artwork, result } => Ok(covered(artwork, result)),
         }
     }
 }

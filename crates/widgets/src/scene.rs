@@ -1,4 +1,9 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 
 use kernel::{
     domain::{
@@ -11,9 +16,9 @@ use kernel::{
         model::{Model, ScanStatus},
         overlay::Overlay,
         player::Player,
-        playlist::Playlist,
+        playlist::{Playlist, PlaylistRows, PlaylistSource},
         revision::Revisions,
-        server::Server,
+        server::{Artwork, Server},
         settings::Settings,
         startup::Shuffle,
         theme::{ThemeChoice, Themes},
@@ -31,6 +36,7 @@ use crate::{
     key_hints::{KeyHintChords, KeyHintsView},
     overlay::{layer::OverlayView, settings::view::SettingsView},
     playlist::view::{CatalogView, LibraryStatus, PlaylistView},
+    primitive::spinner::Spinner,
     spectrum::Spectrum,
     status_line::StatusLineView,
     theme::{Theme, active_theme::ActiveTheme, rgb::ColorDepth},
@@ -62,6 +68,8 @@ pub struct Scene<'a> {
     pub player: &'a Player,
     pub transport: &'a Transport,
     pub playlist: &'a Playlist,
+    pub playlist_source: &'a PlaylistSource,
+    pub rows: PlaylistRows<'a>,
     pub queue: &'a [TrackSource],
     pub favorites: &'a Favorites,
     pub themes: &'a Themes,
@@ -80,6 +88,7 @@ pub struct Scene<'a> {
     pub servers: &'a [Server],
     pub catalog_name: &'a CatalogName,
     pub catalogs: &'a [Catalog],
+    pub covers: &'a HashMap<Artwork, PathBuf>,
     pub presentation: ScenePresentation<'a>,
 }
 
@@ -90,6 +99,12 @@ impl<'a> Scene<'a> {
             player: &model.player,
             transport: &model.transport,
             playlist: &model.playlist,
+            playlist_source: &model.playlist_source,
+            rows: PlaylistRows::new(
+                &model.playlist_source,
+                model.library.as_ref(),
+                &model.playlist,
+            ),
             queue: &model.queue,
             favorites: &model.favorites,
             themes: &model.themes,
@@ -112,19 +127,30 @@ impl<'a> Scene<'a> {
             servers: &model.servers,
             catalog_name: &model.catalog_name,
             catalogs: &model.catalogs,
+            covers: &model.covers,
             presentation,
         }
     }
 
     #[must_use]
     pub fn current_track_path(&self) -> Option<&'a Path> {
-        self.player.current().and_then(|track| track.local_path())
+        self.player.current().and_then(|track| {
+            track.local_path().or_else(|| {
+                track
+                    .artwork()
+                    .and_then(|artwork| self.covers.get(artwork))
+                    .map(PathBuf::as_path)
+            })
+        })
     }
 
     #[must_use]
     pub(crate) fn active_theme(&self) -> ActiveTheme<'a> {
-        ActiveTheme::new(self.presentation.theme, self.presentation.color_depth)
-            .with_progress_bar(self.presentation.appearance.progress_bar)
+        ActiveTheme {
+            spinner: Spinner::new(self.presentation.since_first_paint),
+            ..ActiveTheme::new(self.presentation.theme, self.presentation.color_depth)
+                .with_progress_bar(self.presentation.appearance.progress_bar)
+        }
     }
 
     #[must_use]
@@ -145,16 +171,20 @@ impl<'a> KeyHintsView<'a> {
     #[must_use]
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
         let chords = scene.presentation.key_hint_chords;
+        let listing = CatalogView::from_scene(scene)
+            .map(|catalog_view| &catalog_view.level().listing);
         match scene.overlay {
             Some(Overlay::Settings(..)) => Self {
                 full_chips: &chords.settings_chips,
                 compact_chips: &chords.settings_chips,
+                listing,
+                servers: scene.servers,
             },
             None
             | Some(
                 Overlay::Help
                 | Overlay::Search(_)
-                | Overlay::ServerSearch(_)
+                | Overlay::ServerSearch
                 | Overlay::SavePlaylist(_)
                 | Overlay::History(_)
                 | Overlay::ConfirmTrash(_)
@@ -167,6 +197,8 @@ impl<'a> KeyHintsView<'a> {
             ) => Self {
                 full_chips: &chords.chips,
                 compact_chips: &chords.compact_chips,
+                listing,
+                servers: scene.servers,
             },
         }
     }
@@ -203,9 +235,11 @@ impl<'a> StatusLineView<'a> {
             repeat_mode: scene.playlist.repeat_mode,
             queue_len: scene.queue.len(),
             selected: scene.selected,
-            playlist_len: scene.playlist.tracks.len(),
+            playlist_len: scene.rows.len(),
+            playlist_source: scene.playlist_source,
             scan_status: scene.scan_status,
             scanning_label: scene.presentation.theme.scanning_label.as_str(),
+            spinner: scene.active_theme().spinner,
             theme_name: scene.presentation.theme.name.as_str(),
             remaining: scene
                 .transport
@@ -221,7 +255,7 @@ impl<'a> PlaylistView<'a> {
     #[must_use]
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
         Self {
-            playlist: scene.playlist,
+            rows: scene.rows,
             queue: scene.queue,
             favorites: scene.favorites,
             selected: scene.selected,
@@ -281,7 +315,7 @@ impl<'a> OverlayView<'a> {
     pub(crate) fn from_scene(scene: &Scene<'a>) -> Self {
         Self {
             overlay: scene.overlay,
-            tracks: &scene.playlist.tracks,
+            rows: scene.rows,
             history: scene.history,
             servers: scene.servers,
             active_theme: scene.active_theme(),
@@ -331,6 +365,7 @@ mod tests {
         server::{
             Account,
             AlbumId,
+            AlbumOrder,
             Endpoint,
             Listing,
             Page,
@@ -423,6 +458,7 @@ mod tests {
     fn albums(paging: Paging) -> Catalog {
         let mut catalog = Catalog::new(ServerName::new("home"));
         let level = &mut catalog.albums_level;
+        level.listing = Listing::Albums(AlbumOrder::Newest);
         level.catalog_rows = vec![
             album("a-1", "Kind of Blue", Some(1959)),
             album("a-2", "Sketches of Spain", None),
@@ -467,6 +503,7 @@ mod tests {
 
     fn no_albums(paging: Paging) -> Catalog {
         let mut catalog = Catalog::new(ServerName::new("home"));
+        catalog.albums_level.listing = Listing::Albums(AlbumOrder::Newest);
         catalog.albums_level.paging = paging;
         catalog
     }
@@ -475,12 +512,12 @@ mod tests {
     #[case::loading(
         "loading",
         server_frame(online(), albums(Paging::Loading(Page(1))), 80),
-        "newest · loading albums…"
+        "newest · ⣾ loading albums…"
     )]
     #[case::empty(
         "empty",
         server_frame(online(), no_albums(Paging::Complete), 80),
-        "No albums"
+        "No albums on this server"
     )]
     #[case::offline(
         "offline",
@@ -500,6 +537,74 @@ mod tests {
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(text);
         });
+    }
+
+    fn empty_view(listing: Listing) -> Catalog {
+        let mut catalog = Catalog::new(ServerName::new("home"));
+        catalog.albums_level.listing = listing;
+        catalog.albums_level.paging = Paging::Complete;
+        catalog
+    }
+
+    fn filtered(catalog_rows: Vec<CatalogRow>) -> Catalog {
+        let mut catalog = albums(Paging::Complete);
+        let level = &mut catalog.albums_level;
+        level.cursor = Cursor::new(catalog_rows.len());
+        level.server_query = Some(kernel::domain::overlay::ServerQuery {
+            input: "kind".to_owned(),
+            catalog_rows,
+            revision: None,
+        });
+        catalog
+    }
+
+    #[rstest]
+    #[case::filtered(
+        "filtered",
+        server_frame(
+            online(),
+            filtered(vec![album("a-1", "Kind of Blue", Some(1959))]),
+            80,
+        ),
+        "1 / 2 · /kind"
+    )]
+    #[case::nothing_matches(
+        "nothing_matches",
+        server_frame(online(), filtered(Vec::new()), 80),
+        "Nothing matches"
+    )]
+    #[case::no_songs(
+        "no_songs",
+        server_frame(online(), empty_view(Listing::Songs), 80),
+        "No songs on this server"
+    )]
+    #[case::no_playlists(
+        "no_playlists",
+        server_frame(online(), empty_view(Listing::Playlists), 80),
+        "No playlists on this server"
+    )]
+    fn a_server_view_says_what_its_filter_leaves_and_when_it_is_empty(
+        #[case] name: &str,
+        #[case] text: String,
+        #[case] expected: &str,
+    ) {
+        assert!(text.contains(expected), "got {text:?}");
+        insta::with_settings!({ snapshot_suffix => name }, {
+            insta::assert_snapshot!(text);
+        });
+    }
+
+    #[rstest]
+    #[case::animations_on(kernel::domain::appearance::Animations::On)]
+    #[case::animations_off(kernel::domain::appearance::Animations::Off)]
+    fn a_wait_spins_whether_animations_are_on_or_off(
+        #[case] animations: kernel::domain::appearance::Animations,
+    ) {
+        let mut model = model_with_tracks(0);
+        model.settings.appearance_settings.animations = animations;
+        let mut sources = SceneSources::new(model);
+        sources.since_first_paint = std::time::Duration::from_millis(250);
+        assert_eq!(sources.scene().active_theme().spinner.glyph(), "⣻");
     }
 
     #[rstest]
@@ -525,6 +630,7 @@ mod tests {
             catalog_rows: vec![server_track("So What"), server_track("Blue in Green")],
             cursor: Cursor::at(2, 1),
             paging: Paging::Complete,
+            server_query: None,
         });
         let text = server_frame(online(), catalog, 80);
         assert!(text.contains("newest › Kind of Blue"), "got {text:?}");

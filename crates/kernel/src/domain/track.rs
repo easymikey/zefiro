@@ -4,7 +4,14 @@ use std::{
     time::Duration,
 };
 
-use crate::domain::server::{MediaFetch, ServerAlbum, ServerName, ServerTrackId};
+use crate::domain::server::{
+    Artwork,
+    MediaFetch,
+    ServerAlbum,
+    ServerName,
+    ServerPlaylist,
+    ServerTrackId,
+};
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Tags {
@@ -81,6 +88,7 @@ impl TrackSource {
 #[derive(Debug, Clone, PartialEq)]
 pub enum CatalogRow {
     Album(ServerAlbum),
+    Playlist(ServerPlaylist),
     Track(Arc<Track>),
 }
 
@@ -92,6 +100,7 @@ pub struct Track {
     display: Box<str>,
     title: Box<str>,
     tagging: Tagging,
+    artwork: Option<Artwork>,
 }
 
 impl std::fmt::Debug for Track {
@@ -103,6 +112,7 @@ impl std::fmt::Debug for Track {
             display,
             title: _,
             tagging,
+            artwork: _,
         } = self;
         formatter
             .debug_struct("Track")
@@ -147,7 +157,13 @@ impl Track {
             display,
             title,
             tagging: Tagging::Tagged(duration),
+            artwork: None,
         }
+    }
+
+    #[must_use]
+    pub fn artwork(&self) -> Option<&Artwork> {
+        self.artwork.as_ref()
     }
 
     #[must_use]
@@ -156,6 +172,11 @@ impl Track {
             audio_format,
             ..self
         }
+    }
+
+    #[must_use]
+    pub fn with_cover(self, artwork: Option<Artwork>) -> Self {
+        Self { artwork, ..self }
     }
 
     #[must_use]
@@ -267,6 +288,7 @@ impl From<TrackSource> for Track {
             tags: Tags::default(),
             audio_format: AudioFormat::default(),
             tagging: Tagging::Listed(None),
+            artwork: None,
         }
     }
 }

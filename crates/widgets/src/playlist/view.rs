@@ -2,7 +2,7 @@ use kernel::domain::{
     catalog::{BrowseLevel, Catalog},
     favorites::Favorites,
     index::ViewIndex,
-    playlist::Playlist,
+    playlist::PlaylistRows,
     server::Server,
     track::{Track, TrackSource},
 };
@@ -17,7 +17,7 @@ pub enum LibraryStatus {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaylistView<'a> {
-    pub(crate) playlist: &'a Playlist,
+    pub(crate) rows: PlaylistRows<'a>,
     pub(crate) queue: &'a [TrackSource],
     pub(crate) favorites: &'a Favorites,
     pub(crate) selected: ViewIndex,

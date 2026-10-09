@@ -6,12 +6,11 @@ use kernel::{
         catalog::{Catalog, CatalogName, Paging},
         cue::Cue,
         cursor::Cursor,
-        cursor_over::CursorOver,
         direction::Direction,
         favorites::{Favorite, Favorites},
         io_error::IoError,
         model::Model,
-        overlay::{Overlay, ServerQuery},
+        overlay::{Field, Overlay, ServerPrompt, ServerQuery, TextEntry},
         playlist::PlaylistFileName,
         revision::Revision,
         server::{
@@ -73,7 +72,7 @@ pub(crate) fn online() -> ServerStatus {
     ServerStatus::Online(session())
 }
 
-fn album_row(album_number: usize) -> CatalogRow {
+pub(crate) fn album_row(album_number: usize) -> CatalogRow {
     CatalogRow::Album(ServerAlbum {
         album_id: AlbumId::new(&format!("al-{album_number}")),
         title: Arc::from("Title"),
@@ -94,6 +93,7 @@ pub(crate) fn server_model(server_status: ServerStatus, rows: usize) -> Model {
         server_status,
     };
     let mut catalog = Catalog::new(home());
+    catalog.albums_level.listing = newest();
     catalog.albums_level.catalog_rows = (0..rows).map(album_row).collect();
     catalog.albums_level.cursor = Cursor::new(rows);
     catalog.albums_level.paging = Paging::Next(Page(usize::from(rows > 0)));
@@ -112,7 +112,11 @@ pub(crate) fn browse(
     update(model, Message::Browse(request), Moment::default())
 }
 
-fn listed(model: &Model, listing: Listing, page: Page) -> Result<Cmd, Unhandled> {
+pub(crate) fn listed(
+    model: &Model,
+    listing: Listing,
+    page: Page,
+) -> Result<Cmd, Unhandled> {
     Ok(Effect::Remote(RemoteCmd::List {
         server_name: home(),
         session: session(),
@@ -123,7 +127,7 @@ fn listed(model: &Model, listing: Listing, page: Page) -> Result<Cmd, Unhandled>
     .into())
 }
 
-fn newest() -> Listing {
+pub(crate) fn newest() -> Listing {
     Listing::Albums(AlbumOrder::Newest)
 }
 
@@ -149,7 +153,7 @@ fn tab_goes_from_local_to_the_server_and_back() {
 
 #[test]
 fn enter_on_an_album_lists_its_tracks_sets_their_stars_and_backspace_closes_it() {
-    let mut model = server_model(online(), 3);
+    let mut model = server_model(online(), PAGE_ROWS);
     model.favorites = [server_track("c41d")].into_iter().collect();
     drop(browse(&mut model, BrowseRequest::CursorBy { rows: 1 }));
 
@@ -187,7 +191,7 @@ fn enter_on_an_album_lists_its_tracks_sets_their_stars_and_backspace_closes_it()
         Favorite::Yes
     );
     let closed = browse(&mut model, BrowseRequest::LevelUp);
-    assert_eq!(closed, listed(&model, newest(), Page(1)));
+    assert_eq!(closed, Ok(Cmd::none()));
     assert_eq!(model.catalogs[0].album_level, None);
 }
 
@@ -214,7 +218,7 @@ fn a_cursor_into_the_last_rows_asks_the_next_page_once() {
     BrowseRequest::StepCatalog(Direction::Next),
     BrowseRequest::StepCatalog(Direction::Next)
 )]
-fn coming_back_to_a_loading_album_list_asks_its_page_again(
+fn coming_back_to_a_loading_album_list_awaits_its_page(
     #[case] away_request: BrowseRequest,
     #[case] back_request: BrowseRequest,
 ) {
@@ -224,7 +228,7 @@ fn coming_back_to_a_loading_album_list_asks_its_page_again(
 
     let answer = browse(&mut model, back_request);
 
-    assert_eq!(answer, listed(&model, newest(), Page(1)));
+    assert_eq!(answer, Ok(Cmd::none()));
     assert_eq!(model.catalog_name, CatalogName::Server(home()));
     assert_eq!(model.catalogs[0].album_level, None);
     assert_eq!(
@@ -315,6 +319,58 @@ fn a_connecting_tab_lists_the_first_page_when_its_server_goes_online() {
     assert_eq!(
         model.catalogs[0].albums_level.paging,
         Paging::Loading(Page(0))
+    );
+}
+
+fn no_password() -> Message {
+    Message::Remote(RemoteEvent::Error(RemoteError::NoPassword {
+        server_name: home(),
+    }))
+}
+
+#[test]
+fn a_missing_password_opens_the_server_form_on_the_password_field() {
+    let mut model = server_model(ServerStatus::Connecting, 0);
+
+    let answer = update(&mut model, no_password(), Moment::default());
+
+    assert!(answer.is_ok());
+    assert_eq!(
+        model.workspace.overlay,
+        Some(Overlay::AddServer(ServerPrompt {
+            origin_server_name: Some(home()),
+            link_text_entry: TextEntry {
+                input: "https://music.example.com".to_owned(),
+                error: None,
+            },
+            user_text_entry: TextEntry {
+                input: "ann".to_owned(),
+                error: None,
+            },
+            field: Field::Password,
+            ..ServerPrompt::default()
+        }))
+    );
+    assert_eq!(model.workspace.toasts, Vec::new());
+}
+
+#[test]
+fn a_missing_password_behind_an_open_overlay_toasts_and_keeps_the_overlay() {
+    let mut model = server_model(ServerStatus::Connecting, 0);
+    model.workspace.overlay = Some(Overlay::Help);
+
+    let answer = update(&mut model, no_password(), Moment::default());
+
+    assert!(answer.is_ok());
+    assert_eq!(model.workspace.overlay, Some(Overlay::Help));
+    assert_eq!(
+        model
+            .workspace
+            .toasts
+            .iter()
+            .map(|toast| toast.title.clone())
+            .collect::<Vec<_>>(),
+        vec!["No password is saved for home".to_owned()]
     );
 }
 
@@ -512,7 +568,7 @@ fn server_track(id: &str) -> TrackSource {
     }
 }
 
-fn track_row(id: &str) -> CatalogRow {
+pub(crate) fn track_row(id: &str) -> CatalogRow {
     CatalogRow::Track(Arc::new(Track::from(server_track(id))))
 }
 
@@ -611,15 +667,11 @@ fn a_found_track_shows_the_star_the_server_holds_only_for_the_current_revision()
     let current = Revision::default().next();
     let mut model = server_model(online(), 0);
     model.favorites = [server_track("c41d")].into_iter().collect();
-    model.workspace.overlay = Some(Overlay::ServerSearch(CursorOver::new(
-        ServerQuery {
-            server_name: home(),
-            input: "so".to_owned(),
-            catalog_rows: Vec::new(),
-            revision: Some(current),
-        },
-        0,
-    )));
+    model.catalogs[0].albums_level.server_query = Some(ServerQuery {
+        input: "so".to_owned(),
+        catalog_rows: Vec::new(),
+        revision: Some(current),
+    });
 
     let stale = found(&mut model, current.next());
     assert_eq!(stale, Err(Unhandled));

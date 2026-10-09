@@ -4,25 +4,29 @@ mod download;
 use crate::{
     cmd::{Cmd, ConfigCmd, ConfigPatch, Effect, RemoteCmd},
     domain::{
-        catalog::{Catalog, CatalogName},
+        catalog::{Catalog, CatalogName, Paging},
         favorites::Favorites,
-        overlay::Overlay,
+        overlay::{Field, Overlay, ServerPrompt},
         player::Player,
+        playlist::{Playlist, PlaylistSource},
         revision::Revisions,
         server::{
             Connection,
             Credential,
             Download,
             PlayReport,
+            RemoteError,
             Server,
             ServerName,
             ServerStatus,
         },
         toast::Toast,
+        workspace::Workspace,
     },
     message::{Message, RemoteEvent, ServerRequest},
     update::{
-        machine::{Unhandled, replace},
+        machine::{Machine, Unhandled, replace},
+        overlay::OverlayMessage,
         play_reports,
     },
 };
@@ -35,7 +39,9 @@ pub(crate) struct ServerParts<'a> {
     pub(crate) catalogs: &'a mut Vec<Catalog>,
     pub(crate) revisions: &'a mut Revisions,
     pub(crate) favorites: &'a mut Favorites,
-    pub(crate) overlay: &'a mut Option<Overlay>,
+    pub(crate) workspace: &'a mut Workspace,
+    pub(crate) playlist: &'a mut Playlist,
+    pub(crate) playlist_source: &'a PlaylistSource,
     pub(crate) play_reports: &'a mut Vec<PlayReport>,
 }
 
@@ -69,7 +75,9 @@ pub(crate) fn request(
                 catalogs,
                 revisions: _,
                 favorites: _,
-                overlay: _,
+                workspace: _,
+                playlist: _,
+                playlist_source: _,
                 play_reports: kept_play_reports,
             } = server_parts;
             let index = servers
@@ -102,7 +110,9 @@ fn add(
         catalogs,
         revisions: _,
         favorites: _,
-        overlay: _,
+        workspace: _,
+        playlist: _,
+        playlist_source: _,
         play_reports: _,
     } = server_parts;
     let account = &connection.account;
@@ -172,7 +182,9 @@ pub(crate) fn update(
         RemoteEvent::Starred(server_favorite) => {
             catalog::starred(&mut server_parts, server_favorite)
         }
-        RemoteEvent::Restored(_) | RemoteEvent::Unsaved(_) => Err(Unhandled),
+        RemoteEvent::Restored(_)
+        | RemoteEvent::Unsaved(_)
+        | RemoteEvent::Cover { .. } => Err(Unhandled),
     }
 }
 
@@ -189,7 +201,9 @@ fn status(
         catalogs,
         revisions,
         favorites: _,
-        overlay: _,
+        workspace,
+        playlist: _,
+        playlist_source: _,
         play_reports: _,
     } = server_parts;
     let server = servers
@@ -197,22 +211,66 @@ fn status(
         .find(|server| server.account.server_name == *server_name)
         .ok_or(Unhandled)?;
     replace(&mut server.server_status, server_status)?;
-    Ok(match &server.server_status {
+    let answer =
+        if let Some(Overlay::AddServer(server_prompt)) = workspace.overlay.as_mut() {
+            server_prompt.answered(server_name, &server.server_status)
+        } else {
+            None
+        };
+    let toast = match &server.server_status {
         ServerStatus::Offline(error) => {
-            Cmd::message(Message::Toast(Toast::error(error.to_string())))
+            let levels = catalogs
+                .iter_mut()
+                .filter(|catalog| catalog.server_name == *server_name)
+                .flat_map(Catalog::levels);
+            for level in levels {
+                match level.paging {
+                    Paging::Loading(page) => level.paging = Paging::Queued(page),
+                    Paging::Next(_) | Paging::Queued(_) | Paging::Complete => {}
+                }
+            }
+            match answer {
+                Some(answer) => answer,
+                None => offline(workspace, server, error)?,
+            }
         }
         ServerStatus::Connecting => Cmd::none(),
-        ServerStatus::Online(_) => catalogs
-            .iter_mut()
-            .find(|catalog| match catalog_name {
-                CatalogName::Server(shown_name) => *shown_name == catalog.server_name,
-                CatalogName::Local => false,
-            })
-            .filter(|catalog| catalog.server_name == *server_name)
-            .map_or_else(Cmd::none, |catalog| {
-                catalog::show(catalog, &server.server_status, revisions)
-            }),
-    })
+        ServerStatus::Online(_) => {
+            let catalog = catalogs
+                .iter_mut()
+                .find(|catalog| match catalog_name {
+                    CatalogName::Server(shown_name) => {
+                        *shown_name == catalog.server_name
+                    }
+                    CatalogName::Local => false,
+                })
+                .filter(|catalog| catalog.server_name == *server_name);
+            if let Some(catalog) = catalog {
+                catalog::show(catalog);
+            }
+            answer.unwrap_or_else(Cmd::none)
+        }
+    };
+    Ok(toast.then(catalog::list(catalogs, servers, revisions)))
+}
+
+fn offline(
+    workspace: &mut Workspace,
+    server: &Server,
+    error: &RemoteError,
+) -> Result<Cmd, Unhandled> {
+    if matches!(error, RemoteError::NoPassword { .. }) && workspace.overlay.is_none() {
+        let server_prompt = ServerPrompt {
+            field: Field::Password,
+            ..ServerPrompt::from(&server.account)
+        };
+        return workspace
+            .overlay
+            .transition(OverlayMessage::Open(Overlay::AddServer(server_prompt)));
+    }
+    Ok(Cmd::message(Message::Toast(Toast::error(
+        error.to_string(),
+    ))))
 }
 
 pub(crate) fn online(server_status: &ServerStatus) -> Result<(), Unhandled> {

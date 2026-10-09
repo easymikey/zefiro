@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use crate::domain::{
     catalog::{Catalog, CatalogName},
@@ -10,7 +10,7 @@ use crate::domain::{
     player::Player,
     playlist::{Playlist, PlaylistSource},
     revision::Revisions,
-    server::{Download, PlayReport, Server},
+    server::{Artwork, Download, PlayReport, Server},
     settings::Settings,
     theme::Themes,
     track::{Track, TrackSource},
@@ -51,6 +51,7 @@ pub struct Model {
     pub catalog_name: CatalogName,
     pub catalogs: Vec<Catalog>,
     pub play_reports: Vec<PlayReport>,
+    pub covers: HashMap<Artwork, PathBuf>,
 }
 
 impl Model {
@@ -65,6 +66,9 @@ impl Model {
 
     #[must_use]
     pub fn playing_index(&self) -> Option<ViewIndex> {
+        if self.playlist_source.server_name().is_some() {
+            return None;
+        }
         let current = self.player.current()?;
         let index = self.playlist.playing_index()?;
         let at_index = self.playlist.current()?;

@@ -1,0 +1,28 @@
+---
+source: crates/widgets/tests/unit/screen_overlays.rs
+expression: frame_with_overlay(with_an_empty_list())
+---
+"                                                                                "
+" ╭ Zefiro ────────────────────────────────────────────────────────────────────╮ "
+" │                                                                            │ "
+" │  No track                                                      ■ Stopped   │ "
+" │                                                                            │ "
+" │  00:00 / 00:00  » 1×                                                       │ "
+" │                ╭ LIBRARY FOLDER ──────────────────────────╮                │ "
+" │  ──────────────│ > /Users/me/                             │─────────────   │ "
+" │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀│ a readable folder                        │                │ "
+" │  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀│                                          │                │ "
+" │  ⣀⣀⢀⣀⣀⢀⣀⡀⣀⣀⡀⣀⣀⡀│                                          │█████████████   │ "
+" │                │                                          │                │ "
+" ╰────────────────│                                          │────────────────╯ "
+" ┏ Library ── 1/3 │                                          │e noir ━━━━━━━━━┓ "
+" ┃    Test Artist │                                          │                ┃ "
+" ┃    Test Artist │                                          │                ┃ "
+" ┃    Test Artist │                                          │                ┃ "
+" ┃                │ Enter save · Esc cancel                  │                ┃ "
+" ┃                ╰──────────────────────────────────────────╯                ┃ "
+" ┃                                                                            ┃ "
+" ┃                                                                            ┃ "
+" ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ "
+"  Space  Play  Enter  Open  a  Queue  /  Find  ?/Ctrl+K  Help  q  Quit          "
+"                                                                                "

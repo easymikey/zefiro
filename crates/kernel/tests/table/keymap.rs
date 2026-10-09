@@ -9,7 +9,7 @@ use kernel::{
         geometry::Cells,
         key::{Key, KeyCode, KeyPress, Modifiers},
         keymap::{KeyContext, KeymapOverrides},
-        overlay::{Overlay, SearchQuery, ServerPrompt, TextEntry},
+        overlay::{Field, Overlay, SearchQuery, ServerPrompt, TextEntry},
         setting_row::SettingRow,
         time::Moment,
         toast::Toast,
@@ -85,6 +85,7 @@ fn naming_a_source_dir() -> Workspace {
         text_entry: TextEntry::default(),
         verdict: None,
         revision: None,
+        folders: CursorOver::default(),
     })
 }
 
@@ -205,6 +206,41 @@ fn close() -> Option<Message> {
     character('j'),
     typed_text(TextRequest::Char('j'))
 )]
+#[case::a_source_dir_prompt_tab_completes(
+    naming_a_source_dir(),
+    plain(KeyCode::Tab),
+    Some(Message::Overlay(OverlayRequest::Step(Direction::Next)))
+)]
+#[case::a_source_dir_prompt_right_completes(
+    naming_a_source_dir(),
+    plain(KeyCode::Right),
+    Some(Message::Overlay(OverlayRequest::Step(Direction::Next)))
+)]
+#[case::a_source_dir_prompt_left_goes_up(
+    naming_a_source_dir(),
+    plain(KeyCode::Left),
+    Some(Message::Overlay(OverlayRequest::Step(Direction::Previous)))
+)]
+#[case::a_source_dir_prompt_down_selects_the_next_folder(
+    naming_a_source_dir(),
+    plain(KeyCode::Down),
+    Some(Message::Overlay(OverlayRequest::Navigate(Direction::Next)))
+)]
+#[case::a_source_dir_prompt_up_selects_the_previous_folder(
+    naming_a_source_dir(),
+    plain(KeyCode::Up),
+    Some(Message::Overlay(OverlayRequest::Navigate(Direction::Previous)))
+)]
+#[case::the_server_form_refuses_right(
+    with_overlay(Overlay::AddServer(ServerPrompt::default())),
+    plain(KeyCode::Right),
+    None
+)]
+#[case::the_server_form_refuses_left(
+    with_overlay(Overlay::AddServer(ServerPrompt::default())),
+    plain(KeyCode::Left),
+    None
+)]
 fn routed_key(
     #[case] mut workspace: Workspace,
     #[case] key: Key,
@@ -289,6 +325,7 @@ fn music_dir_typed(input: &str) -> Overlay {
         text_entry: entry_typed(input),
         verdict: None,
         revision: None,
+        folders: CursorOver::default(),
     }
 }
 
@@ -297,29 +334,25 @@ fn jump_typed(input: &str) -> Overlay {
 }
 
 fn link_typed(input: &str) -> Overlay {
-    Overlay::AddServer(ServerPrompt::Link {
-        origin_server_name: None,
-        text_entry: entry_typed(input),
+    Overlay::AddServer(ServerPrompt {
+        link_text_entry: entry_typed(input),
+        ..ServerPrompt::default()
     })
 }
 
 fn typed_in(overlay: &Overlay) -> Option<&str> {
     match overlay {
         Overlay::Search(cursor_over) => Some(&cursor_over.content.input),
-        Overlay::ServerSearch(cursor_over) => Some(&cursor_over.content.input),
         Overlay::SavePlaylist(text_entry) => Some(&text_entry.input),
         Overlay::JumpToTime(text_entry) => Some(&text_entry.input),
         Overlay::MusicDir { text_entry, .. } => Some(&text_entry.input),
-        Overlay::AddServer(ServerPrompt::Link { text_entry, .. }) => {
-            Some(&text_entry.input)
-        }
-        Overlay::AddServer(ServerPrompt::User { text_entry, .. }) => {
-            Some(&text_entry.input)
-        }
-        Overlay::AddServer(ServerPrompt::Password { text_entry, .. }) => {
-            Some(&text_entry.input)
-        }
-        Overlay::Help
+        Overlay::AddServer(server_prompt) => Some(match server_prompt.field {
+            Field::Link => &server_prompt.link_text_entry.input,
+            Field::User => &server_prompt.user_text_entry.input,
+            Field::Password => &server_prompt.password_text_entry.input,
+        }),
+        Overlay::ServerSearch
+        | Overlay::Help
         | Overlay::History(_)
         | Overlay::Settings(_)
         | Overlay::ConfirmTrash(_)

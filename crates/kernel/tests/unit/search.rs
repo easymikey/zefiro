@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use kernel::{
-    domain::track::{Tags, Track},
+    domain::{
+        playlist::PlaylistRows,
+        track::{Tags, Track},
+    },
     search,
 };
 use rstest::rstest;
@@ -71,7 +74,7 @@ fn rank_orders_and_filters_tracks(
     #[case] expected: Vec<usize>,
 ) {
     assert_eq!(
-        search::rank(&tracks, query)
+        search::rank(PlaylistRows::Tracks(&tracks), query)
             .into_iter()
             .map(usize::from)
             .collect::<Vec<_>>(),

@@ -16,7 +16,7 @@ use kernel::{
         toast::ToastLevel,
         track::{AudioFormat, Tags, Track, TrackParts},
     },
-    message::{LibraryEvent, Message, PlaybackRequest, Timer},
+    message::{BrowseRequest, LibraryEvent, Message, PlaybackRequest, Timer},
     update::machine::Unhandled,
 };
 use rstest::rstest;
@@ -128,7 +128,7 @@ fn jump_request_starts_selected_track() {
     }));
     let cmd = update(
         &mut model,
-        Message::Playback(PlaybackRequest::JumpTo(ViewIndex::new(2))),
+        Message::Browse(BrowseRequest::JumpTo(ViewIndex::new(2))),
         Moment::default(),
     )
     .unwrap();

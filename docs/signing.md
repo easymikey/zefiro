@@ -1,6 +1,6 @@
 # Signing on macOS
 
-The Keychain grants "Always Allow" to a program by its code signature. The linker signs each build ad hoc, so every new build is a new program to macOS and the Keychain asks for the login password again. A stable signature fixes that: the Keychain then asks once.
+The Keychain grants "Always Allow" to a program by its code signature. The linker signs each build ad hoc, so every new build is a new program to macOS and the Keychain asks for the login password again. A stable signature fixes that. zefiro turns Keychain user interaction off, so the Keychain never asks: a read it would have asked about fails, and zefiro asks for the password once in its own server form, then saves it under the service `dev.zefiro`.
 
 ## Development builds
 
@@ -13,7 +13,7 @@ security find-identity -v -p codesigning
 export ZEFIRO_SIGN_IDENTITY="Apple Development: Name (TEAMID)"
 ```
 
-An Apple Development certificate comes free with an Apple ID: Xcode → Settings → Accounts → Manage Certificates → "+" → Apple Development. With no identity, the script runs the binary unsigned and says so on stderr; the Keychain then asks at every new build, as before.
+An Apple Development certificate comes free with an Apple ID: Xcode → Settings → Accounts → Manage Certificates → "+" → Apple Development. With no identity, the script runs the binary unsigned and says so on stderr; zefiro then asks for the password in its server form at every new build.
 
 To check a build: `codesign -dv target/debug/zefiro` shows `Identifier=dev.zefiro` and, with `-dvv`, `Authority=Apple Development: …`.
 

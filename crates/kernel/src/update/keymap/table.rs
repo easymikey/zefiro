@@ -73,7 +73,7 @@ fn global_rows() -> Vec<KeyBinding> {
 
 #[rustfmt::skip]
 fn playlist_rows() -> Vec<KeyBinding> {
-    use crate::{domain::{keymap::{Action::{Bottom, CycleSort, Delete, Dequeue, Down, Enqueue, Favorite, FullScan, LevelUp, NextCatalog, PageDown, PageUp, PlayNext, PlaySelected, PreviousCatalog, QueueMoveDown, QueueMoveUp, SavePlaylist, Top, TrackDetails, Up}, KeyContext::{Playlist}}}};
+    use crate::{domain::{keymap::{Action::{Bottom, CycleSort, CycleView, Delete, Dequeue, Down, Enqueue, Favorite, FullScan, LevelUp, NextCatalog, PageDown, PageUp, PlayNext, PlaySelected, PreviousCatalog, QueueMoveDown, QueueMoveUp, SavePlaylist, Top, TrackDetails, Up}, KeyContext::{Playlist}}}};
     use BrowseRequest as B;
     use QueueRequest as Q;
     let row = row(Playlist);
@@ -100,6 +100,7 @@ fn playlist_rows() -> Vec<KeyBinding> {
         row(QueueMoveUp, shifted(KeyCode::Up), Message::Queue(Q::Move(Direction::Previous))),
         row(QueueMoveDown, shifted(KeyCode::Down), Message::Queue(Q::Move(Direction::Next))),
         row(CycleSort, key('o'), Message::Browse(B::CycleSort)),
+        row(CycleView, key('v'), Message::Browse(B::CycleView)),
         row(Favorite, key('f'), Message::Browse(B::ToggleFavorite)),
         row(Delete, key('d'), Message::Overlay(OverlayRequest::Open(OverlayName::ConfirmTrash))),
         row(SavePlaylist, key('S'), Message::Overlay(OverlayRequest::Open(OverlayName::SavePlaylist))),

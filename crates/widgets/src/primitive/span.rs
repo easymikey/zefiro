@@ -38,6 +38,12 @@ impl<'a> StyledText<'a> {
     }
 
     #[must_use]
+    pub(crate) fn reversed(mut self) -> Self {
+        self.style = self.style.add_modifier(Modifier::REVERSED);
+        self
+    }
+
+    #[must_use]
     pub(crate) fn style(mut self, style: Style) -> Self {
         self.style = style;
         self

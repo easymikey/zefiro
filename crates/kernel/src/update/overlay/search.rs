@@ -1,16 +1,14 @@
-use std::sync::Arc;
-
 use crate::{
     cmd::{Cmd, Effect, RemoteCmd},
     domain::{
+        catalog::{BrowseLevel, Catalog, CatalogName},
         cursor::Cursor,
         cursor_over::CursorOver,
         index::ViewIndex,
-        overlay::{Overlay, SearchQuery, ServerQuery},
-        revision::Revision,
-        server::RemoteError,
-        toast::Toast,
-        track::{CatalogRow, Track},
+        overlay::{SearchQuery, ServerQuery},
+        playlist::PlaylistRows,
+        server::{Listing, Server, ServerName, Session},
+        track::CatalogRow,
     },
     message::{Message, QueueRequest, SearchRequest, TextRequest},
     update::{
@@ -44,95 +42,148 @@ pub(crate) fn server_request(
     request: SearchRequest,
 ) -> Result<Cmd, Unhandled> {
     let OverlayParts {
-        workspace,
-        playlist: _,
+        workspace: _,
+        rows: _,
         player: _,
         history: _,
         music_dir: _,
         servers,
-        catalog_name: _,
+        catalog_name,
+        catalogs,
         revisions,
     } = parts;
-    let Some(Overlay::ServerSearch(server_query)) = workspace.overlay.as_mut() else {
+    let CatalogName::Server(server_name) = catalog_name else {
         return Err(Unhandled);
     };
+    let level = level(catalogs, catalog_name).ok_or(Unhandled)?;
     match request {
         SearchRequest::Edit(text_request) => {
-            let ServerQuery {
-                server_name,
-                input,
-                catalog_rows,
-                revision,
-            } = &mut server_query.content;
-            let session = session(servers, server_name).cloned().ok_or(Unhandled)?;
-            edit(input, text_request)?;
-            if input.is_empty() {
-                catalog_rows.clear();
-                *revision = None;
-                server_query.cursor = Cursor::new(0);
-                return Ok(Cmd::none());
-            }
-            let issued = revisions.issue_effect();
-            *revision = Some(issued);
-            Ok(Cmd::from(Effect::Remote(RemoteCmd::Search {
-                server_name: server_name.clone(),
-                session,
-                input: input.clone(),
-                revision: issued,
-            })))
+            let session = listing_session(&level.listing, servers, server_name)?;
+            let mut input = level
+                .server_query
+                .as_ref()
+                .map_or_else(String::new, |server_query| server_query.input.clone());
+            edit(&mut input, text_request)?;
+            let needle = input.to_lowercase();
+            let server_query = level.server_query.get_or_insert_default();
+            server_query.input = input;
+            server_query.revision = None;
+            let cmd = match session {
+                Some(session) if !needle.is_empty() => {
+                    let revision = revisions.issue_effect();
+                    server_query.revision = Some(revision);
+                    Effect::Remote(RemoteCmd::Search {
+                        server_name: server_name.clone(),
+                        session,
+                        input: server_query.input.clone(),
+                        listing: level.listing.clone(),
+                        revision,
+                    })
+                    .into()
+                }
+                None if !needle.is_empty() => {
+                    narrowed(level);
+                    Cmd::none()
+                }
+                Some(_) | None => {
+                    server_query.catalog_rows.clear();
+                    Cmd::none()
+                }
+            };
+            level.cursor = Cursor::new(level.rows().len());
+            Ok(cmd)
         }
         SearchRequest::Navigate(direction) => {
-            let moved = server_query.cursor.step(direction.sign());
-            replace(&mut server_query.cursor, moved).map(|()| Cmd::none())
+            let moved = level.cursor.step(direction.sign());
+            replace(&mut level.cursor, moved).map(|()| Cmd::none())
         }
         SearchRequest::Enqueue => Err(Unhandled),
     }
 }
 
-pub(crate) fn found(
-    overlay: &mut Option<Overlay>,
-    result: Result<Vec<CatalogRow>, RemoteError>,
-    revision: Revision,
-) -> Result<Cmd, Unhandled> {
-    let Some(Overlay::ServerSearch(server_query)) = overlay.as_mut() else {
-        return Err(Unhandled);
-    };
-    server_query
-        .content
-        .revision
-        .take_if(|sent| *sent == revision)
-        .map(drop)
-        .ok_or(Unhandled)?;
-    Ok(match result {
-        Ok(catalog_rows) => {
-            server_query.cursor = Cursor::new(catalog_rows.len());
-            server_query.content.catalog_rows = catalog_rows;
-            Cmd::none()
+pub(crate) fn clear(parts: &mut OverlayParts<'_>) -> Option<ServerQuery> {
+    let level = level(parts.catalogs, parts.catalog_name)?;
+    let server_query = level.server_query.take()?;
+    level.cursor = Cursor::new(level.catalog_rows.len());
+    Some(server_query)
+}
+
+pub(crate) fn level<'a>(
+    catalogs: &'a mut [Catalog],
+    catalog_name: &CatalogName,
+) -> Option<&'a mut BrowseLevel> {
+    match catalog_name {
+        CatalogName::Local => None,
+        CatalogName::Server(server_name) => catalogs
+            .iter_mut()
+            .find(|catalog| catalog.server_name == *server_name)
+            .map(Catalog::level),
+    }
+}
+
+fn listing_session(
+    listing: &Listing,
+    servers: &[Server],
+    server_name: &ServerName,
+) -> Result<Option<Session>, Unhandled> {
+    match listing {
+        Listing::Songs | Listing::Albums(_) => session(servers, server_name)
+            .cloned()
+            .map(Some)
+            .ok_or(Unhandled),
+        Listing::Album(_) | Listing::Playlists | Listing::Playlist(_) => Ok(None),
+    }
+}
+
+pub(crate) fn narrowed(level: &mut BrowseLevel) {
+    if let Listing::Album(_) | Listing::Playlists | Listing::Playlist(_) = level.listing
+        && let Some(server_query) = level
+            .server_query
+            .as_mut()
+            .filter(|server_query| !server_query.input.is_empty())
+    {
+        let needle = server_query.input.to_lowercase();
+        server_query.catalog_rows = level
+            .catalog_rows
+            .iter()
+            .filter(|catalog_row| matched(catalog_row, &needle))
+            .cloned()
+            .collect();
+    }
+}
+
+fn matched(catalog_row: &CatalogRow, needle: &str) -> bool {
+    match catalog_row {
+        CatalogRow::Track(track) => track.display().to_lowercase().contains(needle),
+        CatalogRow::Album(server_album) => [&server_album.title, &server_album.artist]
+            .iter()
+            .any(|text| text.to_lowercase().contains(needle)),
+        CatalogRow::Playlist(server_playlist) => {
+            server_playlist.name.to_lowercase().contains(needle)
         }
-        Err(error) => Cmd::message(Message::Toast(Toast::error(error.to_string()))),
-    })
+    }
 }
 
 pub(crate) fn rerank(
     search_query: &mut CursorOver<SearchQuery>,
-    tracks: &[Arc<Track>],
+    rows: PlaylistRows<'_>,
 ) {
-    let ranked = crate::search::rank(tracks, &search_query.content.input);
+    let ranked = crate::search::rank(rows, &search_query.content.input);
     refreshed(search_query, ranked);
 }
 
 pub(crate) fn requery(
     search_query: &mut CursorOver<SearchQuery>,
-    tracks: &[Arc<Track>],
+    rows: PlaylistRows<'_>,
     text_request: TextRequest,
 ) {
     let input = &search_query.content.input;
     let ranked = match text_request {
         TextRequest::Char(_) => {
-            crate::search::narrow(tracks, input, &search_query.content.matches)
+            crate::search::narrow(rows, input, &search_query.content.matches)
         }
         TextRequest::Backspace | TextRequest::DeleteWord | TextRequest::Clear => {
-            crate::search::rank(tracks, input)
+            crate::search::rank(rows, input)
         }
     };
     refreshed(search_query, ranked);
@@ -162,34 +213,35 @@ mod tests {
     use crate::{
         cmd::{Effect, RemoteCmd},
         domain::{
-            catalog::{Catalog, CatalogName},
+            catalog::{BrowseLevel, Catalog, CatalogName, Paging},
             cursor::Cursor,
-            cursor_over::CursorOver,
             favorites::Favorites,
             key::{Key, KeyCode, KeyPress},
             model::Model,
-            overlay::{Overlay, ServerQuery},
-            playlist::PlaylistSource,
+            overlay::Overlay,
             revision::Revision,
             server::{
                 Account,
                 AlbumId,
+                AlbumOrder,
                 Endpoint,
                 Listing,
+                Page,
+                PlaylistId,
                 RemoteError,
                 Server,
                 ServerAlbum,
                 ServerName,
+                ServerPlaylist,
                 ServerStatus,
                 ServerTrackId,
                 Session,
                 UserName,
             },
             time::Moment,
-            toast::ToastLevel,
             track::{CatalogRow, Track, TrackSource},
         },
-        message::{Message, RemoteEvent},
+        message::{CatalogPage, Message, RemoteEvent},
         update::{machine::Unhandled, update},
     };
 
@@ -202,66 +254,70 @@ mod tests {
         )
     }
 
-    fn model_with(servers: Vec<Server>, overlay: Option<Overlay>) -> Model {
-        let mut model = Model {
-            servers,
-            ..Model::default()
-        };
-        model.workspace.overlay = overlay;
-        model
-    }
-
     fn home() -> ServerName {
         ServerName::new("home")
     }
 
-    fn online_home() -> Server {
+    fn home_server(server_status: ServerStatus) -> Server {
         let endpoint = Endpoint::parse("https://home.example.com").unwrap();
         Server {
             account: Account {
                 server_name: home(),
-                endpoint: endpoint.clone(),
+                endpoint,
                 user_name: UserName::new("ann").unwrap(),
             },
-            server_status: ServerStatus::Online(Session::new(
-                endpoint,
-                "u=ann&t=t&s=s",
-            )),
+            server_status,
         }
     }
 
-    fn home_tab(server: Server, overlay: Option<Overlay>) -> Model {
-        let mut model = model_with(vec![server], overlay);
-        model.catalog_name = CatalogName::Server(home());
-        model.catalogs = vec![Catalog::new(home())];
+    fn online() -> ServerStatus {
+        let endpoint = Endpoint::parse("https://home.example.com").unwrap();
+        ServerStatus::Online(Session::new(endpoint, "u=ann&t=t&s=s"))
+    }
+
+    fn home_tab(server_status: ServerStatus, albums_level: BrowseLevel) -> Model {
+        let mut model = Model {
+            servers: vec![home_server(server_status)],
+            catalog_name: CatalogName::Server(home()),
+            ..Model::default()
+        };
+        model.catalogs = vec![Catalog {
+            albums_level,
+            ..Catalog::new(home())
+        }];
         model
     }
 
-    fn server_query(
-        catalog_rows: Vec<CatalogRow>,
-        revision: Option<Revision>,
-    ) -> CursorOver<ServerQuery> {
-        let len = catalog_rows.len();
-        CursorOver::new(
-            ServerQuery {
-                server_name: home(),
-                input: String::new(),
-                catalog_rows,
-                revision,
-            },
-            len,
+    fn listed(listing: Listing, catalog_rows: Vec<CatalogRow>) -> BrowseLevel {
+        BrowseLevel {
+            cursor: Cursor::new(catalog_rows.len()),
+            catalog_rows,
+            paging: Paging::Complete,
+            ..BrowseLevel::new(listing)
+        }
+    }
+
+    fn playlists() -> BrowseLevel {
+        let playlist_row = |name: &str| {
+            CatalogRow::Playlist(ServerPlaylist {
+                playlist_id: PlaylistId::new(name),
+                name: Arc::from(name),
+                track_count: 1,
+                duration: Duration::from_secs(60),
+            })
+        };
+        listed(
+            Listing::Playlists,
+            vec![
+                playlist_row("Jazz"),
+                playlist_row("Rock"),
+                playlist_row("Jazz Live"),
+            ],
         )
     }
 
-    fn album_row(id: &str) -> CatalogRow {
-        CatalogRow::Album(ServerAlbum {
-            album_id: AlbumId::new(id),
-            title: Arc::from(id),
-            artist: Arc::from("artist"),
-            year: None,
-            track_count: 1,
-            duration: Duration::from_secs(60),
-        })
+    fn songs() -> BrowseLevel {
+        listed(Listing::Songs, vec![track_row("a"), track_row("b")])
     }
 
     fn track_row(id: &str) -> CatalogRow {
@@ -271,15 +327,33 @@ mod tests {
         })))
     }
 
-    fn sent_revisions(effects: &[Effect]) -> Vec<(String, Revision)> {
-        effects
+    fn level(model: &Model) -> &BrowseLevel {
+        &model.catalogs.first().unwrap().albums_level
+    }
+
+    fn names(model: &Model) -> Vec<&str> {
+        level(model)
+            .rows()
             .iter()
+            .filter_map(|catalog_row| match catalog_row {
+                CatalogRow::Playlist(server_playlist) => Some(&*server_playlist.name),
+                CatalogRow::Album(_) | CatalogRow::Track(_) => None,
+            })
+            .collect()
+    }
+
+    fn typed(model: &mut Model, text: &str) -> Vec<(String, Listing, Revision)> {
+        text.chars()
+            .flat_map(|character| press(model, KeyCode::Char(character)).unwrap())
             .filter_map(|effect| {
                 if let Effect::Remote(RemoteCmd::Search {
-                    input, revision, ..
+                    input,
+                    listing,
+                    revision,
+                    ..
                 }) = effect
                 {
-                    Some((input.clone(), *revision))
+                    Some((input, listing, revision))
                 } else {
                     None
                 }
@@ -289,252 +363,250 @@ mod tests {
 
     fn found(
         model: &mut Model,
-        result: Result<Vec<CatalogRow>, RemoteError>,
+        catalog_rows: Vec<CatalogRow>,
         revision: Revision,
     ) -> Result<Vec<Effect>, Unhandled> {
         update(
             model,
             Message::Remote(RemoteEvent::Found {
                 server_name: home(),
-                result: result.map(|catalog_rows| (catalog_rows, Favorites::default())),
+                result: Ok((catalog_rows, Favorites::default())),
                 revision,
             }),
             Moment::default(),
         )
     }
 
-    fn opened_query(model: &Model) -> &CursorOver<ServerQuery> {
-        let Some(Overlay::ServerSearch(server_query)) = &model.workspace.overlay else {
-            panic!(
-                "expected the server search, got {:?}",
-                model.workspace.overlay
-            );
+    #[test]
+    fn slash_in_a_playlists_view_narrows_its_rows_locally_as_the_user_types() {
+        let mut model = home_tab(ServerStatus::Connecting, playlists());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        assert_eq!(model.workspace.overlay, Some(Overlay::ServerSearch));
+        assert_eq!(typed(&mut model, "ja"), Vec::new());
+        assert_eq!(names(&model), ["Jazz", "Jazz Live"]);
+        assert_eq!(level(&model).catalog_rows.len(), 3);
+    }
+
+    #[test]
+    fn typing_in_a_songs_view_asks_the_server_for_songs_and_drops_a_stale_answer() {
+        let mut model = home_tab(online(), songs());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        let sent = typed(&mut model, "so");
+        let [
+            (first, Listing::Songs, stale),
+            (second, Listing::Songs, current),
+        ] = sent.as_slice()
+        else {
+            panic!("two song searches, got {sent:?}");
         };
-        server_query
+        assert_eq!((first.as_str(), second.as_str()), ("s", "so"));
+        assert!(found(&mut model, vec![track_row("stale")], *stale).is_err());
+        assert!(found(&mut model, vec![track_row("so-what")], *current).is_ok());
+        assert_eq!(level(&model).rows(), [track_row("so-what")]);
+        assert_eq!(level(&model).catalog_rows.len(), 2);
     }
 
     #[test]
-    fn slash_in_an_online_server_tab_opens_the_server_search() {
-        let mut model = home_tab(online_home(), None);
-
-        press(&mut model, KeyCode::Char('/')).unwrap();
-
-        assert_eq!(
-            model.workspace.overlay,
-            Some(Overlay::ServerSearch(server_query(Vec::new(), None)))
-        );
+    fn a_songs_filter_without_a_session_is_refused_and_keeps_no_filter() {
+        let mut model = home_tab(ServerStatus::Connecting, songs());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        assert!(press(&mut model, KeyCode::Char('s')).is_err());
+        assert_eq!(level(&model).server_query, None);
     }
 
     #[test]
-    fn slash_in_an_offline_server_tab_is_refused() {
-        let mut offline_home = online_home();
-        offline_home.server_status = ServerStatus::Offline(RemoteError::Moved {
-            server_name: home(),
-        });
-        let mut model = home_tab(offline_home, None);
-
-        assert_eq!(press(&mut model, KeyCode::Char('/')), Err(Unhandled));
-        assert_eq!(model.workspace.overlay, None);
-    }
-
-    #[test]
-    fn each_edit_sends_a_search_with_a_new_revision() {
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(Vec::new(), None))),
-        );
-
-        let first = sent_revisions(&press(&mut model, KeyCode::Char('a')).unwrap());
-        let second = sent_revisions(&press(&mut model, KeyCode::Char('b')).unwrap());
-
-        assert_eq!(first.len(), 1);
-        assert_eq!(second.len(), 1);
-        assert_eq!(first[0].0, "a");
-        assert_eq!(second[0].0, "ab");
-        assert_ne!(first[0].1, second[0].1);
-        assert_eq!(opened_query(&model).content.revision, Some(second[0].1));
-    }
-
-    #[test]
-    fn emptying_the_input_orders_no_search_and_shows_no_rows() {
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(Vec::new(), None))),
-        );
-        let filled =
-            sent_revisions(&press(&mut model, KeyCode::Char('a')).unwrap())[0].1;
-        found(&mut model, Ok(vec![album_row("al-1")]), filled).unwrap();
-        drop(press(&mut model, KeyCode::Char('b')).unwrap());
-        let pending =
-            sent_revisions(&press(&mut model, KeyCode::Backspace).unwrap())[0].1;
-
-        let emptied = sent_revisions(&press(&mut model, KeyCode::Backspace).unwrap());
-
-        assert_eq!(emptied, Vec::new());
-        let server_query = opened_query(&model);
-        assert_eq!(server_query.content.input, "");
-        assert!(server_query.content.catalog_rows.is_empty());
-        assert_eq!(server_query.content.revision, None);
-        assert_eq!(server_query.cursor, Cursor::new(0));
-        assert_eq!(
-            found(&mut model, Ok(vec![album_row("late")]), pending),
-            Err(Unhandled)
-        );
-        assert!(opened_query(&model).content.catalog_rows.is_empty());
-    }
-
-    #[test]
-    fn found_fills_the_rows_only_for_the_current_revision() {
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(Vec::new(), None))),
-        );
-        let stale =
-            sent_revisions(&press(&mut model, KeyCode::Char('a')).unwrap())[0].1;
-        let current =
-            sent_revisions(&press(&mut model, KeyCode::Char('b')).unwrap())[0].1;
-
-        assert_eq!(
-            found(&mut model, Ok(vec![album_row("old")]), stale),
-            Err(Unhandled)
-        );
-        assert!(opened_query(&model).content.catalog_rows.is_empty());
-
-        found(
-            &mut model,
-            Ok(vec![album_row("al-1"), track_row("tr-1")]),
-            current,
-        )
-        .unwrap();
-
-        let server_query = opened_query(&model);
-        assert_eq!(
-            server_query.content.catalog_rows,
-            vec![album_row("al-1"), track_row("tr-1")]
-        );
-        assert_eq!(server_query.content.revision, None);
-        assert_eq!(server_query.cursor, Cursor::new(2));
-    }
-
-    #[test]
-    fn a_failed_search_is_dropped_unless_its_revision_is_current() {
-        let error = RemoteError::Moved {
-            server_name: home(),
-        };
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(Vec::new(), None))),
-        );
-        let stale =
-            sent_revisions(&press(&mut model, KeyCode::Char('a')).unwrap())[0].1;
-        let current =
-            sent_revisions(&press(&mut model, KeyCode::Char('b')).unwrap())[0].1;
-
-        assert_eq!(found(&mut model, Err(error.clone()), stale), Err(Unhandled));
-        assert_eq!(opened_query(&model).content.revision, Some(current));
-        assert!(model.workspace.toasts.is_empty());
-
-        found(&mut model, Err(error.clone()), current).unwrap();
-
-        assert_eq!(opened_query(&model).content.revision, None);
-        let [toast] = model.workspace.toasts.as_slice() else {
-            panic!("expected one toast, got {:?}", model.workspace.toasts);
-        };
-        assert_eq!(toast.level, ToastLevel::Error);
-        assert_eq!(toast.title, error.to_string());
-    }
-
-    #[test]
-    fn enter_on_an_album_closes_the_search_and_opens_the_album_in_the_tab() {
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(
-                vec![album_row("al-1"), track_row("tr-1")],
-                None,
-            ))),
-        );
-
-        let effects = press(&mut model, KeyCode::Enter).unwrap();
-
-        assert_eq!(model.workspace.overlay, None);
-        assert_eq!(
-            model.catalogs[0]
-                .album_level
-                .as_ref()
-                .map(|level| &level.listing),
-            Some(&Listing::Album(AlbumId::new("al-1")))
-        );
+    fn emptying_the_input_shows_every_row_and_sends_no_search() {
+        let mut model = home_tab(online(), songs());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        assert_eq!(typed(&mut model, "s").len(), 1);
+        let effects = press(&mut model, KeyCode::Backspace).unwrap();
         assert!(
-            effects
-                .iter()
-                .any(|effect| matches!(effect, Effect::Remote(RemoteCmd::List { .. })))
+            !effects.iter().any(|effect| matches!(
+                effect,
+                Effect::Remote(RemoteCmd::Search { .. })
+            ))
         );
+        assert_eq!(level(&model).rows().len(), 2);
     }
 
     #[test]
-    fn enter_on_a_track_plays_it_with_the_found_tracks_as_the_playlist() {
-        let mut query = server_query(
-            vec![album_row("al-1"), track_row("tr-1"), track_row("tr-2")],
-            None,
-        );
-        query.cursor = query.cursor.step(2);
-        let mut model = home_tab(online_home(), Some(Overlay::ServerSearch(query)));
-
-        press(&mut model, KeyCode::Enter).unwrap();
-
+    fn enter_keeps_the_filter_over_the_rows_and_esc_clears_it() {
+        let mut model = home_tab(ServerStatus::Connecting, playlists());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        typed(&mut model, "rock");
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
         assert_eq!(model.workspace.overlay, None);
-        let second = TrackSource::Server {
-            server_name: home(),
-            server_track_id: ServerTrackId::new("tr-2"),
+        assert_eq!(names(&model), ["Rock"]);
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        assert!(press(&mut model, KeyCode::Esc).is_ok());
+        assert_eq!(model.workspace.overlay, None);
+        assert_eq!(level(&model).server_query, None);
+        assert_eq!(names(&model), ["Jazz", "Rock", "Jazz Live"]);
+    }
+
+    #[test]
+    fn esc_on_the_rows_clears_a_kept_filter_at_once() {
+        let mut model = home_tab(ServerStatus::Connecting, playlists());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        typed(&mut model, "rock");
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
+        assert!(press(&mut model, KeyCode::Esc).is_ok());
+        assert_eq!(level(&model).server_query, None);
+        assert_eq!(names(&model), ["Jazz", "Rock", "Jazz Live"]);
+        assert!(press(&mut model, KeyCode::Esc).is_err());
+    }
+
+    #[test]
+    fn a_failed_search_toasts_and_drops_any_later_answer_to_it() {
+        let mut model = home_tab(online(), songs());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        let sent = typed(&mut model, "s");
+        let [(_, Listing::Songs, revision)] = sent.as_slice() else {
+            panic!("one song search, got {sent:?}");
         };
-        assert_eq!(model.playlist.tracks.len(), 2);
+        let failed = update(
+            &mut model,
+            Message::Remote(RemoteEvent::Found {
+                server_name: home(),
+                result: Err(RemoteError::Moved {
+                    server_name: home(),
+                }),
+                revision: *revision,
+            }),
+            Moment::default(),
+        );
+        assert!(failed.is_ok());
+        assert_eq!(model.workspace.toasts.len(), 1);
+        assert!(found(&mut model, vec![track_row("late")], *revision).is_err());
+        assert_eq!(level(&model).rows(), []);
+    }
+
+    #[test]
+    fn tab_while_filtering_is_refused_and_keeps_the_view_and_the_filter() {
+        let mut model = home_tab(ServerStatus::Connecting, playlists());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        typed(&mut model, "ja");
+        assert!(press(&mut model, KeyCode::Tab).is_err());
+        assert_eq!(model.workspace.overlay, Some(Overlay::ServerSearch));
+        assert_eq!(model.catalog_name, CatalogName::Server(home()));
+        assert_eq!(level(&model).listing, Listing::Playlists);
+        assert_eq!(names(&model), ["Jazz", "Jazz Live"]);
+    }
+
+    #[test]
+    fn enter_on_a_filtered_song_plays_the_matched_track() {
+        let mut model = home_tab(online(), songs());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        let sent = typed(&mut model, "so");
+        let Some((_, _, current)) = sent.last() else {
+            panic!("song searches, got {sent:?}");
+        };
+        assert!(found(&mut model, vec![track_row("so-what")], *current).is_ok());
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
+        let played: Vec<_> = model
+            .playlist
+            .tracks
+            .iter()
+            .map(|track| track.source())
+            .collect();
         assert_eq!(
-            model.player.current().map(|track| track.source()),
-            Some(&second)
+            played,
+            [&TrackSource::Server {
+                server_name: home(),
+                server_track_id: ServerTrackId::new("so-what"),
+            }]
         );
-        assert_eq!(model.playlist_source, PlaylistSource::Server(home()));
     }
 
     #[test]
-    fn esc_closes_the_server_search() {
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(Vec::new(), None))),
+    fn enter_on_a_filtered_album_opens_the_matched_album() {
+        let album_row = |id: &str| {
+            CatalogRow::Album(ServerAlbum {
+                album_id: AlbumId::new(id),
+                title: Arc::from(id),
+                artist: Arc::from("Miles"),
+                year: None,
+                track_count: 1,
+                duration: Duration::from_secs(60),
+            })
+        };
+        let albums = listed(
+            Listing::Albums(AlbumOrder::Newest),
+            vec![album_row("Bags"), album_row("Kind of Blue")],
         );
+        let mut model = home_tab(online(), albums);
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        let sent = typed(&mut model, "kind");
+        let Some((_, Listing::Albums(_), current)) = sent.last() else {
+            panic!("album searches, got {sent:?}");
+        };
+        assert!(found(&mut model, vec![album_row("Kind of Blue")], *current).is_ok());
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
+        let opened = model
+            .catalogs
+            .first()
+            .unwrap()
+            .album_level
+            .as_ref()
+            .unwrap();
+        assert_eq!(opened.listing, Listing::Album(AlbumId::new("Kind of Blue")));
+    }
 
-        press(&mut model, KeyCode::Esc).unwrap();
+    #[test]
+    fn enter_on_a_filtered_playlist_opens_the_matched_playlist() {
+        let mut model = home_tab(online(), playlists());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        assert_eq!(typed(&mut model, "rock"), Vec::new());
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
+        let opened = model
+            .catalogs
+            .first()
+            .unwrap()
+            .album_level
+            .as_ref()
+            .unwrap();
+        assert_eq!(opened.listing, Listing::Playlist(PlaylistId::new("Rock")));
+    }
 
+    #[test]
+    fn a_filter_typed_before_the_page_lands_narrows_the_rows_that_arrive() {
+        let browse_level = BrowseLevel {
+            paging: Paging::Loading(Page::default()),
+            ..BrowseLevel::new(Listing::Playlists)
+        };
+        let mut model = home_tab(ServerStatus::Connecting, browse_level);
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        assert_eq!(typed(&mut model, "ja"), Vec::new());
+        let revision = model.revisions.list;
+        let arrived = update(
+            &mut model,
+            Message::Remote(RemoteEvent::Listed(CatalogPage {
+                server_name: home(),
+                listing: Listing::Playlists,
+                page: Page::default(),
+                catalog_rows: playlists().catalog_rows,
+                favorites: Favorites::default(),
+                revision,
+            })),
+            Moment::default(),
+        );
+        assert!(arrived.is_ok());
+        assert_eq!(names(&model), ["Jazz", "Jazz Live"]);
+        assert_eq!(level(&model).catalog_rows.len(), 3);
+    }
+
+    #[test]
+    fn enter_on_an_emptied_filter_leaves_no_filter() {
+        let mut model = home_tab(ServerStatus::Connecting, playlists());
+        assert!(press(&mut model, KeyCode::Char('/')).is_ok());
+        typed(&mut model, "r");
+        assert!(press(&mut model, KeyCode::Backspace).is_ok());
+        assert!(press(&mut model, KeyCode::Enter).is_ok());
         assert_eq!(model.workspace.overlay, None);
-    }
-
-    #[test]
-    fn an_edit_after_the_server_goes_offline_is_refused_and_keeps_the_query() {
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(Vec::new(), None))),
-        );
-        drop(press(&mut model, KeyCode::Char('a')).unwrap());
-        model.servers[0].server_status = ServerStatus::Offline(RemoteError::Moved {
-            server_name: home(),
-        });
-        let before = opened_query(&model).clone();
-
-        assert_eq!(press(&mut model, KeyCode::Char('b')), Err(Unhandled));
-        assert_eq!(opened_query(&model), &before);
-    }
-
-    #[test]
-    fn enqueue_in_the_server_search_is_refused() {
-        let mut model = home_tab(
-            online_home(),
-            Some(Overlay::ServerSearch(server_query(
-                vec![track_row("tr-1")],
-                None,
-            ))),
-        );
-        let before = model.workspace.overlay.clone();
-
-        assert_eq!(press(&mut model, KeyCode::Tab), Err(Unhandled));
-        assert_eq!(model.workspace.overlay, before);
+        assert_eq!(level(&model).server_query, None);
+        assert_eq!(names(&model), ["Jazz", "Rock", "Jazz Live"]);
     }
 }

@@ -64,10 +64,12 @@ mod tests {
             playlist_len: 0,
             scan_status: kernel::domain::model::ScanStatus::Idle,
             scanning_label: "Scanning…",
+            spinner: crate::primitive::spinner::Spinner::default(),
             theme_name: "noir",
             remaining: None,
             servers: &[],
             catalog_name: &kernel::domain::catalog::CatalogName::Local,
+            playlist_source: &kernel::domain::playlist::PlaylistSource::Named,
         }
     }
 

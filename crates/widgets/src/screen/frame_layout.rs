@@ -2,7 +2,7 @@ use kernel::domain::{
     appearance::CoverMode,
     cursor_over::CursorOver,
     geometry::Cells,
-    overlay::{SearchQuery, ServerQuery, TextEntry},
+    overlay::{SearchQuery, TextEntry},
     playlist::PlaylistFileNameError,
     setting_row::SettingRow,
 };
@@ -27,7 +27,6 @@ use crate::{
 pub enum OverlayContent<'a> {
     Help(HelpColumns),
     Search(&'a CursorOver<SearchQuery>, String),
-    ServerSearch(&'a CursorOver<ServerQuery>),
     SavePlaylist(&'a TextEntry<PlaylistFileNameError>),
     History(&'a CursorOver<()>, HistoryMeasures),
     Settings(SettingRow, SettingsTable),

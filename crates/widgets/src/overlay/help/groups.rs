@@ -100,6 +100,7 @@ const PLAYLIST_ACTIONS: &[(Action, HelpLabel)] = &[
     (Action::QueueMoveUp, HelpLabel::Text("Move up in queue")),
     (Action::QueueMoveDown, HelpLabel::Text("Move down in queue")),
     (Action::CycleSort, HelpLabel::Text("Cycle sort")),
+    (Action::CycleView, HelpLabel::Text("Cycle view")),
     (Action::Favorite, HelpLabel::Text("Favorite")),
     (Action::Delete, HelpLabel::Text("Delete (asks first)")),
     (Action::SavePlaylist, HelpLabel::Text("Save playlist")),

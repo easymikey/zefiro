@@ -120,9 +120,9 @@ fn typed_input(key_context: KeyContext, key: Key) -> Option<Message> {
         return None;
     };
     match key_context {
-        KeyContext::TextPrompt | KeyContext::JumpToTime => Some(Message::Overlay(
-            OverlayRequest::Text(TextRequest::Char(character)),
-        )),
+        KeyContext::TextPrompt | KeyContext::MusicDir | KeyContext::JumpToTime => Some(
+            Message::Overlay(OverlayRequest::Text(TextRequest::Char(character))),
+        ),
         KeyContext::Search => Some(Message::Overlay(OverlayRequest::Search(
             SearchRequest::Edit(TextRequest::Char(character)),
         ))),

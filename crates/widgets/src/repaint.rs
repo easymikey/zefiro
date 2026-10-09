@@ -27,6 +27,7 @@ pub struct OnScreen {
     pub clock: Presence,
     pub sleep_label: Presence,
     pub spectrum: Presence,
+    pub spinner: Presence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

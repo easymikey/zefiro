@@ -6,7 +6,11 @@ use std::{
 };
 
 use kernel::{
-    domain::{io_error::IoError, overlay::Verdict, track::Track},
+    domain::{
+        io_error::IoError,
+        overlay::{Subfolder, Subfolders, Verdict},
+        track::Track,
+    },
     message::LibrarySubject,
 };
 
@@ -19,6 +23,67 @@ pub fn probe(path: &Path) -> Verdict {
             .map_or_else(|error| refused(&error), |_| Verdict::Readable),
         Ok(_) => Verdict::NotADirectory,
         Err(error) => refused(&error),
+    }
+}
+
+const LIMIT: usize = 200;
+
+#[must_use]
+pub fn subfolders(path: &Path, audio_extensions: &[&str]) -> Subfolders {
+    let listed = path
+        .ancestors()
+        .find(|ancestor| ancestor.is_dir())
+        .unwrap_or(path);
+    match fs::read_dir(listed) {
+        Ok(read) => {
+            let mut entries: Vec<(String, PathBuf)> = read
+                .flatten()
+                .filter_map(|dir_entry| {
+                    let folder = dir_entry.path();
+                    folder
+                        .is_dir()
+                        .then(|| dir_entry.file_name().into_string().ok())
+                        .flatten()
+                        .map(|name| (name, folder))
+                })
+                .collect();
+            entries.sort_by_cached_key(|(name, _)| (name.to_lowercase(), name.clone()));
+            Subfolders {
+                path: listed.to_path_buf(),
+                verdict: Verdict::Readable,
+                subfolders: entries
+                    .into_iter()
+                    .enumerate()
+                    .map(|(position, (name, folder))| {
+                        if position < LIMIT {
+                            marked(&folder, name, audio_extensions)
+                        } else {
+                            Subfolder::Plain(name)
+                        }
+                    })
+                    .collect(),
+            }
+        }
+        Err(error) => Subfolders {
+            path: listed.to_path_buf(),
+            verdict: refused(&error),
+            subfolders: Vec::new(),
+        },
+    }
+}
+
+fn marked(path: &Path, name: String, audio_extensions: &[&str]) -> Subfolder {
+    if fs::read_dir(path).is_ok_and(|mut read| {
+        read.any(|dir_entry| {
+            dir_entry.is_ok_and(|dir_entry| {
+                is_audio_file(&dir_entry.path(), audio_extensions)
+                    && dir_entry.path().is_file()
+            })
+        })
+    }) {
+        Subfolder::Audio(name)
+    } else {
+        Subfolder::Plain(name)
     }
 }
 
@@ -174,12 +239,15 @@ fn chunk_read(
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use kernel::domain::track::Tagging;
+    use kernel::domain::{
+        overlay::{Subfolder, Subfolders, Verdict},
+        track::Tagging,
+    };
     use rstest::{fixture, rstest};
 
     use crate::{
         error::Error,
-        scan::{chunk_read, is_audio_file, list_dir, probe, read_tags},
+        scan::{chunk_read, is_audio_file, list_dir, probe, read_tags, subfolders},
         test_support::temp_dir_filters,
     };
 
@@ -194,29 +262,21 @@ mod tests {
     }
 
     #[rstest]
-    #[case::a_folder_reads(Probed::Folder, kernel::domain::overlay::Verdict::Readable)]
-    #[case::a_file_is_not_a_folder(
-        Probed::File,
-        kernel::domain::overlay::Verdict::NotADirectory
-    )]
-    #[case::a_missing_path(Probed::Gone, kernel::domain::overlay::Verdict::Missing)]
-    #[case::a_folder_without_permission(
-        Probed::Locked,
-        kernel::domain::overlay::Verdict::Denied
-    )]
+    #[case::a_folder_reads(Probed::Folder, Verdict::Readable)]
+    #[case::a_file_is_not_a_folder(Probed::File, Verdict::NotADirectory)]
+    #[case::a_missing_path(Probed::Gone, Verdict::Missing)]
+    #[case::a_folder_without_permission(Probed::Locked, Verdict::Denied)]
     #[case::a_path_through_a_file_is_not_a_folder(
         Probed::ThroughAFile,
-        kernel::domain::overlay::Verdict::NotADirectory
+        Verdict::NotADirectory
     )]
     #[case::a_link_loop_cannot_be_read(
         Probed::Looped,
-        kernel::domain::overlay::Verdict::Unreadable(
-            kernel::domain::io_error::IoError::Other
-        )
+        Verdict::Unreadable(kernel::domain::io_error::IoError::Other)
     )]
     fn a_probe_names_what_the_path_is(
         #[case] probed: Probed,
-        #[case] expected: kernel::domain::overlay::Verdict,
+        #[case] expected: Verdict,
     ) {
         use std::os::unix::fs::PermissionsExt;
 
@@ -253,6 +313,118 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(verdict, expected);
+    }
+
+    fn filled(root_path: &Path, files: &[&str]) {
+        for file in files {
+            let path = root_path.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"stub").unwrap();
+        }
+    }
+
+    #[rstest]
+    fn a_listing_marks_the_subfolders_that_hold_audio_and_sorts_them_by_name(
+        temp_dir: tempfile::TempDir,
+    ) {
+        let root = temp_dir.path();
+        filled(
+            root,
+            &[
+                "jazz/a.flac",
+                "Ambient/b.MP3",
+                "notes/readme.txt",
+                "rock/live/c.flac",
+                "top.flac",
+            ],
+        );
+        std::fs::create_dir_all(root.join("notes/fake.flac")).unwrap();
+        assert_eq!(
+            subfolders(root, AUDIO_EXTENSIONS),
+            Subfolders {
+                path: root.to_path_buf(),
+                verdict: Verdict::Readable,
+                subfolders: vec![
+                    Subfolder::Audio("Ambient".to_owned()),
+                    Subfolder::Audio("jazz".to_owned()),
+                    Subfolder::Plain("notes".to_owned()),
+                    Subfolder::Plain("rock".to_owned()),
+                ],
+            }
+        );
+    }
+
+    #[rstest]
+    fn a_wide_folder_marks_audio_only_in_its_first_200_subfolders_by_name(
+        temp_dir: tempfile::TempDir,
+    ) {
+        let root = temp_dir.path();
+        let files: Vec<String> = (0..201)
+            .map(|index| format!("f{index:03}/a.flac"))
+            .collect();
+        filled(root, &files.iter().map(String::as_str).collect::<Vec<_>>());
+        let listed = subfolders(root, AUDIO_EXTENSIONS);
+        assert_eq!(listed.subfolders.len(), 201);
+        assert_eq!(listed.subfolders[199], Subfolder::Audio("f199".to_owned()));
+        assert_eq!(listed.subfolders[200], Subfolder::Plain("f200".to_owned()));
+    }
+
+    #[rstest]
+    fn a_listing_without_audio_marks_no_subfolder(temp_dir: tempfile::TempDir) {
+        let root = temp_dir.path();
+        filled(root, &["b/notes.txt", "A/cover.jpg"]);
+        std::fs::create_dir(root.join("empty")).unwrap();
+        assert_eq!(
+            subfolders(root, AUDIO_EXTENSIONS),
+            Subfolders {
+                path: root.to_path_buf(),
+                verdict: Verdict::Readable,
+                subfolders: vec![
+                    Subfolder::Plain("A".to_owned()),
+                    Subfolder::Plain("b".to_owned()),
+                    Subfolder::Plain("empty".to_owned()),
+                ],
+            }
+        );
+    }
+
+    #[rstest]
+    fn a_missing_folder_lists_its_deepest_existing_ancestor(
+        temp_dir: tempfile::TempDir,
+    ) {
+        let root = temp_dir.path();
+        filled(root, &["jazz/a.flac"]);
+        assert_eq!(
+            subfolders(&root.join("gone/deeper"), AUDIO_EXTENSIONS),
+            Subfolders {
+                path: root.to_path_buf(),
+                verdict: Verdict::Readable,
+                subfolders: vec![Subfolder::Audio("jazz".to_owned())],
+            }
+        );
+    }
+
+    #[rstest]
+    fn a_folder_without_permission_lists_nothing_and_names_why(
+        temp_dir: tempfile::TempDir,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let locked = temp_dir.path().join("locked");
+        filled(&locked, &["jazz/a.flac"]);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000))
+            .unwrap();
+        let listed = subfolders(&locked, AUDIO_EXTENSIONS);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        assert_eq!(
+            listed,
+            Subfolders {
+                path: locked,
+                verdict: Verdict::Denied,
+                subfolders: Vec::new(),
+            }
+        );
     }
 
     const AUDIO_EXTENSIONS: &[&str] =
