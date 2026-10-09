@@ -96,6 +96,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -105,15 +110,49 @@ jobs:
         working-directory: dist
         run: sha256sum zefiro-*.tar.gz > checksums.txt
 
+      - name: release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          prev=$(git tag --merged "$TAG^" --sort=-version:refname | grep -E '^v[0-9]' | head -n 1 || true)
+          if [ -n "$prev" ]; then
+            range="$prev..$TAG"
+          else
+            range="$TAG"
+          fi
+          {
+            echo "## What's Changed"
+            echo
+            while IFS='|' read -r hash title author || [ -n "$hash" ]; do
+              login=$(gh api "repos/$REPO/commits/$hash" --jq '.author.login // empty' 2>/dev/null || true)
+              if [ -n "$login" ]; then
+                who="$author ([@$login](https://github.com/$login))"
+              else
+                who="$author"
+              fi
+              echo "- $title by $who ([\`${hash:0:7}\`](https://github.com/$REPO/commit/$hash))"
+            done < <(git log "$range" --pretty=format:'%H|%s|%an')
+            echo
+            echo "## Checksums (SHA256)"
+            echo
+            echo '```'
+            cat dist/checksums.txt
+            echo '```'
+            if [ -n "$prev" ]; then
+              echo
+              echo "**Full Changelog**: https://github.com/$REPO/compare/$prev...$TAG"
+            fi
+          } > release-notes.md
+          cat release-notes.md
+
       - name: publish
-        working-directory: dist
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          version="${TAG#v}"
-          gh release create "$TAG" zefiro-*.tar.gz checksums.txt \
-            --target "$GITHUB_SHA" --title "zefiro $version" --generate-notes
+          gh release create "$TAG" dist/zefiro-*.tar.gz dist/checksums.txt \
+            --verify-tag --title "$TAG" --notes-file release-notes.md --latest
 
   homebrew:
     needs: release
