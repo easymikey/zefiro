@@ -167,7 +167,7 @@ crossterm = { version = "0.29", default-features = false, features = [
 ] }
 dirs = { version = "7", default-features = false }
 dispatch2 = { version = "0.3", default-features = false, features = ["std"] }
-fast_image_resize = { version = "=6.1.0", default-features = false }
+fast_image_resize = { version = "=6.1.0", default-features = false, features = ["std"] }
 fastrand = { version = "2", default-features = false, features = ["std"] }
 image = { version = "0.25", default-features = false }
 keyring-core = { version = "1", default-features = false }
