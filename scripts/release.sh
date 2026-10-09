@@ -10,7 +10,7 @@ fail() {
     exit 1
 }
 
-[ -z "$(git status --porcelain)" ] || fail 'the working tree has changes; commit them first'
+[ -z "$(git status --porcelain --untracked-files=no)" ] || fail 'the working tree has changes; commit them first'
 [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || fail 'not on main'
 
 git fetch -q origin main
