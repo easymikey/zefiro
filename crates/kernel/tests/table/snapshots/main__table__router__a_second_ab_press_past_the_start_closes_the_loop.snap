@@ -84,9 +84,12 @@ expression: "walked(model, messages)"
     ),
     (
         Audio(
-            PositionReported(
-                20s,
-            ),
+            PositionReported {
+                position: 20s,
+                revision: Revision(
+                    0,
+                ),
+            },
         ),
         [
             Macos(

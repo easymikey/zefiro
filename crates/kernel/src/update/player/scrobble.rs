@@ -398,6 +398,7 @@ mod tests {
         let player_message = PlayerMessage::Seek {
             target: Duration::ZERO,
             now: later(51),
+            revision: Revision::default().next(),
         };
         assert!(
             update_player(&mut playback_parts(&mut model), player_message, later(51))
@@ -423,6 +424,7 @@ mod tests {
         let player_message = PlayerMessage::Seek {
             target: Duration::from_secs(60),
             now: later(51),
+            revision: Revision::default().next(),
         };
         assert!(
             update_player(&mut playback_parts(&mut model), player_message, later(51))

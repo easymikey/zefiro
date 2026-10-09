@@ -122,7 +122,7 @@ mod tests {
     #[case::an_appearance_edit_after_spawn(
         EditRow {
             theme_name: None,
-            path: "zefiro-ui.toml",
+            path: "config.toml",
             text: "[window]\nkey_hints = false\n",
         },
         |message: Message| matches!(
@@ -148,7 +148,7 @@ mod tests {
             text,
         } = row;
         let directory = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(directory.path().join("themes")).unwrap();
+        std::fs::create_dir(directory.path().join("themes")).unwrap();
         let stub = stub_paths(directory.path());
         let paths = StartupPaths {
             config_paths: ConfigPaths {
@@ -171,6 +171,41 @@ mod tests {
         run.stop();
     }
 
+    #[test]
+    fn a_start_on_a_missing_config_folder_watches_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_dir = directory.path().join("zefiro");
+        let stub = stub_paths(&config_dir);
+        let loaded = config::load::load(&stub.config_paths, None);
+        assert!(loaded.errors.is_empty());
+        let paths = StartupPaths {
+            config_paths: ConfigPaths {
+                seen_texts: loaded.texts,
+                ..stub.config_paths
+            },
+            ..stub
+        };
+        let run = ConfigRun::start_with(&paths);
+        run.doorbell.try_iter().for_each(drop);
+        drain(&run.inbox_receiver);
+
+        std::fs::write(
+            config_dir.join("config.toml"),
+            "[window]\nkey_hints = false\n",
+        )
+        .unwrap();
+
+        assert!(
+            std::iter::from_fn(|| run.inbox_receiver.recv_timeout(DISK_TIMEOUT).ok())
+                .any(|message| matches!(
+                    message,
+                    Message::Config(ConfigEvent::AppearanceReloaded(_))
+                )),
+            "an edit after a start on a missing config folder must reach the shell"
+        );
+        run.stop();
+    }
+
     fn themes_loaded(message: Message) -> Option<Vec<ThemeName>> {
         let Message::Config(ConfigEvent::ThemesLoaded { theme_names, .. }) = message
         else {
@@ -182,7 +217,7 @@ mod tests {
     #[test]
     fn a_themes_list_reaches_the_kernel_with_the_embedded_names() {
         let directory = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(directory.path().join("themes")).unwrap();
+        std::fs::create_dir(directory.path().join("themes")).unwrap();
         std::fs::write(directory.path().join("themes/mine.toml"), "").unwrap();
         let run = ConfigRun::start(directory.path());
 
@@ -207,9 +242,8 @@ mod tests {
             preset_appearance(AppearancePreset::Noir),
         )));
 
-        let text =
-            wait_for_content(&directory.path().join("zefiro-ui.toml"), "milkdrop")
-                .unwrap();
+        let text = wait_for_content(&directory.path().join("config.toml"), "milkdrop")
+            .unwrap();
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert_eq!(
             parsed
@@ -242,15 +276,13 @@ mod tests {
         }));
 
         let config_path = directory.path().join("config.toml");
-        let appearance_path = directory.path().join("zefiro-ui.toml");
         assert!(wait_for_content(&config_path, "theme").is_some());
-        assert!(wait_for_content(&appearance_path, "format_chips").is_some());
+        assert!(wait_for_content(&config_path, "format_chips").is_some());
         assert!(
             run.doorbell.recv_timeout(SETTLE_TIMEOUT).is_err(),
             "a write we made ourselves must never come back as a reload"
         );
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        assert!(!root.join("zefiro-ui.toml").exists());
         assert!(!root.join("config.toml").exists());
         run.stop();
     }
@@ -268,7 +300,7 @@ mod tests {
         run.stop();
 
         let content =
-            std::fs::read_to_string(directory.path().join("zefiro-ui.toml")).unwrap();
+            std::fs::read_to_string(directory.path().join("config.toml")).unwrap();
         assert!(
             content.contains("key_hints"),
             "the pending save must land on disk"

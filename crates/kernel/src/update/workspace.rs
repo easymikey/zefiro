@@ -111,10 +111,7 @@ impl Workspace {
                 .keymap
                 .diagnostic()
                 .map_or(Ok(()), |diagnostic| Err(ConfigError::Parse(diagnostic))),
-            (
-                ConfigName::Config | ConfigName::Appearance | ConfigName::Theme(_),
-                result,
-            ) => result,
+            (ConfigName::Config | ConfigName::Theme(_), result) => result,
         };
         let reload = ConfigReload { result, ..reload };
         if reload.result.is_ok() && self.config_errors.get(&reload.name).is_none() {

@@ -60,6 +60,7 @@ impl AudioDriver {
                 settings,
                 track_load: None,
                 speed: Speed::default(),
+                playback: None,
             })),
             deck: Deck::new(spectrum_buffers, callback_sender, feed_sender),
             feed_receiver: Some(feed_receiver),

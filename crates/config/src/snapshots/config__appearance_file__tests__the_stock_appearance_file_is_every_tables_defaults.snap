@@ -2,12 +2,12 @@
 source: crates/config/src/appearance_file.rs
 expression: "TomlAppearance::default()"
 ---
-TomlAppearance {
-    card: TomlCard {
+(
+    TomlCard {
         format_chips: Hidden,
         speed_chip: Always,
     },
-    progress: TomlProgress {
+    TomlProgress {
         height: Pixels(
             4,
         ),
@@ -16,7 +16,7 @@ TomlAppearance {
         groove: None,
         progress_time: Elapsed,
     },
-    cover: TomlCover {
+    TomlCover {
         mode: Vinyl,
         cover_cells: TomlCoverCells {
             width: 20,
@@ -24,7 +24,7 @@ TomlAppearance {
         },
         brackets: Hidden,
     },
-    layout: TomlLayout {
+    TomlLayout {
         full_min_width: 60,
         full_min_height: 19,
         compact_min_width: 30,
@@ -33,8 +33,8 @@ TomlAppearance {
         min_height: 16,
         mode: Auto,
     },
-    window: TomlWindow {
+    TomlWindow {
         animations: On,
         key_hints: Shown,
     },
-}
+)

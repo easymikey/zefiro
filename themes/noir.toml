@@ -3,11 +3,11 @@
 # This theme only carries the color palette below — the "HUD" look itself
 # (corner brackets, tech-info chips, and the text-art milkdrop
 # cover) used to be one `[ui] hud` flag bundled with this theme. That flag is
-# gone: the same look is now a combination of independent `zefiro-ui.toml`
+# gone: the same look is now a combination of independent `config.toml`
 # options, so it composes with any theme/terminal instead of being tied to
 # this one file. The settings overlay's `Preset` row (`,` to open, cycle to
 # `‹ noir ›`) applies the whole bundle at once — including selecting this
-# theme — or to reproduce it by hand in `zefiro-ui.toml`:
+# theme — or to reproduce it by hand in `config.toml`:
 #
 #   [cover]
 #   mode = "milkdrop"   # or "off" for a card with no cover column at all

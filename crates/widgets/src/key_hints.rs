@@ -40,14 +40,21 @@ pub(crate) fn chords_for_action(
     bindings: &[KeyBinding],
     action: Action,
 ) -> impl Iterator<Item = String> {
+    chords(bindings, move |binding| binding.action == Some(action))
+}
+
+pub(crate) fn chords(
+    bindings: &[KeyBinding],
+    wanted: impl Fn(&KeyBinding) -> bool,
+) -> impl Iterator<Item = String> {
     let key_context = bindings
         .iter()
-        .find(|binding| binding.action == Some(action))
+        .find(|binding| wanted(binding))
         .map(|binding| binding.key_context);
     bindings
         .iter()
         .filter(move |binding| {
-            binding.action == Some(action) && Some(binding.key_context) == key_context
+            wanted(binding) && Some(binding.key_context) == key_context
         })
         .map(|binding| binding.pattern.to_string())
 }

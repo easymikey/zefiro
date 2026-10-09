@@ -1,7 +1,7 @@
 use std::{collections::HashMap, mem, path::Path, sync::Arc};
 
 use crate::{
-    cmd::{Cmd, Effect, LibraryCmd},
+    cmd::{Cmd, Effect, LibraryCmd, MacosCmd},
     domain::{
         cue::Cue,
         favorites::Favorites,
@@ -9,7 +9,7 @@ use crate::{
         index::TrackIndex,
         library::{Library, sort_indices},
         model::ScanStatus,
-        overlay::Overlay,
+        overlay::{MusicDirError, Overlay, Verdict},
         player::Player,
         playlist::{Playlist, PlaylistSource},
         revision::{Freshness, Revision, Revisions},
@@ -17,7 +17,7 @@ use crate::{
         track::{Track, TrackSource},
         workspace::Workspace,
     },
-    message::{LibraryError, LibraryEvent, LibrarySubject},
+    message::{LibraryError, LibraryEvent, LibrarySubject, Message, OverlayRequest},
     update::{
         browse::{ResyncParts, relist, resync_playlist},
         machine::{Unhandled, replace},
@@ -63,8 +63,42 @@ pub(crate) fn update(
             replace(parts.history, entries).map(|()| Cmd::none())
         }
         LibraryEvent::Trashed(path) => trashed_track(&mut parts, &path),
+        LibraryEvent::Checked { verdict, revision } => {
+            checked(parts.workspace, verdict, revision)
+        }
         LibraryEvent::Error(error) => Ok(library_failed(&mut parts, &error)),
     }
+}
+
+fn checked(
+    workspace: &mut Workspace,
+    verdict: Verdict,
+    revision: Revision,
+) -> Result<Cmd, Unhandled> {
+    let Some(Overlay::MusicDir {
+        text_entry,
+        verdict: shown,
+        revision: asked,
+    }) = workspace.overlay.as_mut()
+    else {
+        return Err(Unhandled);
+    };
+    if *asked != Some(revision) {
+        return Err(Unhandled);
+    }
+    *asked = None;
+    *shown = Some(verdict);
+    if text_entry.error != Some(MusicDirError::Pending) {
+        return Ok(Cmd::none());
+    }
+    text_entry.error = None;
+    Ok(match verdict {
+        Verdict::Readable => Cmd::message(Message::Overlay(OverlayRequest::Confirm)),
+        Verdict::Denied => Cmd::from(Effect::Macos(MacosCmd::Privacy)),
+        Verdict::Missing | Verdict::NotADirectory | Verdict::Unreadable(_) => {
+            Cmd::none()
+        }
+    })
 }
 
 fn trashed_track(

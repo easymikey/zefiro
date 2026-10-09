@@ -1,5 +1,5 @@
 use kernel::{
-    cmd::{Cmd, TrackLoad},
+    cmd::{Cmd, Playback, TrackLoad},
     domain::{
         device::OutputDevice,
         revision::Revision,
@@ -75,6 +75,7 @@ pub(crate) struct Closed {
     pub(crate) settings: AudioSettings,
     pub(crate) track_load: Option<TrackLoad>,
     pub(crate) speed: Speed,
+    pub(crate) playback: Option<Playback>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -157,4 +158,12 @@ fn announce(device_choice: DeviceChoice, device_opened: &DeviceOpened) -> AudioL
 
 pub(crate) fn then_report(loop_cmd: AudioLoopCmd) -> AudioLoopCmd {
     loop_cmd.then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))
+}
+
+pub(crate) fn transport(playback: Playback) -> AudioLoopCmd {
+    let effect = match playback {
+        Playback::Paused => EngineEffect::Pause,
+        Playback::Playing => EngineEffect::Play,
+    };
+    then_report(Cmd::effect(LoopEffect::Execute(effect)))
 }

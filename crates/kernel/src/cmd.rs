@@ -148,7 +148,10 @@ pub struct GrowingMedia {
 pub enum AudioCmd {
     Load(TrackLoad),
     SetPlayback(Playback),
-    Seek(Duration),
+    Seek {
+        target: Duration,
+        revision: Revision,
+    },
     SetSpeed(Speed),
     Stop,
     Preload(TrackLoad),
@@ -157,7 +160,10 @@ pub enum AudioCmd {
     SetReplayGain(ReplayGain),
     SetDevice(OutputDevice),
     ListDevices,
-    Grow { revision: Revision, downloaded: u64 },
+    Grow {
+        revision: Revision,
+        downloaded: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,6 +194,10 @@ pub enum LibraryCmd {
     },
     DecodeCover(CoverJob),
     PrefetchCover(CoverJob),
+    Probe {
+        path: PathBuf,
+        revision: Revision,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -203,6 +213,7 @@ pub enum MacosCmd {
     SetPosition(Duration),
     SetSpeed(Speed),
     SetVolume(Percent),
+    Privacy,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2,5 +2,5 @@
 source: crates/config/src/appearance_file.rs
 expression: error.to_string()
 ---
-unknown field `nope`, expected one of `card`, `progress`, `cover`, `layout`, `window`
-zefiro-ui.toml:1
+unknown field `nope`, expected one of `music_dir`, `theme`, `volume`, `audio`, `keymap`, `server`, `card`, `progress`, `cover`, `layout`, `window`
+config.toml:1

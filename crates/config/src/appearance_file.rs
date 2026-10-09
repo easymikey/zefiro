@@ -1,11 +1,7 @@
 use kernel::domain::{
     appearance::{
         Animations,
-        Appearance,
-        AppearanceSettings,
-        Breakpoints,
         CoverBrackets,
-        CoverCells,
         CoverMode,
         DEFAULT_COMPACT_MIN_HEIGHT,
         DEFAULT_COMPACT_MIN_WIDTH,
@@ -23,15 +19,11 @@ use kernel::domain::{
         Rgb,
         SpeedChip,
     },
-    config::ConfigName,
-    geometry::{Cells, Pixels},
+    geometry::Pixels,
 };
 use serde::Deserialize;
 
-use crate::{
-    appearance::{flag, from_str_option, rounded_pixels, variant_field},
-    error::{Error, parse_toml},
-};
+use crate::appearance::{flag, from_str_option, rounded_pixels, variant_field};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(
@@ -145,62 +137,6 @@ impl Default for TomlLayout {
     }
 }
 
-#[must_use]
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
-#[serde(default, deny_unknown_fields, expecting = "the zefiro-ui.toml file")]
-pub struct TomlAppearance {
-    pub(crate) card: TomlCard,
-    pub progress: TomlProgress,
-    pub cover: TomlCover,
-    pub layout: TomlLayout,
-    pub(crate) window: TomlWindow,
-}
-
-impl TomlAppearance {
-    pub fn to_appearance_settings(&self) -> AppearanceSettings {
-        AppearanceSettings {
-            cover_mode: self.cover.mode,
-            cover_brackets: self.cover.brackets,
-            format_chips: self.card.format_chips,
-            speed_chip: self.card.speed_chip,
-            progress_time: self.progress.progress_time,
-            key_hints: self.window.key_hints,
-            animations: self.window.animations,
-            layout_mode: self.layout.mode,
-        }
-    }
-
-    pub fn to_appearance(&self) -> Appearance {
-        let TomlCoverCells { width, height } = self.cover.cover_cells;
-        let layout = &self.layout;
-        let progress = &self.progress;
-        Appearance {
-            cover_cells: CoverCells {
-                width: Cells(width),
-                height: Cells(height),
-            },
-            breakpoints: Breakpoints {
-                full_min_width: Cells(layout.full_min_width),
-                full_min_height: Cells(layout.full_min_height),
-                compact_min_width: Cells(layout.compact_min_width),
-                compact_min_height: Cells(layout.compact_min_height),
-                min_width: Cells(layout.min_width),
-                min_height: Cells(layout.min_height),
-            },
-            progress_bar: ProgressBar {
-                height: progress.height,
-                radius: progress.radius,
-                fill: progress.fill,
-                groove: progress.groove,
-            },
-        }
-    }
-}
-
-pub fn parse_appearance(text: &str) -> Result<TomlAppearance, Error> {
-    parse_toml(text, ConfigName::Appearance)
-}
-
 #[cfg(test)]
 mod tests {
     use kernel::domain::{
@@ -218,11 +154,9 @@ mod tests {
     };
     use rstest::rstest;
 
-    use crate::appearance_file::{
-        TomlAppearance,
-        TomlCoverCells,
-        TomlLayout,
-        parse_appearance,
+    use crate::{
+        appearance_file::{TomlCoverCells, TomlLayout},
+        config_file::{TomlSettings, parse_config},
     };
 
     #[test]
@@ -232,20 +166,27 @@ mod tests {
 
     #[test]
     fn the_stock_appearance_file_is_every_tables_defaults() {
-        insta::assert_debug_snapshot!(TomlAppearance::default());
+        let toml_settings = TomlSettings::default();
+        insta::assert_debug_snapshot!((
+            toml_settings.card,
+            toml_settings.progress,
+            toml_settings.cover,
+            toml_settings.layout,
+            toml_settings.window
+        ));
     }
 
     #[test]
     fn the_stock_file_offers_the_stock_appearance() {
         assert_eq!(
-            TomlAppearance::default().to_appearance_settings(),
+            TomlSettings::default().to_appearance_settings(),
             AppearanceSettings::default()
         );
     }
 
     #[test]
     fn an_unknown_variant_lists_the_ones_that_exist() {
-        let error = parse_appearance("[cover]\nmode = \"bogus\"\n")
+        let error = parse_config("[cover]\nmode = \"bogus\"\n")
             .expect_err("an unknown mode must not parse")
             .to_string();
 
@@ -261,35 +202,35 @@ mod tests {
     #[case::an_unknown_top_level_table("unknown_table", "[nope]\nkey = 1\n")]
     #[case::an_unknown_key_in_a_known_table("unknown_key", "[cover]\nbogus = 1\n")]
     fn unknown_toml_names_the_key(#[case] name: &str, #[case] text: &str) {
-        let error = parse_appearance(text).expect_err("unknown TOML must not parse");
+        let error = parse_config(text).expect_err("unknown TOML must not parse");
         insta::with_settings!({ snapshot_suffix => name }, {
             insta::assert_snapshot!(error.to_string());
         });
     }
 
-    type Parsed = fn(&TomlAppearance);
+    type Parsed = fn(&TomlSettings);
 
     #[rstest]
-    #[case::an_empty_file("", |c: &TomlAppearance| {
-        assert_eq!(*c, TomlAppearance::default());
+    #[case::an_empty_file("", |c: &TomlSettings| {
+        assert_eq!(*c, TomlSettings::default());
     })]
-    #[case::a_plain_cover("[cover]\nmode = \"plain\"\n", |c: &TomlAppearance| {
+    #[case::a_plain_cover("[cover]\nmode = \"plain\"\n", |c: &TomlSettings| {
         assert_eq!(c.cover.mode, CoverMode::Plain);
     })]
-    #[case::a_vinyl_cover("[cover]\nmode = \"vinyl\"\n", |c: &TomlAppearance| {
+    #[case::a_vinyl_cover("[cover]\nmode = \"vinyl\"\n", |c: &TomlSettings| {
         assert_eq!(c.cover.mode, CoverMode::Vinyl);
     })]
-    #[case::a_fractional_bar("[progress]\nheight_px = 5.6\nradius = 2.4\n", |c: &TomlAppearance| {
+    #[case::a_fractional_bar("[progress]\nheight_px = 5.6\nradius = 2.4\n", |c: &TomlSettings| {
         assert_eq!(c.progress.height, Pixels(6));
         assert_eq!(c.progress.radius, Some(Pixels(2)));
     })]
-    #[case::a_whole_bar("[progress]\nheight_px = 7\n", |c: &TomlAppearance| {
+    #[case::a_whole_bar("[progress]\nheight_px = 7\n", |c: &TomlSettings| {
         assert_eq!(c.progress.height, Pixels(7));
         assert_eq!(c.progress.radius, None);
     })]
     #[case::a_text_cover_box(
         "[cover]\n[cover.cover_cells]\nwidth = 40\nheight = 20\n",
-        |c: &TomlAppearance| {
+        |c: &TomlSettings| {
             assert_eq!(c.cover.cover_cells, TomlCoverCells { width: 40, height: 20 });
             assert_eq!(c.cover.mode, CoverMode::Vinyl);
         }
@@ -298,7 +239,7 @@ mod tests {
         "[cover]\nmode = \"off\"\nbrackets = true\n\
          [card]\nformat_chips = true\nspeed_chip = \"changed\"\n\
          [progress]\nremaining = true\n",
-        |c: &TomlAppearance| {
+        |c: &TomlSettings| {
             assert_eq!(c.cover.mode, CoverMode::Off);
             assert_eq!(c.cover.brackets, CoverBrackets::Shown);
             assert_eq!(c.card.format_chips, FormatChips::Shown);
@@ -306,27 +247,27 @@ mod tests {
             assert_eq!(c.progress.progress_time, ProgressTime::Remaining);
         }
     )]
-    #[case::the_window_flags("[window]\nkey_hints = false\n", |c: &TomlAppearance| {
+    #[case::the_window_flags("[window]\nkey_hints = false\n", |c: &TomlSettings| {
         assert_eq!(c.window.key_hints, KeyHints::Hidden);
     })]
-    #[case::a_colour_override("[progress]\nfill = \"#ff0000\"\n", |c: &TomlAppearance| {
+    #[case::a_colour_override("[progress]\nfill = \"#ff0000\"\n", |c: &TomlSettings| {
         assert_eq!(c.progress.fill.map(|hex| hex.0), Some([255, 0, 0]));
     })]
-    #[case::one_breakpoint("[layout]\nfull_min_width = 80\n", |c: &TomlAppearance| {
+    #[case::one_breakpoint("[layout]\nfull_min_width = 80\n", |c: &TomlSettings| {
         let stock = TomlLayout::default();
         assert_eq!(c.layout.full_min_width, 80);
         assert_eq!(c.layout.full_min_height, stock.full_min_height);
         assert_eq!(c.layout.compact_min_width, stock.compact_min_width);
         assert_eq!(c.layout.compact_min_height, stock.compact_min_height);
     })]
-    #[case::a_layout_mode("[layout]\nmode = \"compact\"\n", |c: &TomlAppearance| {
+    #[case::a_layout_mode("[layout]\nmode = \"compact\"\n", |c: &TomlSettings| {
         assert_eq!(c.layout.mode, LayoutMode::Compact);
     })]
-    fn parse_appearance_reads_each_key_fieldwise(
+    fn an_appearance_table_reads_each_key_fieldwise(
         #[case] text: &str,
         #[case] parsed: Parsed,
     ) {
-        parsed(&parse_appearance(text).unwrap());
+        parsed(&parse_config(text).unwrap());
     }
 
     #[rstest]
@@ -334,10 +275,8 @@ mod tests {
     #[case::a_removed_progress_mode("[progress]\nmode = \"pixel\"\n")]
     #[case::a_removed_volume_table("[volume]\nmode = \"text\"\n")]
     #[case::a_removed_notice_table("[notice]\nmode = \"banner\"\n")]
-    #[case::a_removed_theme_key("theme = \"oreo\"\n")]
-    #[case::a_removed_keymap_table("[keymap]\nnext = \"x\"\n")]
     #[case::a_negative_bar_height("[progress]\nheight_px = -1\n")]
     fn a_key_nothing_reads_is_rejected(#[case] text: &str) {
-        assert!(parse_appearance(text).is_err(), "{text} must not parse");
+        assert!(parse_config(text).is_err(), "{text} must not parse");
     }
 }

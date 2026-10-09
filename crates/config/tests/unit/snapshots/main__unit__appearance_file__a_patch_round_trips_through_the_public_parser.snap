@@ -2,9 +2,30 @@
 source: crates/config/tests/unit/appearance_file.rs
 expression: round_tripped
 ---
-TomlAppearance {
+TomlSettings {
+    music_dir: None,
+    theme_choice: Auto,
+    volume: Percent(
+        50,
+    ),
+    audio: TomlAudio {
+        crossfade: Crossfade(
+            0ns,
+        ),
+        replay_gain: Off,
+        device: SystemDefault,
+        sleep_presets: SleepPresets(
+            [
+                900s,
+                1800s,
+                3600s,
+            ],
+        ),
+    },
+    keymap: {},
+    servers: [],
     card: TomlCard {
-        format_chips: Shown,
+        format_chips: Hidden,
         speed_chip: Always,
     },
     progress: TomlProgress {

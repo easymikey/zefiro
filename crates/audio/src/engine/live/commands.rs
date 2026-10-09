@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Playback, TrackLoad},
+    cmd::{AudioCmd, Cmd, TrackLoad},
     domain::{crossfade::Crossfade, device::OutputDevice, revision::Revision},
     message::AudioEvent,
     update::machine::{LoopEffect, Unhandled},
@@ -14,7 +14,7 @@ use crate::{
         effect::{AudioLoopCmd, EngineEffect},
         phase::{Fade, Incoming, Loading, NextTrack, Phase, Playing},
         revisions::JobRevisions,
-        state::{Live, then_report},
+        state::{Live, then_report, transport},
     },
 };
 
@@ -35,14 +35,11 @@ impl Live {
             AudioCmd::CancelPreload(revision) => {
                 Ok(self.cancel_preload(job_revisions, revision))
             }
-            AudioCmd::SetPlayback(playback) => {
-                let effect = match playback {
-                    Playback::Paused => EngineEffect::Pause,
-                    Playback::Playing => EngineEffect::Play,
-                };
-                Ok(then_report(Cmd::effect(LoopEffect::Execute(effect))))
+            AudioCmd::SetPlayback(playback) => Ok(transport(playback)),
+            AudioCmd::Seek { target, revision } => {
+                job_revisions.seek_revision = revision;
+                Ok(self.seek(target))
             }
-            AudioCmd::Seek(target) => Ok(self.seek(target)),
             AudioCmd::SetSpeed(speed) => {
                 self.speed = speed;
                 Ok(then_report(Cmd::effect(LoopEffect::Execute(
@@ -379,12 +376,12 @@ mod tests {
     )]
     #[case::seek(
         EngineState::Live(playing()),
-        cmd(AudioCmd::Seek(seconds(5))),
+        cmd(AudioCmd::Seek { target: seconds(5), revision: first() }),
         EngineRow { next: EngineState::Live(playing()), effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(seconds(5))))))}
     )]
     #[case::seek_while_idle_crossfade_rearms(
         EngineState::Live(crossfading_idle()),
-        cmd(AudioCmd::Seek(seconds(50))),
+        cmd(AudioCmd::Seek { target: seconds(50), revision: first() }),
         EngineRow {
             next: EngineState::Live(crossfading_idle()),
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(seconds(50)))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::SetFadeStart(Some(seconds(90)))))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))),
@@ -392,7 +389,7 @@ mod tests {
     )]
     #[case::seek_back_out_of_a_crossfade_cancels_the_crossfade(
         EngineState::Live(crossfading_mid_ramp()),
-        cmd(AudioCmd::Seek(seconds(50))),
+        cmd(AudioCmd::Seek { target: seconds(50), revision: first() }),
         EngineRow {
             next: EngineState::Live(crossfading_idle()),
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::CancelCrossfade)).then(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(seconds(50))))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::SetFadeStart(Some(seconds(90)))))).then(Cmd::effect(LoopEffect::Execute(EngineEffect::Report)))),
@@ -400,7 +397,7 @@ mod tests {
     )]
     #[case::seek_inside_a_fade_keeps_fading(
         EngineState::Live(crossfading_mid_ramp()),
-        cmd(AudioCmd::Seek(seconds(95))),
+        cmd(AudioCmd::Seek { target: seconds(95), revision: first() }),
         EngineRow {
             next: EngineState::Live(crossfading_mid_ramp()),
             effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(seconds(95)))))),
@@ -408,7 +405,7 @@ mod tests {
     )]
     #[case::seek_onto_the_fade_start_keeps_fading(
         EngineState::Live(crossfading_mid_ramp()),
-        cmd(AudioCmd::Seek(seconds(90))),
+        cmd(AudioCmd::Seek { target: seconds(90), revision: first() }),
         EngineRow {
             next: EngineState::Live(crossfading_mid_ramp()),
             effect: Ok(then_report(Cmd::effect(LoopEffect::Execute(EngineEffect::Seek(seconds(90)))))),

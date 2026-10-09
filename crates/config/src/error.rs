@@ -74,7 +74,6 @@ mod tests {
 
     #[rstest]
     #[case::config(ConfigName::Config, "a = 1\n[b]\nc = 1\n[b]\n")]
-    #[case::appearance(ConfigName::Appearance, "[card]\n[card]\n")]
     #[case::theme_noir(
         ConfigName::Theme(ThemeName::from_static("noir")),
         "[colors]\n[colors]\n"

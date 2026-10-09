@@ -37,7 +37,6 @@ use kernel::{
         OverlayRequest,
         PlaybackRequest,
         QueueRequest,
-        SearchEdit,
         SearchRequest,
         SeekTenths,
         SettingRowRequest,
@@ -110,12 +109,12 @@ fn overlay_input() -> impl Strategy<Value = OverlayRequest> {
     let typed = prop_oneof![Just('1'), Just(':'), Just('a'), Just(' ')];
     prop_oneof![
         typed.clone().prop_map(|character| {
-            OverlayRequest::Search(SearchRequest::Edit(SearchEdit::Char(character)))
+            OverlayRequest::Search(SearchRequest::Edit(TextRequest::Char(character)))
         }),
         select(vec![
-            SearchEdit::Backspace,
-            SearchEdit::DeleteWord,
-            SearchEdit::Clear,
+            TextRequest::Backspace,
+            TextRequest::DeleteWord,
+            TextRequest::Clear,
         ])
         .prop_map(|edit| OverlayRequest::Search(SearchRequest::Edit(edit))),
         direction().prop_map(|direction| OverlayRequest::Search(
@@ -131,6 +130,8 @@ fn overlay_input() -> impl Strategy<Value = OverlayRequest> {
         Just(OverlayRequest::Settings(SettingRowRequest::Activate)),
         typed.prop_map(|character| OverlayRequest::Text(TextRequest::Char(character))),
         Just(OverlayRequest::Text(TextRequest::Backspace)),
+        Just(OverlayRequest::Text(TextRequest::DeleteWord)),
+        Just(OverlayRequest::Text(TextRequest::Clear)),
     ]
 }
 
@@ -219,8 +220,10 @@ fn audio() -> impl Strategy<Value = AudioEvent> {
         error: DecodeError::Corrupt,
     }),];
     prop_oneof![
-        (0u64..200)
-            .prop_map(|secs| AudioEvent::PositionReported(Duration::from_secs(secs))),
+        (0u64..200).prop_map(|secs| AudioEvent::PositionReported {
+            position: Duration::from_secs(secs),
+            revision: Revision::default()
+        }),
         select(vec![
             AudioEvent::TrackChanged,
             AudioEvent::Ended,

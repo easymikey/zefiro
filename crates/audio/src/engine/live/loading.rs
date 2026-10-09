@@ -29,6 +29,7 @@ impl Live {
             settings: self.settings,
             track_load: None,
             speed: self.speed,
+            playback: None,
         }
     }
 
@@ -257,6 +258,7 @@ mod tests {
                 settings: settings(),
                 track_load: None,
                 speed: Speed::default(),
+                playback: None,
             }),
             effect: Ok(Cmd::effect(LoopEffect::Execute(EngineEffect::Silence))
                 .then(Cmd::message(AudioEvent::Error(device_error())))),

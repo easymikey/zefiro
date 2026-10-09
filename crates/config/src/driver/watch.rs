@@ -13,7 +13,6 @@ use crate::{driver::paths::ConfigPaths, file_name::theme_file_path};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ConfigChange {
-    Appearance(Option<String>),
     Config(Option<String>),
     Theme {
         name: ThemeName,
@@ -49,10 +48,6 @@ impl Seen {
         text.map_or(Seen::Absent, |text| Seen::Present(Signature::of(&text)))
     }
 
-    fn from_start_text(text: Option<&str>) -> Self {
-        text.map_or(Seen::Unread, |text| Seen::Present(Signature::of(&text)))
-    }
-
     fn is_changed_to(self, next: Seen) -> bool {
         match self {
             Seen::Unread => true,
@@ -75,7 +70,6 @@ struct WatchedTheme {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ConfigWatch {
-    appearance_path: WatchedPath,
     config_path: WatchedPath,
     watched_theme: Option<WatchedTheme>,
     themes_dir: PathBuf,
@@ -86,10 +80,6 @@ impl ConfigWatch {
     #[must_use]
     pub(crate) fn new(paths: &ConfigPaths) -> Self {
         Self {
-            appearance_path: WatchedPath {
-                path: paths.appearance_path.clone(),
-                seen: Seen::from_start_text(paths.seen_texts.appearance.as_deref()),
-            },
             config_path: WatchedPath {
                 path: paths.config_path.clone(),
                 seen: Seen::from_text(paths.seen_texts.config.as_deref()),
@@ -103,32 +93,13 @@ impl ConfigWatch {
         }
     }
 
-    pub(crate) fn path(&self, saved_file: SavedFile) -> &Path {
-        match saved_file {
-            SavedFile::Config => &self.config_path.path,
-            SavedFile::Appearance => &self.appearance_path.path,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SavedFile {
-    Config,
-    Appearance,
-}
-
-impl From<SavedFile> for ConfigName {
-    fn from(saved_file: SavedFile) -> Self {
-        match saved_file {
-            SavedFile::Config => ConfigName::Config,
-            SavedFile::Appearance => ConfigName::Appearance,
-        }
+    pub(crate) fn path(&self) -> &Path {
+        &self.config_path.path
     }
 }
 
 #[derive(Debug, PartialEq)]
 pub enum ConfigWatchMessage {
-    PollAppearance,
     PollConfig,
     PollTheme,
     PollThemes,
@@ -141,10 +112,7 @@ pub enum ConfigWatchMessage {
         refused: Vec<String>,
     },
     SelectTheme(ThemeName),
-    Saved {
-        saved_file: SavedFile,
-        text: String,
-    },
+    Saved(String),
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -162,9 +130,6 @@ impl Machine for ConfigWatch {
         message: ConfigWatchMessage,
     ) -> Result<Cmd<ConfigWatchEffect, ConfigChange>, Unhandled> {
         match message {
-            ConfigWatchMessage::PollAppearance => {
-                Ok(read(ConfigName::Appearance, &self.appearance_path.path))
-            }
             ConfigWatchMessage::PollConfig => {
                 Ok(read(ConfigName::Config, &self.config_path.path))
             }
@@ -172,14 +137,6 @@ impl Machine for ConfigWatch {
             ConfigWatchMessage::PollThemes => Ok(Cmd::effect(ConfigWatchEffect::List(
                 self.themes_dir.clone(),
             ))),
-            ConfigWatchMessage::ReadDone {
-                name: ConfigName::Appearance,
-                text,
-            } => Ok(read_done(
-                &mut self.appearance_path.seen,
-                text,
-                ConfigChange::Appearance,
-            )),
             ConfigWatchMessage::ReadDone {
                 name: ConfigName::Config,
                 text,
@@ -197,17 +154,7 @@ impl Machine for ConfigWatch {
                 refused,
             } => Ok(self.themes_listed(theme_names, refused)),
             ConfigWatchMessage::SelectTheme(name) => self.select_theme(name),
-            ConfigWatchMessage::Saved {
-                saved_file: SavedFile::Appearance,
-                text,
-            } => {
-                self.appearance_path.seen = Seen::from_text(Some(&text));
-                Ok(Cmd::none())
-            }
-            ConfigWatchMessage::Saved {
-                saved_file: SavedFile::Config,
-                text,
-            } => {
+            ConfigWatchMessage::Saved(text) => {
                 self.config_path.seen = Seen::from_text(Some(&text));
                 Ok(Cmd::none())
             }
@@ -311,7 +258,6 @@ mod tests {
             ConfigWatch,
             ConfigWatchEffect,
             ConfigWatchMessage,
-            SavedFile,
             Seen,
         },
     };
@@ -331,14 +277,10 @@ mod tests {
     fn watch(theme: Option<&'static str>) -> ConfigWatch {
         ConfigWatch::new(&ConfigPaths {
             config_path: PathBuf::from("/config/config.toml"),
-            appearance_path: PathBuf::from("/config/zefiro-ui.toml"),
             themes_dir: PathBuf::from("/config/themes"),
             default_music_dir: None,
             theme_name: theme.map(ThemeName::from_static),
-            seen_texts: SeenTexts {
-                appearance: Some("seen".to_string()),
-                config: None,
-            },
+            seen_texts: SeenTexts::default(),
         })
     }
 
@@ -357,10 +299,6 @@ mod tests {
     }
 
     #[rstest]
-    #[case::appearance(
-        ConfigWatchMessage::PollAppearance,
-        reads(ConfigName::Appearance, "/config/zefiro-ui.toml")
-    )]
     #[case::config(
         ConfigWatchMessage::PollConfig,
         reads(ConfigName::Config, "/config/config.toml")
@@ -373,10 +311,9 @@ mod tests {
         ConfigWatchMessage::PollThemes,
         Cmd::effect(ConfigWatchEffect::List(PathBuf::from("/config/themes")))
     )]
-    #[case::seen_at_start(ConfigWatchMessage::ReadDone { name: ConfigName::Appearance, text: Some("seen".to_string()) }, Cmd::none())]
     #[case::absent_config_at_start(ConfigWatchMessage::ReadDone { name: ConfigName::Config, text: None }, Cmd::none())]
     #[case::config_appears(ConfigWatchMessage::ReadDone { name: ConfigName::Config, text: Some("x".to_string()) }, Cmd::message(ConfigChange::Config(Some("x".to_string()))))]
-    #[case::own_write(ConfigWatchMessage::Saved { saved_file: SavedFile::Config, text: "x".to_string() }, Cmd::none())]
+    #[case::own_write(ConfigWatchMessage::Saved("x".to_string()), Cmd::none())]
     #[case::absent_theme(
         ConfigWatchMessage::ReadDone { name: noir(), text: None },
         Cmd::message(ConfigChange::Theme {
@@ -438,14 +375,11 @@ mod tests {
     fn an_own_write_is_not_reported_back() {
         let mut watch = watch(None);
         let text = "[window]\n".to_string();
-        let written = watch.transition(ConfigWatchMessage::Saved {
-            saved_file: SavedFile::Appearance,
-            text: text.clone(),
-        });
+        let written = watch.transition(ConfigWatchMessage::Saved(text.clone()));
         assert_eq!(written, Ok(Cmd::none()));
 
         let answer = watch.transition(ConfigWatchMessage::ReadDone {
-            name: ConfigName::Appearance,
+            name: ConfigName::Config,
             text: Some(text),
         });
 

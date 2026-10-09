@@ -260,7 +260,10 @@ fn preloads(track: &Arc<Track>) -> Cmd {
 
 fn seeks(seconds: u64) -> Cmd {
     Cmd::from_iter([
-        Effect::Audio(AudioCmd::Seek(secs(seconds))),
+        Effect::Audio(AudioCmd::Seek {
+            target: secs(seconds),
+            revision: revision(),
+        }),
         Effect::Macos(MacosCmd::SetPosition(secs(seconds))),
     ])
 }
@@ -269,6 +272,7 @@ fn seek(target: u64) -> PlayerMessage {
     PlayerMessage::Seek {
         target: secs(target),
         now: now(),
+        revision: revision(),
     }
 }
 

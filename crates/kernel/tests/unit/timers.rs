@@ -4,6 +4,7 @@ use kernel::{
     cmd::{AudioCmd, Cmd, Effect, GrowingMedia, Media, RemoteCmd, TrackLoad},
     domain::{
         cue::{Cue, PlaybackChange},
+        driver::{DriverError, DriverName},
         model::Model,
         player::Player,
         playhead::Playhead,
@@ -29,7 +30,7 @@ use kernel::{
         toast::Toast,
         track::{AudioFormat, Tags, Track, TrackParts, TrackSource},
     },
-    message::{AudioEvent, Message, PlaybackRequest, RemoteEvent, Timer},
+    message::{AudioEvent, DriverEvent, Message, PlaybackRequest, RemoteEvent, Timer},
     update::machine::Unhandled,
 };
 use rstest::rstest;
@@ -76,7 +77,10 @@ fn secs(seconds: u64) -> Duration {
 }
 
 fn position(position: Duration) -> Message {
-    Message::Audio(AudioEvent::PositionReported(position))
+    Message::Audio(AudioEvent::PositionReported {
+        position,
+        revision: Revision::default(),
+    })
 }
 
 fn moment(millis: u64) -> Moment {
@@ -105,6 +109,83 @@ fn a_seek_back_after_the_preload_arms_no_preload_point() {
     );
 
     assert!(scheduled(&cmd).is_empty(), "{cmd:?}");
+}
+
+fn sought(model: &mut Model, target: Duration, now: Moment) {
+    assert!(
+        update(
+            model,
+            Message::Playback(PlaybackRequest::SeekTo(target)),
+            now
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn a_report_from_before_a_seek_leaves_the_playhead_at_the_target() {
+    let mut model = playing_model(3);
+    sought(&mut model, secs(15), moment(1_000));
+
+    assert!(update(&mut model, position(secs(1)), moment(1_100)).is_err());
+
+    assert_eq!(
+        model.player.position_at(moment(1_100)),
+        Duration::from_millis(15_100)
+    );
+}
+
+#[test]
+fn the_playhead_runs_on_from_a_seek_before_any_report() {
+    let mut model = playing_model(3);
+    sought(&mut model, secs(15), moment(1_000));
+
+    assert_eq!(
+        model.player.position_at(moment(1_800)),
+        Duration::from_millis(15_800)
+    );
+}
+
+#[test]
+fn a_report_after_a_seek_moves_the_playhead_back_by_at_most_its_lag() {
+    let mut model = playing_model(3);
+    sought(&mut model, secs(15), moment(1_000));
+
+    assert!(
+        update(
+            &mut model,
+            Message::Audio(AudioEvent::PositionReported {
+                position: secs(13),
+                revision: Revision::default().next(),
+            }),
+            moment(2_000),
+        )
+        .is_ok()
+    );
+
+    assert_eq!(
+        model.player.position_at(moment(2_000)),
+        Duration::from_millis(15_750)
+    );
+}
+
+#[test]
+fn a_report_after_an_audio_restart_while_stopped_is_taken() {
+    let mut model = playing_model(3);
+    sought(&mut model, secs(15), moment(1_000));
+    for message in [
+        Message::Playback(PlaybackRequest::Stop),
+        Message::Driver {
+            driver_name: DriverName::Audio,
+            event: DriverEvent::Died(DriverError::Panicked),
+        },
+        Message::Playback(PlaybackRequest::Play),
+        Message::Audio(AudioEvent::Loaded(None)),
+    ] {
+        assert!(update(&mut model, message, moment(1_100)).is_ok());
+    }
+
+    assert!(update(&mut model, position(secs(1)), moment(1_200)).is_ok());
 }
 
 #[test]
@@ -437,4 +518,35 @@ fn a_track_ending_before_its_successor_preloaded_starts_it_fresh() {
     assert!(ended.iter().flatten().any(|effect| {
         *effect == Effect::Remote(RemoteCmd::Fetch(incoming(fresh, 0)))
     }));
+}
+
+#[test]
+fn a_report_after_the_first_one_of_a_seek_sets_the_playhead_back() {
+    let mut model = playing_model(3);
+    sought(&mut model, secs(15), moment(1_000));
+    for (reported, now) in [(secs(13), moment(2_000)), (secs(14), moment(3_000))] {
+        assert!(
+            update(
+                &mut model,
+                Message::Audio(AudioEvent::PositionReported {
+                    position: reported,
+                    revision: Revision::default().next(),
+                }),
+                now,
+            )
+            .is_ok()
+        );
+    }
+
+    assert_eq!(model.player.position_at(moment(3_000)), secs(14));
+}
+
+#[test]
+fn a_report_without_a_seek_sets_the_playhead_back() {
+    let mut model = playing_model(3);
+    assert!(update(&mut model, position(secs(20)), moment(1_000)).is_ok());
+
+    assert!(update(&mut model, position(secs(12)), moment(2_000)).is_ok());
+
+    assert_eq!(model.player.position_at(moment(2_000)), secs(12));
 }

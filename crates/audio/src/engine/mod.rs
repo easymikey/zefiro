@@ -178,6 +178,7 @@ pub(crate) mod tests {
             settings: settings(),
             track_load: None,
             speed: Speed::default(),
+            playback: None,
         })
     }
 
@@ -190,6 +191,7 @@ pub(crate) mod tests {
             }),
             settings: settings(),
             speed: Speed::default(),
+            playback: None,
         })
     }
 

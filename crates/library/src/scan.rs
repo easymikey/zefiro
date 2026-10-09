@@ -1,12 +1,39 @@
 use std::{
     ffi::OsStr,
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use kernel::{domain::track::Track, message::LibrarySubject};
+use kernel::{
+    domain::{io_error::IoError, overlay::Verdict, track::Track},
+    message::LibrarySubject,
+};
 
 use crate::{error::Error, tags::read_track};
+
+#[must_use]
+pub fn probe(path: &Path) -> Verdict {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => fs::read_dir(path)
+            .map_or_else(|error| refused(&error), |_| Verdict::Readable),
+        Ok(_) => Verdict::NotADirectory,
+        Err(error) => refused(&error),
+    }
+}
+
+fn refused(error: &std::io::Error) -> Verdict {
+    if error.kind() == std::io::ErrorKind::NotADirectory {
+        return Verdict::NotADirectory;
+    }
+    match IoError::from(error.kind()) {
+        IoError::Missing => Verdict::Missing,
+        IoError::Denied => Verdict::Denied,
+        unreadable @ (IoError::Malformed | IoError::Full | IoError::Other) => {
+            Verdict::Unreadable(unreadable)
+        }
+    }
+}
 
 #[must_use]
 fn is_audio_file(path: &Path, audio_extensions: &[&str]) -> bool {
@@ -152,9 +179,81 @@ mod tests {
 
     use crate::{
         error::Error,
-        scan::{chunk_read, is_audio_file, list_dir, read_tags},
+        scan::{chunk_read, is_audio_file, list_dir, probe, read_tags},
         test_support::temp_dir_filters,
     };
+
+    #[derive(Clone, Copy)]
+    enum Probed {
+        Folder,
+        File,
+        Gone,
+        Locked,
+        ThroughAFile,
+        Looped,
+    }
+
+    #[rstest]
+    #[case::a_folder_reads(Probed::Folder, kernel::domain::overlay::Verdict::Readable)]
+    #[case::a_file_is_not_a_folder(
+        Probed::File,
+        kernel::domain::overlay::Verdict::NotADirectory
+    )]
+    #[case::a_missing_path(Probed::Gone, kernel::domain::overlay::Verdict::Missing)]
+    #[case::a_folder_without_permission(
+        Probed::Locked,
+        kernel::domain::overlay::Verdict::Denied
+    )]
+    #[case::a_path_through_a_file_is_not_a_folder(
+        Probed::ThroughAFile,
+        kernel::domain::overlay::Verdict::NotADirectory
+    )]
+    #[case::a_link_loop_cannot_be_read(
+        Probed::Looped,
+        kernel::domain::overlay::Verdict::Unreadable(
+            kernel::domain::io_error::IoError::Other
+        )
+    )]
+    fn a_probe_names_what_the_path_is(
+        #[case] probed: Probed,
+        #[case] expected: kernel::domain::overlay::Verdict,
+    ) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let music = directory.path().join("music");
+        let path = match probed {
+            Probed::ThroughAFile => music.join("inner"),
+            Probed::Folder
+            | Probed::File
+            | Probed::Gone
+            | Probed::Locked
+            | Probed::Looped => music.clone(),
+        };
+        match probed {
+            Probed::Folder => std::fs::create_dir(&path).unwrap(),
+            Probed::File => std::fs::write(&path, b"").unwrap(),
+            Probed::Gone => {}
+            Probed::ThroughAFile => std::fs::write(&music, b"").unwrap(),
+            Probed::Looped => std::os::unix::fs::symlink(&music, &music).unwrap(),
+            Probed::Locked => {
+                std::fs::create_dir(&path).unwrap();
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
+                    .unwrap();
+            }
+        }
+        let verdict = probe(&path);
+        std::fs::set_permissions(
+            directory.path(),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        if path.is_dir() {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        assert_eq!(verdict, expected);
+    }
 
     const AUDIO_EXTENSIONS: &[&str] =
         &["flac", "mp3", "mp4", "m4a", "m4b", "ogg", "wav", "mkv"];

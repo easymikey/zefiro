@@ -1,11 +1,11 @@
 # Configuration
 
-zefiro reads two TOML files from the same directory, plus theme files.
+zefiro reads one TOML file, `config.toml`, from its own directory, plus theme
+files.
 
 | File | Parsed into | Purpose |
 |---|---|---|
-| `config.toml` | `TomlSettings` (`crates/config/src/config_file.rs`) | music folder, theme, volume, audio, key rebinds |
-| `zefiro-ui.toml` | `TomlAppearance` (`crates/config/src/appearance_file.rs`) | cover, card, progress line, layout breakpoints, window |
+| `config.toml` | `TomlSettings` (`crates/config/src/config_file.rs`; the appearance tables in `crates/config/src/appearance_file.rs`) | music folder, theme, volume, audio, key rebinds; cover, card, progress line, layout breakpoints, window |
 | `themes/<name>.toml` | `TomlTheme` (`crates/config/src/theme_file.rs`) | one colour theme |
 
 ## Rules for every file
@@ -17,26 +17,32 @@ zefiro reads two TOML files from the same directory, plus theme files.
   `zefiro`. On macOS that is `~/Library/Application Support/zefiro/`. If the
   platform has no config directory, startup fails with an error. There is no
   fallback to the current directory.
-- **A missing file is the default.** A missing `config.toml` or
-  `zefiro-ui.toml` means `TomlSettings::default()` or
-  `TomlAppearance::default()`, with no message.
-- **A bad file falls back with a toast.** If a file cannot be read or does not
-  parse at startup, zefiro starts with that file's defaults and shows an error
-  toast. A bad theme file falls back to the stock theme the same way. During a
+- **The first start writes a template.** When `config.toml` does not exist at
+  startup, zefiro creates the folder and writes the template
+  `crates/config/config.toml`, shipped in the binary: every key commented out
+  at its default with a one-line note, under live, empty table headers, so a
+  settings save fills the existing table and the user only uncomments keys.
+  It then starts on `TomlSettings::default()`. An existing file, a symlink
+  included, even a dangling one, is never touched. If the write
+  fails, zefiro starts on the defaults and shows an error toast. A file
+  removed during a session means the defaults, with no message.
+- **A bad file falls back with a toast.** If `config.toml` cannot be read or
+  does not parse at startup, zefiro starts with the defaults of both the
+  settings and the appearance and shows one error toast. A bad theme file falls back to the stock theme the same way. During a
   session, a reload that fails keeps the last good values and shows a toast;
   the same error repeated raises no second toast.
 - **Paths are taken as written.** zefiro does not expand `~` or `$VAR` in any
   value.
 - **Files are watched, not polled.** The config driver watches the config
   directory (recursively, so `themes/` too) through a `notify` stream. On each
-  change event it re-reads `config.toml`, `zefiro-ui.toml` and the active theme,
-  and lists `themes/`. A file whose text did not change reports nothing.
+  change event it re-reads `config.toml` once and the active theme, and lists
+  `themes/`. A file whose text did not change reports nothing.
 
 ## What reloads live
 
 | Change | Effect |
 |---|---|
-| `zefiro-ui.toml`, any key | applies at once |
+| `config.toml` `[cover]`, `[card]`, `[progress]`, `[layout]`, `[window]`, any key | applies at once |
 | the active theme file | applies at once |
 | a new or removed file in `themes/` | the settings overlay's theme list updates |
 | `config.toml` `[keymap]` | the key bindings are rebuilt |
@@ -44,15 +50,15 @@ zefiro reads two TOML files from the same directory, plus theme files.
 | `config.toml` `theme`, `volume`, `[audio]` | read at startup only; an outside edit needs a restart |
 
 The settings overlay (the `settings` action) changes values in the running app
-and saves them. A `config.toml` change (crossfade, ReplayGain, output device,
-theme, volume, sleep presets, music folder) is a `ConfigPatch`; an
-`zefiro-ui.toml` change (cover mode, brackets, format chips, speed chip,
+and saves them into `config.toml`. A settings change (crossfade, ReplayGain,
+output device, theme, volume, sleep presets, music folder) is a `ConfigPatch`;
+an appearance change (cover mode, brackets, format chips, speed chip,
 remaining time, key hints, animations, layout mode) is an `AppearancePatch`.
 `crates/config/src/patch.rs` writes each patch with `toml_edit`: only the keys
 the patch sets change, and comments, blank lines and table order stay.
 
 The settings overlay's `Noir` preset sets the `noir` theme and these
-`zefiro-ui.toml` values in one step: `[cover] mode = "milkdrop"`,
+`config.toml` values in one step: `[cover] mode = "milkdrop"`,
 `[cover] brackets = true`, `[card] format_chips = true`,
 `[progress] remaining = true` (`preset_appearance` in
 `crates/kernel/src/domain/appearance.rs`).
@@ -68,7 +74,7 @@ scanned from. A missing or stale pair means a rescan.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `music_dir` | path | unset | Folder scanned for tracks. At startup the command-line `path` argument wins, then this key, then `dirs::audio_dir()`. If none resolves, or the folder does not exist, startup fails with an error. The source-folder overlay (the `music_dir` action) writes this key. |
+| `music_dir` | path | unset | Folder scanned for tracks. At startup the `--music-dir <PATH>` flag or the command-line `path` argument wins, then this key, then `dirs::audio_dir()`. If none resolves, or the folder does not exist, startup fails with an error. `--music-dir` checks that the path is a folder zefiro can read (otherwise zefiro exits with the reason and status 2, before the terminal is taken over), saves its absolute path as this key, keeping the file's comments, and starts on it; the `path` argument plays a folder for this run only and saves nothing. The source-folder overlay (the `music_dir` action) writes this key too. |
 | `theme` | string | `"auto"` | Theme name. `"auto"` picks the stock theme, `noir`. Embedded themes: `terracotta-dark`, `terracotta-light`, `ember`, `gruvbox`, `gruvbox-light`, `hacker`, `macaroon`, `neobrutalism-dark`, `neobrutalism-light`, `noir`, `oreo`, `ristretto`, `rose-pine`, `rose-pine-dawn`, `wafer`, `winamp`. A file `themes/<name>.toml` in the config directory is offered too, and it shadows an embedded theme of the same name. An unknown name falls back to the stock theme with a toast. The `--theme` flag overrides this key. |
 | `volume` | integer | `50` | Startup volume in percent, `0` to `100`. A value over `100` is a parse error. The `--volume` flag overrides it and also accepts only `0` to `100`. |
 | `audio.crossfade` | duration string, `"Ns"` or `"Nms"` | `"0s"` | Crossfade between tracks, at most `10s`. `"0s"` is gapless. Only a track that ends on its own fades into the next; a skip cuts. |
@@ -151,37 +157,10 @@ An unknown context, an unknown key in the table, or a table without `chord`
 is a parse error. A chord with bad syntax parses as a string and is reported
 when the bindings are built.
 
-## Theme files
+### Appearance tables
 
-Path: `<config dir>/zefiro/themes/<name>.toml`, or one of the embedded themes in
-`themes/` in the repository.
-
-A theme has a `name`, a `[colors]` table of seven required keys and one
-optional key, and an optional `scanning_label`. The renderer derives every
-other role (selection band, markers, frames, dim text, spectrum gradient) from
-these colours.
-
-| Key | Required | Role |
-|---|---|---|
-| `background` | yes | The ground behind every panel. |
-| `muted_foreground` | yes | Frames, rules, dim text. |
-| `foreground` | yes | Body text; the selection band is mixed from it. |
-| `accent` | yes | The theme's hue: chips, the `▶` marker, the queue chip, the spectrum's middle. |
-| `green` / `yellow` / `red` | yes | The spectrum gradient, quiet to loud. `yellow` is also the `★` favourite marker. |
-| `window_background` | no | The panel ground. If unset, `background` is blended 6 % toward `muted_foreground`. |
-| `scanning_label` | no (top level) | Text the playlist pane shows while the library is listed. Default `"scanning…"`. |
-
-Each colour is a `"#rrggbb"` string.
-
-Some derived roles are contrast-corrected
-(`crates/widgets/src/theme/contrast.rs`): the selection band against the panel
-ground (at least 1.5:1), the bar groove against the panel ground (1.5:1), the
-selected row's text against the band (4.5:1), and the `▶` marker against both
-(3:1).
-
-## `zefiro-ui.toml`
-
-Path: `<config dir>/zefiro/zefiro-ui.toml`, beside `config.toml`.
+The tables `[cover]`, `[card]`, `[progress]`, `[layout]` and `[window]` of
+`config.toml` set the look. Any of their keys applies at once.
 
 ### `[cover]`
 
@@ -263,13 +242,41 @@ key_hints = true
 ```
 <!-- /defaults:window -->
 
+## Theme files
+
+Path: `<config dir>/zefiro/themes/<name>.toml`, or one of the embedded themes in
+`themes/` in the repository.
+
+A theme has a `name`, a `[colors]` table of seven required keys and one
+optional key, and an optional `scanning_label`. The renderer derives every
+other role (selection band, markers, frames, dim text, spectrum gradient) from
+these colours.
+
+| Key | Required | Role |
+|---|---|---|
+| `background` | yes | The ground behind every panel. |
+| `muted_foreground` | yes | Frames, rules, dim text. |
+| `foreground` | yes | Body text; the selection band is mixed from it. |
+| `accent` | yes | The theme's hue: chips, the `▶` marker, the queue chip, the spectrum's middle. |
+| `green` / `yellow` / `red` | yes | The spectrum gradient, quiet to loud. `yellow` is also the `★` favourite marker. |
+| `window_background` | no | The panel ground. If unset, `background` is blended 6 % toward `muted_foreground`. |
+| `scanning_label` | no (top level) | Text the playlist pane shows while the library is listed. Default `"scanning…"`. |
+
+Each colour is a `"#rrggbb"` string.
+
+Some derived roles are contrast-corrected
+(`crates/widgets/src/theme/contrast.rs`): the selection band against the panel
+ground (at least 1.5:1), the bar groove against the panel ground (1.5:1), the
+selected row's text against the band (4.5:1), and the `▶` marker against both
+(3:1).
+
 ## Regenerating the default blocks
 
 Two guards in `crates/zefiro-guards` lock the blocks above to the code.
 `config_doc_config.rs` parses the `defaults:config` block with `parse_config` and
 compares it with `TomlSettings::default()`. `config_doc_appearance.rs` parses the
-`defaults:window` block with `parse_appearance` and compares it with
-`TomlAppearance::default()`. The structs are `Deserialize` only, so the blocks
+`defaults:window` block with `parse_config` too and compares it with
+`TomlSettings::default()`. The structs are `Deserialize` only, so the blocks
 are kept by hand. When a default changes:
 
 1. Read the failing assertion's diff; it names the fields that differ.

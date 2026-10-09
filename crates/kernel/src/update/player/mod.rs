@@ -27,6 +27,7 @@ use crate::{
                 duration_of,
                 handover_effects,
                 next_decision,
+                seek_effect,
                 session,
             },
             scrobble::{now_playing, scrobble_timer},
@@ -48,6 +49,7 @@ pub enum PlayerMessage {
     Seek {
         target: Duration,
         now: Moment,
+        revision: Revision,
     },
     SleepFired(Moment),
     OutputLost(Moment),
@@ -91,7 +93,13 @@ impl Machine for Player {
             },
             PlayerMessage::Hold(now) => self.pause(now, PausedBy::Overlay),
             PlayerMessage::Release(anchor) => self.release(anchor),
-            PlayerMessage::Seek { target, now } => self.seek(target, now),
+            PlayerMessage::Seek {
+                target,
+                now,
+                revision,
+            } => self
+                .seek(target, now)
+                .map(|()| seek_effect(target, revision)),
             PlayerMessage::SleepFired(now) => self.pause(now, PausedBy::Listener),
             PlayerMessage::Loaded { duration, anchor } => self.loaded(duration, anchor),
             PlayerMessage::Error(error) => self.failed(&error),
@@ -153,7 +161,11 @@ pub(crate) fn update_player(
     player_message: PlayerMessage,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    let seeks = matches!(player_message, PlayerMessage::Seek { .. });
+    let seeks = if let PlayerMessage::Seek { revision, .. } = &player_message {
+        Some(*revision)
+    } else {
+        None
+    };
     let track_changed = matches!(player_message, PlayerMessage::TrackChanged { .. });
     let candidate = playback_parts.revisions.effects.next();
     let paused = matches!(playback_parts.player, Player::Paused { .. });
@@ -172,13 +184,16 @@ pub(crate) fn update_player(
         };
     let cmd = playback_parts.player.transition(player_message)?;
     playback_parts.revisions.effects = candidate;
+    if let Some(revision) = seeks {
+        playback_parts.revisions.seek = revision;
+    }
     let cmd = cmd.then(fetch(playback_parts, media_fetch, now));
     let cmd = if track_changed {
         cmd.then(now_playing(playback_parts, now))
     } else {
         cmd
     };
-    let armed = if seeks {
+    let armed = if seeks.is_some() {
         timer(playback_parts, now)
     } else {
         arm(playback_parts, now)

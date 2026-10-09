@@ -85,7 +85,7 @@ fn seek_routes_clamp_to_duration_regardless_of_message_source(
     assert_eq!(model.player.position_at(Moment::default()), expected);
     let seek = effects(cmd);
     assert!(
-        matches!(seek.first(), Some(Effect::Audio(AudioCmd::Seek(d))) if *d == expected)
+        matches!(seek.first(), Some(Effect::Audio(AudioCmd::Seek { target: d, .. })) if *d == expected)
     );
     assert!(
         matches!(seek.get(1), Some(Effect::Macos(MacosCmd::SetPosition(d))) if *d == expected)
@@ -227,7 +227,10 @@ fn a_lookahead_at_the_loop_end_seeks_once_to_the_loop_start(
     assert_eq!(
         driver_effects(cmd),
         vec![
-            Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+            Effect::Audio(AudioCmd::Seek {
+                target: Duration::from_secs(5),
+                revision: Revision::default().next()
+            }),
             Effect::Macos(MacosCmd::SetPosition(Duration::from_secs(5))),
             Effect::After {
                 delay: Duration::from_secs(10),
@@ -367,7 +370,8 @@ fn start_track_emits_nowplaying_and_playing_state() {
                 MacosCmd::SetPlayback(_)
                 | MacosCmd::SetPosition(_)
                 | MacosCmd::SetSpeed(_)
-                | MacosCmd::SetVolume(_),
+                | MacosCmd::SetVolume(_)
+                | MacosCmd::Privacy,
             )
             | Effect::Audio(_)
             | Effect::Library(_)

@@ -4,7 +4,7 @@ use std::{
 };
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Cmds, Media, Playback, TrackLoad},
+    cmd::{AudioCmd, Cmd, Cmds, Media, TrackLoad},
     domain::{revision::Revision, settings::AudioSettings},
     message::{AudioError, AudioEvent},
     update::machine::{LoopEffect, Unhandled, each_handled},
@@ -16,17 +16,23 @@ use crate::{
         effect::{AudioLoopCmd, EngineEffect},
         message::{ClosedMessage, DeviceOpened},
         revisions::JobRevisions,
-        state::{Closed, Live},
+        state::{Closed, Live, transport},
     },
 };
 
 impl Closed {
     pub(crate) fn transition(
         &mut self,
+        job_revisions: &mut JobRevisions,
         message: ClosedMessage,
     ) -> Result<AudioLoopCmd, Unhandled> {
         match message {
-            ClosedMessage::Cmds(batch) => batched(batch, |cmd| self.command(cmd)),
+            ClosedMessage::Cmds(batch) => batched(batch, |cmd| {
+                if let AudioCmd::Seek { revision, .. } = &cmd {
+                    job_revisions.seek_revision = *revision;
+                }
+                self.command(cmd)
+            }),
             ClosedMessage::Error(error) => Ok(self.stays_silent(error)),
         }
     }
@@ -75,9 +81,12 @@ impl Closed {
                 self.track_load = None;
                 Ok(Cmd::none())
             }
-            AudioCmd::SetPlayback(Playback::Paused | Playback::Playing)
-            | AudioCmd::Seek(_)
-            | AudioCmd::Preload(_) => Err(Unhandled),
+            AudioCmd::SetPlayback(playback) => {
+                self.playback = Some(playback);
+                Ok(Cmd::none())
+            }
+            AudioCmd::Seek { .. } => Ok(Cmd::none()),
+            AudioCmd::Preload(_) => Err(Unhandled),
             AudioCmd::CancelPreload(revision) => {
                 Ok(Cmd::message(AudioEvent::PreloadCancelled(revision)))
             }
@@ -135,7 +144,8 @@ impl Closed {
         );
         let cmd = self
             .track_load
-            .map_or_else(Cmd::none, |track_load| live.load(job_revisions, track_load));
+            .map_or_else(Cmd::none, |track_load| live.load(job_revisions, track_load))
+            .then(self.playback.map_or_else(Cmd::none, transport));
         (live, cmd)
     }
 }
@@ -149,7 +159,7 @@ pub(crate) fn keep_last_idempotent(audio_cmds: Vec<AudioCmd>) -> Vec<AudioCmd> {
                     seen.clear();
                     true
                 }
-                AudioCmd::SetSpeed(_) | AudioCmd::Seek(_) => {
+                AudioCmd::SetSpeed(_) | AudioCmd::Seek { .. } => {
                     seen.insert(discriminant(&cmd))
                 }
                 AudioCmd::SetPlayback(_)
@@ -259,9 +269,14 @@ mod tests {
         closed(),
         cmd(AudioCmd::SetDevice(OutputDevice::Named(DeviceName::new("usb".to_string()).unwrap()))),
         EngineRow {
-            next: EngineState::Closed(Closed { settings: settings_on("usb"), track_load: None, speed: Speed::default() }),
+            next: EngineState::Closed(Closed { settings: settings_on("usb"), track_load: None, speed: Speed::default(), playback: None }),
             effect: Ok(Cmd::none()),
         }
+    )]
+    #[case::closed_keeps_the_revision_of_a_seek(
+        closed(),
+        cmd(AudioCmd::Seek { target: seconds(5), revision: first() }),
+        EngineRow { next: closed(), effect: Ok(Cmd::none()) }
     )]
     #[case::closed_answers_a_cancel_preload_with_cancelled(
         closed(),
@@ -280,7 +295,7 @@ mod tests {
         EngineRow { next: EngineState::Live(Live { settings: settings_on("usb"), ..live() }), effect: Ok(Cmd::none())}
     )]
     #[case::closed_adopts_the_device_that_actually_opened(
-        EngineState::Closed(Closed { settings: settings_on("usb"), track_load: None, speed: Speed::default() }),
+        EngineState::Closed(Closed { settings: settings_on("usb"), track_load: None, speed: Speed::default(), playback: None }),
         opened(OutputDevice::SystemDefault, Duration::ZERO, Playback::Playing),
         EngineRow { next: EngineState::Live(live()), effect: Ok(Cmd::none())}
     )]
@@ -296,7 +311,7 @@ mod tests {
         waiting_for("/a"),
         EngineMessage::Error(device_error()),
         EngineRow {
-            next: EngineState::Closed(Closed { settings: settings(), track_load: None, speed: Speed::default() }),
+            next: EngineState::Closed(Closed { settings: settings(), track_load: None, speed: Speed::default(), playback: None }),
             effect: Ok(Cmd::message(AudioEvent::Error(device_error()))),
         }
     )]
@@ -304,7 +319,7 @@ mod tests {
         closed(),
         EngineMessage::Error(device_error()),
         EngineRow {
-            next: EngineState::Closed(Closed { settings: settings(), track_load: None, speed: Speed::default() }),
+            next: EngineState::Closed(Closed { settings: settings(), track_load: None, speed: Speed::default(), playback: None }),
             effect: Ok(Cmd::message(AudioEvent::Error(device_error()))),
         }
     )]
@@ -316,6 +331,7 @@ mod tests {
                 settings: settings(),
                 track_load: None,
                 speed: Speed::clamped(1.5),
+                playback: None,
             }),
             effect: Ok(Cmd::none()),
         }
@@ -328,6 +344,7 @@ mod tests {
                 settings: AudioSettings { crossfade: crossfade(4), ..settings() },
                 track_load: None,
                 speed: Speed::default(),
+                playback: None,
             }),
             effect: Ok(Cmd::none()),
         }
@@ -340,6 +357,7 @@ mod tests {
                 settings: AudioSettings { replay_gain: ReplayGain::On, ..settings() },
                 track_load: None,
                 speed: Speed::default(),
+                playback: None,
             }),
             effect: Ok(Cmd::none()),
         }
@@ -352,7 +370,24 @@ mod tests {
                 settings: settings(),
                 track_load: None,
                 speed: Speed::default(),
+                playback: None,
             }),
+            effect: Ok(Cmd::none()),
+        }
+    )]
+    #[case::closed_records_a_play(
+        closed(),
+        cmd(AudioCmd::SetPlayback(Playback::Playing)),
+        EngineRow {
+            next: EngineState::Closed(Closed { settings: settings(), track_load: None, speed: Speed::default(), playback: Some(Playback::Playing) }),
+            effect: Ok(Cmd::none()),
+        }
+    )]
+    #[case::closed_records_a_pause(
+        closed(),
+        cmd(AudioCmd::SetPlayback(Playback::Paused)),
+        EngineRow {
+            next: EngineState::Closed(Closed { settings: settings(), track_load: None, speed: Speed::default(), playback: Some(Playback::Paused) }),
             effect: Ok(Cmd::none()),
         }
     )]
@@ -367,9 +402,6 @@ mod tests {
     #[rstest]
     #[case::closed_ignores_a_decode(EngineMessage::Decoded(None))]
     #[case::closed_ignores_a_preload_answer(attached(&track_b(), Revision::default()))]
-    #[case::closed_refuses_a_resume(cmd(AudioCmd::SetPlayback(Playback::Playing)))]
-    #[case::closed_pause_is_refused(cmd(AudioCmd::SetPlayback(Playback::Paused)))]
-    #[case::closed_refuses_seek(cmd(AudioCmd::Seek(seconds(5))))]
     #[case::closed_refuses_preload(preload("/b"))]
     #[case::closed_stop_without_a_load_is_refused(cmd(AudioCmd::Stop))]
     #[case::same_speed(cmd(AudioCmd::SetSpeed(Speed::default())))]
@@ -413,6 +445,7 @@ mod tests {
                 settings: live.settings,
                 track_load: None,
                 speed: live.speed,
+                playback: None,
             })
         );
     }
@@ -439,6 +472,59 @@ mod tests {
         assert!(matches!(engine, EngineState::Live(_)));
     }
 
+    #[rstest]
+    #[case::play_then_load(
+        [AudioCmd::SetPlayback(Playback::Playing), local_load("/a")],
+        EngineEffect::Play
+    )]
+    #[case::load_then_play(
+        [local_load("/a"), AudioCmd::SetPlayback(Playback::Playing)],
+        EngineEffect::Play
+    )]
+    #[case::pause_then_load(
+        [AudioCmd::SetPlayback(Playback::Paused), local_load("/a")],
+        EngineEffect::Pause
+    )]
+    fn a_playback_ordered_while_closed_applies_once_the_device_opens(
+        #[case] audio_cmds: [AudioCmd; 2],
+        #[case] ordered_effect: EngineEffect,
+    ) {
+        let (engine, _waiting) = trace(
+            closed(),
+            vec![EngineMessage::Cmds(Cmds {
+                cmds: Vec::from(audio_cmds),
+                at: Instant::now(),
+            })],
+        )
+        .unwrap();
+
+        let (_engine, log) = trace(
+            engine,
+            vec![opened(
+                OutputDevice::SystemDefault,
+                seconds(0),
+                Playback::Playing,
+            )],
+        )
+        .unwrap();
+
+        let engine_effects: Vec<&EngineEffect> = log
+            .iter()
+            .flat_map(|cmd| cmd.effects())
+            .filter_map(|effect| {
+                if let LoopEffect::Execute(engine_effect) = effect {
+                    Some(engine_effect)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(
+            engine_effects.contains(&&ordered_effect),
+            "the opened engine must apply the ordered playback, got {engine_effects:?}"
+        );
+    }
+
     #[test]
     fn a_fallback_is_announced_once_the_system_default_opens() {
         assert_fallback(
@@ -446,6 +532,7 @@ mod tests {
                 settings: settings_on("usb"),
                 track_load: None,
                 speed: Speed::default(),
+                playback: None,
             }),
             EngineRow {
                 next: EngineState::Live(live()),
@@ -536,6 +623,7 @@ mod tests {
             settings: settings(),
             track_load: Some(growing_load(100)),
             speed: Speed::default(),
+            playback: None,
         });
 
         let grown = step(
@@ -577,25 +665,25 @@ mod tests {
     #[case::speed_seek_speed(
         vec![
             AudioCmd::SetSpeed(Speed::clamped(1.5)),
-            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::Seek { target: Duration::from_secs(1), revision: Revision::default() },
             AudioCmd::SetSpeed(Speed::clamped(2.0)),
         ],
         vec![
-            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::Seek { target: Duration::from_secs(1), revision: Revision::default() },
             AudioCmd::SetSpeed(Speed::clamped(2.0)),
         ]
     )]
     #[case::seeks_across_a_load(
         vec![
-            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::Seek { target: Duration::from_secs(1), revision: Revision::default() },
             local_load("/b"),
-            AudioCmd::Seek(Duration::from_secs(2)),
-            AudioCmd::Seek(Duration::from_secs(3)),
+            AudioCmd::Seek { target: Duration::from_secs(2), revision: Revision::default() },
+            AudioCmd::Seek { target: Duration::from_secs(3), revision: Revision::default() },
         ],
         vec![
-            AudioCmd::Seek(Duration::from_secs(1)),
+            AudioCmd::Seek { target: Duration::from_secs(1), revision: Revision::default() },
             local_load("/b"),
-            AudioCmd::Seek(Duration::from_secs(3)),
+            AudioCmd::Seek { target: Duration::from_secs(3), revision: Revision::default() },
         ]
     )]
     #[case::stop_splits(

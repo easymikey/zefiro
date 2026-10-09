@@ -23,6 +23,7 @@ pub(crate) struct JobRevisions {
     issued: Revision,
     decode: Revision,
     preload: Revision,
+    pub(crate) seek_revision: Revision,
     preload_download_revision: Option<Revision>,
     downloaded: HashMap<Revision, Arc<AtomicU64>>,
 }

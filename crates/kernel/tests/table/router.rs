@@ -325,17 +325,17 @@ fn resolved(message: Message, model: &Model) -> Message {
 )]
 #[case::a_second_ab_press_past_the_start_closes_the_loop(
     model_playing_at(1, 0, Duration::from_secs(10)),
-    vec![mark_ab(), Message::Audio(AudioEvent::PositionReported(Duration::from_secs(20))), mark_ab()]
+    vec![mark_ab(), Message::Audio(AudioEvent::PositionReported { position: Duration::from_secs(20), revision: Revision::default() }), mark_ab()]
 )]
 #[case::a_second_ab_press_before_the_start_waits(
     model_playing_at(1, 0, Duration::from_secs(10)),
-    vec![mark_ab(), Message::Audio(AudioEvent::PositionReported(Duration::from_secs(5))), mark_ab()]
+    vec![mark_ab(), Message::Playback(PlaybackRequest::SeekTo(Duration::from_secs(5))), mark_ab()]
 )]
 #[case::a_third_ab_press_clears_the_loop(
     model_playing_at(1, 0, Duration::from_secs(10)),
     vec![
         mark_ab(),
-        Message::Audio(AudioEvent::PositionReported(Duration::from_secs(20))),
+        Message::Audio(AudioEvent::PositionReported { position: Duration::from_secs(20), revision: Revision::default() }),
         mark_ab(),
         mark_ab(),
     ]

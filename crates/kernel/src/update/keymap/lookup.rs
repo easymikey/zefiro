@@ -6,7 +6,7 @@ use crate::{
         overlay::Overlay,
         workspace::Workspace,
     },
-    message::{Message, OverlayRequest, SearchEdit, SearchRequest, TextRequest},
+    message::{Message, OverlayRequest, SearchRequest, TextRequest},
     update::keymap::{chord::KeyBinding, key_context::key_context_of},
 };
 
@@ -124,7 +124,7 @@ fn typed_input(key_context: KeyContext, key: Key) -> Option<Message> {
             OverlayRequest::Text(TextRequest::Char(character)),
         )),
         KeyContext::Search => Some(Message::Overlay(OverlayRequest::Search(
-            SearchRequest::Edit(SearchEdit::Char(character)),
+            SearchRequest::Edit(TextRequest::Char(character)),
         ))),
         KeyContext::Global
         | KeyContext::Playlist

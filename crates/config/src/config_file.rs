@@ -1,9 +1,17 @@
 use std::{path::PathBuf, time::Duration};
 
 use kernel::domain::{
+    appearance::{
+        Appearance,
+        AppearanceSettings,
+        Breakpoints,
+        CoverCells,
+        ProgressBar,
+    },
     config::ConfigName,
     crossfade::Crossfade,
     device::{DeviceName, OutputDevice},
+    geometry::Cells,
     keymap::KeymapOverrides,
     percent::Percent,
     server::{Account, Endpoint, ServerName, UserName},
@@ -17,6 +25,14 @@ use toml::Spanned;
 
 use crate::{
     appearance::{Flag, flag},
+    appearance_file::{
+        TomlCard,
+        TomlCover,
+        TomlCoverCells,
+        TomlLayout,
+        TomlProgress,
+        TomlWindow,
+    },
     error::{CrossfadeTextError, Error, line_at, parse_toml},
     keymap::TomlKeymap,
 };
@@ -181,6 +197,11 @@ pub struct TomlSettings {
     pub keymap: TomlKeymap,
     #[serde(rename = "server")]
     pub servers: Vec<TomlServer>,
+    pub(crate) card: TomlCard,
+    pub progress: TomlProgress,
+    pub cover: TomlCover,
+    pub layout: TomlLayout,
+    pub(crate) window: TomlWindow,
 }
 
 impl Default for TomlSettings {
@@ -192,6 +213,11 @@ impl Default for TomlSettings {
             audio: TomlAudio::default(),
             keymap: TomlKeymap::default(),
             servers: Vec::new(),
+            card: TomlCard::default(),
+            progress: TomlProgress::default(),
+            cover: TomlCover::default(),
+            layout: TomlLayout::default(),
+            window: TomlWindow::default(),
         }
     }
 }
@@ -227,14 +253,59 @@ pub struct ConfigSettings {
     pub keymap_overrides: KeymapOverrides,
     pub(crate) music_dir: Option<PathBuf>,
     pub accounts: Vec<Account>,
+    pub(crate) appearance_settings: AppearanceSettings,
+    pub(crate) appearance: Appearance,
 }
 
 pub fn parse_config_settings(text: &str) -> Result<ConfigSettings, Error> {
     parse_config(text).map(|config| ConfigSettings {
+        appearance_settings: config.to_appearance_settings(),
+        appearance: config.to_appearance(),
         keymap_overrides: config.keymap.into_keymap_overrides(),
         music_dir: config.music_dir,
         accounts: config.servers.into_iter().map(Account::from).collect(),
     })
+}
+
+impl TomlSettings {
+    pub fn to_appearance_settings(&self) -> AppearanceSettings {
+        AppearanceSettings {
+            cover_mode: self.cover.mode,
+            cover_brackets: self.cover.brackets,
+            format_chips: self.card.format_chips,
+            speed_chip: self.card.speed_chip,
+            progress_time: self.progress.progress_time,
+            key_hints: self.window.key_hints,
+            animations: self.window.animations,
+            layout_mode: self.layout.mode,
+        }
+    }
+
+    pub fn to_appearance(&self) -> Appearance {
+        let TomlCoverCells { width, height } = self.cover.cover_cells;
+        let layout = &self.layout;
+        let progress = &self.progress;
+        Appearance {
+            cover_cells: CoverCells {
+                width: Cells(width),
+                height: Cells(height),
+            },
+            breakpoints: Breakpoints {
+                full_min_width: Cells(layout.full_min_width),
+                full_min_height: Cells(layout.full_min_height),
+                compact_min_width: Cells(layout.compact_min_width),
+                compact_min_height: Cells(layout.compact_min_height),
+                min_width: Cells(layout.min_width),
+                min_height: Cells(layout.min_height),
+            },
+            progress_bar: ProgressBar {
+                height: progress.height,
+                radius: progress.radius,
+                fill: progress.fill,
+                groove: progress.groove,
+            },
+        }
+    }
 }
 
 #[cfg(test)]

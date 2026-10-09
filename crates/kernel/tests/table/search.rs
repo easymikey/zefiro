@@ -7,7 +7,7 @@ use kernel::{
         index::ViewIndex,
         overlay::SearchQuery,
     },
-    message::{Message, QueueRequest, SearchEdit, SearchRequest},
+    message::{Message, QueueRequest, SearchRequest, TextRequest},
     update::machine::Unhandled,
 };
 use rstest::rstest;
@@ -29,21 +29,21 @@ fn query(
     }
 }
 
-fn edit(edit: SearchEdit) -> SearchRequest {
-    SearchRequest::Edit(edit)
+fn edit(text_request: TextRequest) -> SearchRequest {
+    SearchRequest::Edit(text_request)
 }
 
 #[rstest]
-#[case::char_appends(query("m", vec![], 0), edit(SearchEdit::Char('o')), Ok((query("mo", vec![], 0), Cmd::none())))]
-#[case::char_on_an_empty_query_starts_it(query("", vec![0, 1], 0), edit(SearchEdit::Char('m')), Ok((query("m", vec![0, 1], 0), Cmd::none())))]
-#[case::backspace_erases(query("moo", vec![0], 0), edit(SearchEdit::Backspace), Ok((query("mo", vec![0], 0), Cmd::none())))]
-#[case::backspace_on_an_empty_query_is_refused(query("", vec![], 0), edit(SearchEdit::Backspace), Err(Unhandled))]
-#[case::delete_word_on_an_empty_query_is_refused(query("", vec![], 0), edit(SearchEdit::DeleteWord), Err(Unhandled))]
-#[case::clear_on_an_empty_query_is_refused(query("", vec![], 0), edit(SearchEdit::Clear), Err(Unhandled))]
-#[case::delete_word_erases_the_trailing_word(query("foo bar", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("foo ", vec![], 0), Cmd::none())))]
-#[case::delete_word_eats_the_trailing_space_with_the_word(query("foo bar ", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("foo ", vec![], 0), Cmd::none())))]
-#[case::delete_word_on_one_word_empties_the_query(query("foo", vec![], 0), edit(SearchEdit::DeleteWord), Ok((query("", vec![], 0), Cmd::none())))]
-#[case::clear_empties_the_query(query("foo bar", vec![], 0), edit(SearchEdit::Clear), Ok((query("", vec![], 0), Cmd::none())))]
+#[case::char_appends(query("m", vec![], 0), edit(TextRequest::Char('o')), Ok((query("mo", vec![], 0), Cmd::none())))]
+#[case::char_on_an_empty_query_starts_it(query("", vec![0, 1], 0), edit(TextRequest::Char('m')), Ok((query("m", vec![0, 1], 0), Cmd::none())))]
+#[case::backspace_erases(query("moo", vec![0], 0), edit(TextRequest::Backspace), Ok((query("mo", vec![0], 0), Cmd::none())))]
+#[case::backspace_on_an_empty_query_is_refused(query("", vec![], 0), edit(TextRequest::Backspace), Err(Unhandled))]
+#[case::delete_word_on_an_empty_query_is_refused(query("", vec![], 0), edit(TextRequest::DeleteWord), Err(Unhandled))]
+#[case::clear_on_an_empty_query_is_refused(query("", vec![], 0), edit(TextRequest::Clear), Err(Unhandled))]
+#[case::delete_word_erases_the_trailing_word(query("foo bar", vec![], 0), edit(TextRequest::DeleteWord), Ok((query("foo ", vec![], 0), Cmd::none())))]
+#[case::delete_word_eats_the_trailing_space_with_the_word(query("foo bar ", vec![], 0), edit(TextRequest::DeleteWord), Ok((query("foo ", vec![], 0), Cmd::none())))]
+#[case::delete_word_on_one_word_empties_the_query(query("foo", vec![], 0), edit(TextRequest::DeleteWord), Ok((query("", vec![], 0), Cmd::none())))]
+#[case::clear_empties_the_query(query("foo bar", vec![], 0), edit(TextRequest::Clear), Ok((query("", vec![], 0), Cmd::none())))]
 #[case::nav_down_steps(query("mo", vec![0, 2], 0), SearchRequest::Navigate(Direction::Next), Ok((query("mo", vec![0, 2], 1), Cmd::none())))]
 #[case::nav_up_at_the_top_is_refused(query("mo", vec![0, 2], 0), SearchRequest::Navigate(Direction::Previous), Err(Unhandled))]
 #[case::nav_down_at_the_bottom_is_refused(query("mo", vec![0, 2], 1), SearchRequest::Navigate(Direction::Next), Err(Unhandled))]

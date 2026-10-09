@@ -24,7 +24,6 @@ use kernel::{
 };
 
 use crate::{
-    appearance_file::parse_appearance,
     config_file::parse_config_settings,
     driver::{
         effect::{ConfigEffect, ConfigLoopCmd},
@@ -62,7 +61,7 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> std::fmt::Debug for ConfigDriver<P, A>
 impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
     pub fn new(paths: &ConfigPaths, publish_theme: P, publish_appearance: A) -> Self {
         Self {
-            dir: parent_dir(&paths.appearance_path).map(Path::to_path_buf),
+            dir: parent_dir(&paths.config_path).map(Path::to_path_buf),
             default_music_dir: paths.default_music_dir.clone(),
             watch: ConfigWatch::new(paths),
             saves: PendingSaves::default(),
@@ -155,7 +154,6 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
     fn poll_everything(&mut self) -> Result<ConfigLoopCmd, Unhandled> {
         each_handled(
             vec![
-                ConfigWatchMessage::PollAppearance,
                 ConfigWatchMessage::PollConfig,
                 ConfigWatchMessage::PollTheme,
                 ConfigWatchMessage::PollThemes,
@@ -167,7 +165,6 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> ConfigDriver<P, A> {
 
 fn changed(change: ConfigChange, default_music_dir: Option<&Path>) -> ConfigLoopCmd {
     match change {
-        ConfigChange::Appearance(text) => appearance_changed(text.as_deref()),
         ConfigChange::Config(text) => {
             config_changed(text.as_deref(), default_music_dir)
         }
@@ -179,25 +176,6 @@ fn changed(change: ConfigChange, default_music_dir: Option<&Path>) -> ConfigLoop
             theme_names: embedded_and_user(theme_names),
             refused,
         }),
-    }
-}
-
-fn appearance_changed(text: Option<&str>) -> ConfigLoopCmd {
-    match parse_appearance(text.unwrap_or("")) {
-        Ok(file) => {
-            let appearance_settings = file.to_appearance_settings();
-            Cmd::effect(LoopEffect::Execute(ConfigEffect::PublishAppearance(
-                file.to_appearance(),
-            )))
-            .then(reports([
-                ConfigEvent::AppearanceReloaded(appearance_settings),
-                reloaded(ConfigName::Appearance, Ok(())),
-            ]))
-        }
-        Err(error) => Cmd::message(reloaded(
-            ConfigName::Appearance,
-            Err(Diagnostic::from_error(&error).into()),
-        )),
     }
 }
 
@@ -213,11 +191,18 @@ fn config_changed(
                 .music_dir
                 .or_else(|| default_music_dir.map(Path::to_path_buf))
                 .map(ConfigEvent::MusicDirReloaded);
-            reports(
-                std::iter::once(keymap_event)
-                    .chain(music_dir)
-                    .chain([reloaded(ConfigName::Config, Ok(()))]),
-            )
+            Cmd::effect(LoopEffect::Execute(ConfigEffect::PublishAppearance(
+                parsed.appearance,
+            )))
+            .then(reports(
+                [
+                    ConfigEvent::AppearanceReloaded(parsed.appearance_settings),
+                    keymap_event,
+                ]
+                .into_iter()
+                .chain(music_dir)
+                .chain([reloaded(ConfigName::Config, Ok(()))]),
+            ))
         }
         Err(error) => Cmd::message(reloaded(
             ConfigName::Config,
@@ -295,7 +280,7 @@ mod tests {
             message::ConfigMessage,
             paths::{ConfigPaths, SeenTexts},
             saves::{PendingSaves, SAVE_DEBOUNCE},
-            watch::{ConfigWatch, ConfigWatchEffect, ConfigWatchMessage, SavedFile},
+            watch::{ConfigWatch, ConfigWatchEffect, ConfigWatchMessage},
         },
         embedded_theme::EMBEDDED_THEMES,
         theme_file::TomlTheme,
@@ -311,7 +296,6 @@ mod tests {
     fn seeded(theme: Option<&'static str>, seen_texts: SeenTexts) -> Driver {
         let paths = ConfigPaths {
             config_path: PathBuf::from("/config/config.toml"),
-            appearance_path: PathBuf::from("/config/zefiro-ui.toml"),
             themes_dir: PathBuf::from("/config/themes"),
             default_music_dir: None,
             theme_name: theme.map(ThemeName::from_static),
@@ -396,7 +380,7 @@ mod tests {
     }
 
     fn appearance_read(mut driver: Driver) -> Driver {
-        let read = driver.transition(read_done(ConfigName::Appearance, None));
+        let read = driver.transition(read_done(ConfigName::Config, None));
         assert!(read.is_ok());
         driver
     }
@@ -419,7 +403,6 @@ mod tests {
     #[rstest]
     #[case::started(ConfigMessage::Started, Ok(Cmd::from_iter([
         "watch /config".to_string(),
-        executed(reading(ConfigName::Appearance, "/config/zefiro-ui.toml")),
         executed(reading(ConfigName::Config, "/config/config.toml")),
         executed(ConfigEffect::Watch(ConfigWatchEffect::List(PathBuf::from(
             "/config/themes"
@@ -429,7 +412,7 @@ mod tests {
         read_done(ConfigName::Config, None),
         Ok(Cmd::none())
     )]
-    #[case::own_appearance_write(ConfigMessage::Watch(ConfigWatchMessage::Saved { saved_file: SavedFile::Appearance, text: "[window]\n".to_string() }), Ok(Cmd::none()))]
+    #[case::own_appearance_write(ConfigMessage::Watch(ConfigWatchMessage::Saved("[window]\n".to_string())), Ok(Cmd::none()))]
     #[case::save_error(
         ConfigMessage::Error(ConfigError::Save { name: ConfigName::Config, error: IoError::Other }),
         Ok(Cmd::message(ConfigEvent::Error(ConfigError::Save { name: ConfigName::Config, error: IoError::Other }))),
@@ -461,7 +444,6 @@ mod tests {
     fn the_first_external_config_edit_reloads_and_clears_the_error() {
         let seen_texts = SeenTexts {
             config: Some(KEYS_X.to_string()),
-            ..SeenTexts::default()
         };
         let mut settled = seeded(None, seen_texts);
         settled.default_music_dir = Some(PathBuf::from("/music"));
@@ -473,14 +455,21 @@ mod tests {
             step(&mut settled, read_done(ConfigName::Config, Some(KEYS_Y)))
                 .into_parts();
 
-        assert!(effects.is_empty());
+        assert!(matches!(
+            effects.as_slice(),
+            [LoopEffect::Execute(ConfigEffect::PublishAppearance(_))]
+        ));
         let default_dir = Some(ConfigEvent::MusicDirReloaded(PathBuf::from("/music")));
         assert!(matches!(
             events.first(),
+            Some(ConfigEvent::AppearanceReloaded(_))
+        ));
+        assert!(matches!(
+            events.get(1),
             Some(ConfigEvent::KeymapReloaded(_))
         ));
         assert_eq!(
-            events.get(1..events.len() - 1),
+            events.get(2..events.len() - 1),
             Some(Vec::from_iter(default_dir).as_slice()),
             "a removed music_dir falls back to the default"
         );
@@ -491,6 +480,29 @@ mod tests {
                 result: Ok(())
             }))
         ));
+    }
+
+    #[test]
+    fn a_start_without_a_config_folder_reports_the_watch_error() {
+        let mut config_driver = ConfigDriver {
+            dir: None,
+            ..driver(None)
+        };
+
+        assert_eq!(
+            config_driver
+                .transition(ConfigMessage::Started)
+                .map(described),
+            Ok(
+                Cmd::message(ConfigEvent::Error(ConfigError::Watch(IoError::Missing)))
+                    .then(Cmd::from_iter([
+                        executed(reading(ConfigName::Config, "/config/config.toml")),
+                        executed(ConfigEffect::Watch(ConfigWatchEffect::List(
+                            PathBuf::from("/config/themes")
+                        ))),
+                    ]))
+            )
+        );
     }
 
     #[test]
@@ -531,7 +543,7 @@ mod tests {
 
         let (effects, events) = step(
             &mut state,
-            read_done(ConfigName::Appearance, Some("[cover]\nmode = \"plain\"\n")),
+            read_done(ConfigName::Config, Some("[cover]\nmode = \"plain\"\n")),
         )
         .into_parts();
 
@@ -551,7 +563,7 @@ mod tests {
 
         let (effects, events) = step(
             &mut state,
-            read_done(ConfigName::Appearance, Some("[cover\nnot toml")),
+            read_done(ConfigName::Config, Some("[cover\nnot toml")),
         )
         .into_parts();
 
@@ -559,7 +571,7 @@ mod tests {
         assert!(matches!(
             events.as_slice(),
             [ConfigEvent::Reloaded(ConfigReload {
-                name: ConfigName::Appearance,
+                name: ConfigName::Config,
                 result: Err(ConfigError::Parse(_)),
             })]
         ));

@@ -12,10 +12,10 @@ use crate::{
         toast::Toast,
         track::{CatalogRow, Track},
     },
-    message::{Message, QueueRequest, SearchEdit, SearchRequest},
+    message::{Message, QueueRequest, SearchRequest, TextRequest},
     update::{
         machine::{Machine, Unhandled, replace},
-        overlay::OverlayParts,
+        overlay::{OverlayParts, text_entry::edit},
         player::events::session,
     },
 };
@@ -26,8 +26,8 @@ impl Machine for CursorOver<SearchQuery> {
 
     fn transition(&mut self, message: SearchRequest) -> Result<Cmd, Unhandled> {
         match message {
-            SearchRequest::Edit(edit) => {
-                edit_query(&mut self.content.input, edit)?;
+            SearchRequest::Edit(text_request) => {
+                edit(&mut self.content.input, text_request)?;
                 Ok(Cmd::none())
             }
             SearchRequest::Navigate(direction) => {
@@ -57,7 +57,7 @@ pub(crate) fn server_request(
         return Err(Unhandled);
     };
     match request {
-        SearchRequest::Edit(edit) => {
+        SearchRequest::Edit(text_request) => {
             let ServerQuery {
                 server_name,
                 input,
@@ -65,7 +65,7 @@ pub(crate) fn server_request(
                 revision,
             } = &mut server_query.content;
             let session = session(servers, server_name).cloned().ok_or(Unhandled)?;
-            edit_query(input, edit)?;
+            edit(input, text_request)?;
             if input.is_empty() {
                 catalog_rows.clear();
                 *revision = None;
@@ -124,14 +124,14 @@ pub(crate) fn rerank(
 pub(crate) fn requery(
     search_query: &mut CursorOver<SearchQuery>,
     tracks: &[Arc<Track>],
-    edit: SearchEdit,
+    text_request: TextRequest,
 ) {
     let input = &search_query.content.input;
-    let ranked = match edit {
-        SearchEdit::Char(_) => {
+    let ranked = match text_request {
+        TextRequest::Char(_) => {
             crate::search::narrow(tracks, input, &search_query.content.matches)
         }
-        SearchEdit::Backspace | SearchEdit::DeleteWord | SearchEdit::Clear => {
+        TextRequest::Backspace | TextRequest::DeleteWord | TextRequest::Clear => {
             crate::search::rank(tracks, input)
         }
     };
@@ -141,23 +141,6 @@ pub(crate) fn requery(
 fn refreshed(search_query: &mut CursorOver<SearchQuery>, matches: Vec<ViewIndex>) {
     search_query.cursor = Cursor::new(matches.len());
     search_query.content.matches = matches;
-}
-
-fn edit_query(input: &mut String, edit: SearchEdit) -> Result<(), Unhandled> {
-    match edit {
-        SearchEdit::Backspace | SearchEdit::DeleteWord | SearchEdit::Clear
-            if input.is_empty() =>
-        {
-            return Err(Unhandled);
-        }
-        SearchEdit::Char(character) => input.push(character),
-        SearchEdit::Backspace => {
-            input.pop();
-        }
-        SearchEdit::DeleteWord => delete_trailing_word(input),
-        SearchEdit::Clear => input.clear(),
-    }
-    Ok(())
 }
 
 impl CursorOver<SearchQuery> {
@@ -170,14 +153,6 @@ impl CursorOver<SearchQuery> {
 fn enqueue(search_query: &CursorOver<SearchQuery>) -> Result<Cmd, Unhandled> {
     let index = search_query.selected_match().ok_or(Unhandled)?;
     Ok(Cmd::message(Message::Queue(QueueRequest::ToggleAt(index))))
-}
-
-fn delete_trailing_word(input: &mut String) {
-    let trimmed = input.trim_end();
-    let cut = trimmed
-        .rfind(char::is_whitespace)
-        .map_or(0, |index| index + 1);
-    input.truncate(cut);
 }
 
 #[cfg(test)]

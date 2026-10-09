@@ -10,20 +10,43 @@ impl<E: Accepts> Machine for TextEntry<E> {
     type Effect = Cmd;
 
     fn transition(&mut self, message: TextRequest) -> Result<Cmd, Unhandled> {
-        match message {
-            TextRequest::Char(character) => {
-                if !E::accepts(character) || self.input.len() >= E::MAX_LEN {
-                    return Err(Unhandled);
-                }
-                self.input.push(character);
-            }
-            TextRequest::Backspace => {
-                self.input.pop().ok_or(Unhandled)?;
-            }
+        if let TextRequest::Char(character) = message
+            && (!E::accepts(character) || self.input.len() >= E::MAX_LEN)
+        {
+            return Err(Unhandled);
         }
+        edit(&mut self.input, message)?;
         self.error = None;
         Ok(Cmd::none())
     }
+}
+
+pub(crate) fn edit(
+    input: &mut String,
+    text_request: TextRequest,
+) -> Result<(), Unhandled> {
+    match text_request {
+        TextRequest::Backspace | TextRequest::DeleteWord | TextRequest::Clear
+            if input.is_empty() =>
+        {
+            return Err(Unhandled);
+        }
+        TextRequest::Char(character) => input.push(character),
+        TextRequest::Backspace => {
+            input.pop();
+        }
+        TextRequest::DeleteWord => delete_trailing_word(input),
+        TextRequest::Clear => input.clear(),
+    }
+    Ok(())
+}
+
+fn delete_trailing_word(input: &mut String) {
+    let trimmed = input.trim_end();
+    let cut = trimmed
+        .rfind(char::is_whitespace)
+        .map_or(0, |index| index + 1);
+    input.truncate(cut);
 }
 
 #[cfg(test)]
@@ -82,6 +105,31 @@ mod tests {
         TextRequest::Backspace,
         (Err(Unhandled), entry("", Some(MusicDirError::Empty)))
     )]
+    #[case::delete_word_keeps_the_text_before_the_last_word(
+        entry("my songs", Some(MusicDirError::Empty)),
+        TextRequest::DeleteWord,
+        (Ok(()), entry("my ", None))
+    )]
+    #[case::delete_word_takes_the_trailing_spaces_with_the_word(
+        entry("my songs  ", None),
+        TextRequest::DeleteWord,
+        (Ok(()), entry("my ", None))
+    )]
+    #[case::clear_empties_the_text_and_the_error(
+        entry("my songs", Some(MusicDirError::Empty)),
+        TextRequest::Clear,
+        (Ok(()), entry("", None))
+    )]
+    #[case::delete_word_on_empty_is_unhandled_and_leaves_the_state(
+        entry("", Some(MusicDirError::Empty)),
+        TextRequest::DeleteWord,
+        (Err(Unhandled), entry("", Some(MusicDirError::Empty)))
+    )]
+    #[case::clear_on_empty_is_unhandled_and_leaves_the_state(
+        entry("", Some(MusicDirError::Empty)),
+        TextRequest::Clear,
+        (Err(Unhandled), entry("", Some(MusicDirError::Empty)))
+    )]
     fn text_entry_cell(
         #[case] mut text_entry: TextEntry<MusicDirError>,
         #[case] text_request: TextRequest,
@@ -126,6 +174,8 @@ mod tests {
     #[case::the_separator("5", TextRequest::Char(':'), admitted("5:"))]
     #[case::the_eighth_char("12:34:5", TextRequest::Char('6'), admitted("12:34:56"))]
     #[case::backspace("53", TextRequest::Backspace, admitted("5"))]
+    #[case::clear("12:34", TextRequest::Clear, admitted(""))]
+    #[case::delete_word("12:34", TextRequest::DeleteWord, admitted(""))]
     fn jump_text_entry_takes_what_it_admits_and_clears_the_error(
         #[case] input: &str,
         #[case] text_request: TextRequest,

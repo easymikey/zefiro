@@ -56,7 +56,7 @@ impl fmt::Display for Chord {
                     formatter.write_str("Alt+")?;
                 }
                 if modifiers.contains(Modifiers::SUPER) {
-                    formatter.write_str("Super+")?;
+                    formatter.write_str("Cmd+")?;
                 }
                 if modifiers.contains(Modifiers::SHIFT) {
                     formatter.write_str("Shift+")?;

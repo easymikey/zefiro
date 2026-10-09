@@ -48,6 +48,10 @@ pub enum LibraryJob {
         revision: Revision,
         audio_extensions: &'static [&'static str],
     },
+    Probe {
+        path: PathBuf,
+        revision: Revision,
+    },
 }
 
 impl LibraryJob {
@@ -109,6 +113,10 @@ impl LibraryJob {
                 audio_extensions,
             } => scan::list_dir(&music_dir, audio_extensions)
                 .map(|listing| listed(listing, revision)),
+            LibraryJob::Probe { path, revision } => Ok(LibraryMessage::Checked {
+                verdict: scan::probe(&path),
+                revision,
+            }),
         }
     }
 }

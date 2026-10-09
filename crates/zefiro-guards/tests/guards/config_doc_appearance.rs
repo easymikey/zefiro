@@ -1,6 +1,6 @@
 // GUARD: the `defaults:window` doc block parses into the window default.
 
-use config::appearance_file::{TomlAppearance, parse_appearance};
+use config::config_file::{TomlSettings, parse_config};
 
 use crate::guards::{fault::GuardError, support};
 
@@ -48,13 +48,13 @@ fn window_defaults_block_matches_window_config_default() -> Result<(), GuardErro
     let doc = std::fs::read_to_string(&doc_path)?;
 
     let toml_text = extract_window_defaults_block(&doc)?;
-    let parsed = parse_appearance(toml_text)?;
+    let parsed = parse_config(toml_text)?;
 
     assert_eq!(
         parsed,
-        TomlAppearance::default(),
-        "docs/config.md's `zefiro-ui.toml` defaults block has drifted from \
-         TomlAppearance::default() — update the TOML between the <!-- defaults:window --> \
+        TomlSettings::default(),
+        "docs/config.md's `config.toml` appearance defaults block has drifted from \
+         TomlSettings::default() — update the TOML between the <!-- defaults:window --> \
          / <!-- /defaults:window --> markers in docs/config.md to match the new \
          default (see that file's \"Regenerating the default blocks\" section)"
     );

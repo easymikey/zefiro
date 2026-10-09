@@ -1,6 +1,6 @@
 use std::{borrow::Cow, error::Error};
 
-use kernel::domain::geometry::Cells;
+use kernel::domain::{geometry::Cells, overlay::Verdict};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -16,7 +16,7 @@ use crate::{
         canvas::Canvas,
         display_width,
         span::{line, text},
-        truncate::{truncate_head, truncate_owned},
+        truncate::{truncate, truncate_head, truncate_owned},
     },
     theme::active_theme::ActiveTheme,
 };
@@ -62,6 +62,8 @@ pub struct PromptWidget<'a> {
     min_width: Cells,
     answers: Vec<Line<'a>>,
     body: PromptBody<'a>,
+    field_hint: Option<&'static str>,
+    verdict: Option<Option<Verdict>>,
     error: Option<&'a dyn Error>,
     theme: ActiveTheme<'a>,
 }
@@ -74,13 +76,23 @@ impl PromptWidget<'_> {
 
     fn modal(&self) -> Modal<'_> {
         let error_width = self.error.map_or(0, |error| display_width(&error));
+        let field_hint_width = self.field_hint.map_or(0, UnicodeWidthStr::width);
         let widest = self
             .answers
             .iter()
             .map(Line::width)
             .fold(self.title.width().max(self.body.width()), usize::max)
+            .max(field_hint_width)
+            .max(
+                self.verdict
+                    .flatten()
+                    .map_or(0, |verdict| display_width(&verdict)),
+            )
             .max(error_width);
-        let rows = self.answers.len() + 1 + usize::from(self.error.is_some());
+        let rows = self.answers.len()
+            + 1
+            + usize::from(self.field_hint.is_some())
+            + usize::from(self.verdict.is_some() || self.error.is_some());
         let colors = self.theme.colors();
         Modal {
             title: self.title,
@@ -98,17 +110,38 @@ impl PromptWidget<'_> {
     }
 
     fn lines(&self, width: usize) -> impl Iterator<Item = Cow<'_, Line<'_>>> {
-        let body = self.body.line(width, self.theme.colors().foreground);
-        let error =
-            self.error.map(|error| {
-                line([text(truncate_owned(error.to_string(), width))
-                    .fg(self.theme.alert())])
-            });
+        let colors = self.theme.colors();
+        let body = self.body.line(width, colors.foreground);
+        let field_hint = self.field_hint.map(|field_hint| {
+            line([text(truncate(field_hint, width)).fg(colors.muted_foreground)])
+        });
+        let verdict =
+            self.error
+                .map(|error| {
+                    line([text(truncate_owned(error.to_string(), width))
+                        .fg(self.theme.alert())])
+                })
+                .or_else(|| {
+                    self.verdict.map(|shown| {
+                        shown.map_or_else(Line::default, |verdict| {
+                            let color = match verdict {
+                                Verdict::Readable => colors.muted_foreground,
+                                Verdict::Missing
+                                | Verdict::NotADirectory
+                                | Verdict::Denied
+                                | Verdict::Unreadable(_) => self.theme.alert(),
+                            };
+                            line([text(truncate_owned(verdict.to_string(), width))
+                                .fg(color)])
+                        })
+                    })
+                });
         self.answers
             .iter()
             .map(Cow::Borrowed)
             .chain([Cow::Owned(body)])
-            .chain(error.map(Cow::Owned))
+            .chain(field_hint.map(Cow::Owned))
+            .chain(verdict.map(Cow::Owned))
     }
 }
 
@@ -121,9 +154,17 @@ impl<'a> PromptWidget<'a> {
             min_width: Cells(0),
             answers: Vec::new(),
             body,
+            field_hint: None,
+            verdict: None,
             error: None,
             theme: active_theme,
         }
+    }
+
+    #[must_use]
+    pub(crate) fn field_hint(mut self, field_hint: &'static str) -> Self {
+        self.field_hint = Some(field_hint);
+        self
     }
 
     #[must_use]
@@ -147,6 +188,12 @@ impl<'a> PromptWidget<'a> {
     #[must_use]
     pub(crate) fn answers(mut self, answers: Vec<Line<'a>>) -> Self {
         self.answers = answers;
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn verdict(mut self, verdict: Option<Verdict>) -> Self {
+        self.verdict = Some(verdict);
         self
     }
 

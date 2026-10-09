@@ -18,7 +18,7 @@ use crate::domain::{
     io_error::IoError,
     key::KeyPress,
     keymap::KeymapOverrides,
-    overlay::OverlayName,
+    overlay::{OverlayName, Verdict},
     percent::Percent,
     playlist::PlaylistFileName,
     revision::Revision,
@@ -144,17 +144,9 @@ pub enum OverlayRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum SearchRequest {
-    Edit(SearchEdit),
+    Edit(TextRequest),
     Navigate(Direction),
     Enqueue,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchEdit {
-    Char(char),
-    Backspace,
-    DeleteWord,
-    Clear,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,6 +160,8 @@ pub enum SettingRowRequest {
 pub enum TextRequest {
     Char(char),
     Backspace,
+    DeleteWord,
+    Clear,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -291,6 +285,10 @@ pub enum LibraryEvent {
     FavoritesLoaded(Favorites),
     HistoryLoaded(Vec<HistoryEntry>),
     Trashed(PathBuf),
+    Checked {
+        verdict: Verdict,
+        revision: Revision,
+    },
     Error(LibraryError),
 }
 
@@ -353,7 +351,10 @@ pub enum LibraryError {
 #[derive(Debug, Clone, PartialEq, IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum AudioEvent {
-    PositionReported(Duration),
+    PositionReported {
+        position: Duration,
+        revision: Revision,
+    },
     TrackChanged,
     Ended,
     Loaded(Option<Duration>),
@@ -465,6 +466,8 @@ pub enum MacosError {
     SetVolume(OsStatus),
     #[error("Cannot read the cover file: {0}")]
     ReadArtwork(IoError),
+    #[error("Cannot open the Files and Folders settings: {0}")]
+    Privacy(IoError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

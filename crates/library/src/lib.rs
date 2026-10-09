@@ -12,7 +12,7 @@ mod history;
 pub mod job;
 pub mod message;
 pub mod playlists;
-mod scan;
+pub mod scan;
 pub mod tags;
 mod trash;
 mod watch;

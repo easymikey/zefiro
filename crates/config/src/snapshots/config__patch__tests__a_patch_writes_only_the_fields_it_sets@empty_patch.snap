@@ -2,13 +2,118 @@
 source: crates/config/src/config_document.rs
 expression: out
 ---
-# zefiro config
-music_dir = "/music" # where my library lives
-theme = "auto"
-volume = 50
+## zefiro config. Every key below is commented out at its default.
+## Remove the leading "# " of a key to set it under its live [table] header;
+## docs/config.md explains each one.
+
+## Folder scanned for tracks; unset means the system Music folder.
+## music_dir = "/Users/you/Music"
+
+## Theme name, or "auto" for the stock theme.
+# theme = "auto"
+
+## Startup volume in percent, 0 to 100.
+# volume = 50
 
 [audio]
-# gapless by default; bump this for a crossfade
-crossfade = "0s"
-replay_gain = false
-sleep_presets = [15, 30, 60]
+
+## Crossfade between tracks, "0s" (gapless) to "10s".
+# crossfade = "0s"
+
+## Apply ReplayGain volume normalisation.
+# replay_gain = false
+
+## Output device as the settings overlay lists it; unset means the system default.
+## device = "MacBook Pro Speakers"
+
+## Sleep-timer lengths in minutes, at most 5, ascending.
+# sleep_presets = [15, 30, 60]
+
+[keymap]
+
+## Rebinds one action to a chord; every action keeps its built-in chord otherwise.
+## play_pause = "space"
+
+## One [[server]] table per Subsonic server; the password lives in the keychain.
+## [[server]]
+
+## Name shown in the browser.
+## name = "home"
+
+## Server address.
+## url = "https://music.example"
+
+## Account name on the server.
+## user = "ann"
+
+[cover]
+
+## Cover treatment: "vinyl", "plain", "milkdrop" or "off".
+# mode = "vinyl"
+
+## Corner brackets around the cover and the card's text column.
+# brackets = false
+
+[cover.cover_cells]
+
+## Cover width in cells, used only by "milkdrop".
+# width = 20
+
+## Cover height in cells, used only by "milkdrop".
+# height = 8
+
+[card]
+
+## Format, bitrate and sample-rate chips on the time row.
+# format_chips = false
+
+## When the playback-speed chip shows: "always", "changed" or "never".
+# speed_chip = "always"
+
+[progress]
+
+## Thickness of the progress line in pixels.
+# height_px = 4.0
+
+## Cap radius in pixels; unset means half the height.
+## radius = 2.0
+
+## Filled part colour; unset means the theme's accent.
+## fill = "#d97757"
+
+## Unfilled part colour; unset means the theme's groove.
+## groove = "#3a3a3a"
+
+## Remaining-time chip at the row's right end.
+# remaining = false
+
+[layout]
+
+## Fewest columns for the full layout.
+# full_min_width = 60
+
+## Fewest rows for the full layout.
+# full_min_height = 19
+
+## Fewest columns for the compact layout.
+# compact_min_width = 30
+
+## Fewest rows for the compact layout.
+# compact_min_height = 13
+
+## Below this many columns a "too small" message shows instead.
+# min_width = 48
+
+## Below this many rows a "too small" message shows instead.
+# min_height = 16
+
+## Forces a layout tier: "auto" or "compact".
+# mode = "auto"
+
+[window]
+
+## Short transitions for overlays, toasts, track and theme changes.
+# animations = true
+
+## The key-hint line; when false the playlist gets that row.
+# key_hints = true

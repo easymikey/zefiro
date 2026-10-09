@@ -153,6 +153,7 @@ impl Deck {
         let (_, playback) = output.position();
         if let Some(control) = &output.current_control {
             control.pace(playback);
+            control.publish(target);
         }
         output.mixer_control.order(MixerOrder::Seek(target));
         self.pace(playback);
@@ -237,7 +238,7 @@ impl Deck {
         let output = self.output.as_mut()?;
         let staged_track = self.staged_track.take()?;
         let path = staged_track.decoder.path.to_path_buf();
-        let (voice, control) = match output.voice(
+        let (mut voice, control) = match output.voice(
             staged_track,
             Feeding {
                 speed: Speed::default(),
@@ -252,6 +253,7 @@ impl Deck {
                 );
             }
         };
+        voice.playback = output.current_playback;
         output.mixer_control.order(MixerOrder::Attach {
             role: SinkRole::Current,
             voice,

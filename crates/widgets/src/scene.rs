@@ -160,7 +160,7 @@ impl<'a> KeyHintsView<'a> {
                 | Overlay::ConfirmTrash(_)
                 | Overlay::JumpToTime(_)
                 | Overlay::TrackDetails(_)
-                | Overlay::MusicDir(_)
+                | Overlay::MusicDir { .. }
                 | Overlay::AddServer(_)
                 | Overlay::Servers(_)
                 | Overlay::ConfirmRemove(_),

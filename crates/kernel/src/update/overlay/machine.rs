@@ -1,11 +1,18 @@
-use std::{mem, path::PathBuf};
+use std::mem;
 
 use crate::{
     cmd::{Cmd, ConfigCmd, ConfigPatch, Effect},
     domain::{
         cue::Cue,
         cursor_over::CursorOver,
-        overlay::{MusicDirError, Overlay, SearchQuery, ServerPrompt, TextEntry},
+        overlay::{
+            MusicDirError,
+            Overlay,
+            SearchQuery,
+            ServerPrompt,
+            TextEntry,
+            Verdict,
+        },
         playlist::{PlaylistFileName, PlaylistFileNameError},
         server::{
             Account,
@@ -18,7 +25,14 @@ use crate::{
         },
         time::{TimecodeError, parse_timecode},
     },
-    message::{BrowseRequest, Message, PlaybackRequest, ServerRequest, TextRequest},
+    message::{
+        BrowseRequest,
+        ConfigEvent,
+        Message,
+        PlaybackRequest,
+        ServerRequest,
+        TextRequest,
+    },
     update::{
         machine::{Machine, Unhandled, replace},
         overlay::{OverlayContentMessage, OverlayMessage},
@@ -70,7 +84,7 @@ fn opened_playback(previous: Option<&Overlay>, overlay: &Overlay) -> Cmd {
         | Overlay::ConfirmTrash(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
-        | Overlay::MusicDir(_)
+        | Overlay::MusicDir { .. }
         | Overlay::AddServer(_)
         | Overlay::Servers(_)
         | Overlay::ConfirmRemove(_) => previous.map_or(Cmd::none(), closed_playback),
@@ -88,7 +102,7 @@ fn closed_playback(overlay: &Overlay) -> Cmd {
         | Overlay::ConfirmTrash(_)
         | Overlay::TrackDetails(_)
         | Overlay::JumpToTime(_)
-        | Overlay::MusicDir(_)
+        | Overlay::MusicDir { .. }
         | Overlay::AddServer(_)
         | Overlay::Servers(_)
         | Overlay::ConfirmRemove(_) => Cmd::none(),
@@ -132,7 +146,11 @@ fn confirm_cmd(overlay: &mut Overlay) -> Result<Confirmed, Unhandled> {
             Message::Browse(BrowseRequest::Trash(track.source().clone())),
         ))),
         Overlay::JumpToTime(text_entry) => confirm_jump(text_entry),
-        Overlay::MusicDir(text_entry) => confirm_music_dir(text_entry),
+        Overlay::MusicDir {
+            text_entry,
+            verdict,
+            revision,
+        } => confirm_music_dir(text_entry, verdict.filter(|_| revision.is_none())),
         Overlay::AddServer(server_prompt) => server_prompt.confirm(),
         Overlay::ConfirmRemove(server_name) => Ok(Confirmed::Close(Cmd::message(
             Message::Server(ServerRequest::Remove(server_name.clone())),
@@ -180,18 +198,33 @@ fn confirm_save_playlist(
 
 fn confirm_music_dir(
     text_entry: &mut TextEntry<MusicDirError>,
+    verdict: Option<Verdict>,
 ) -> Result<Confirmed, Unhandled> {
-    let music_dir = PathBuf::from(text_entry.input.trim());
+    let music_dir = text_entry.path();
     if music_dir.as_os_str().is_empty() {
         return replace(&mut text_entry.error, Some(MusicDirError::Empty))
             .map(|()| Confirmed::Stay);
     }
-    Ok(Confirmed::Close(Cmd::from(Effect::Config(
-        ConfigCmd::Save(ConfigPatch {
-            music_dir: Some(music_dir),
-            ..ConfigPatch::default()
-        }),
-    ))))
+    match verdict {
+        Some(Verdict::Readable) => {}
+        Some(
+            Verdict::Denied
+            | Verdict::Missing
+            | Verdict::NotADirectory
+            | Verdict::Unreadable(_),
+        )
+        | None => {
+            return replace(&mut text_entry.error, Some(MusicDirError::Pending))
+                .map(|()| Confirmed::Stay);
+        }
+    }
+    let save = Cmd::from(Effect::Config(ConfigCmd::Save(ConfigPatch {
+        music_dir: Some(music_dir.clone()),
+        ..ConfigPatch::default()
+    })));
+    Ok(Confirmed::Close(save.then(Cmd::message(Message::Config(
+        ConfigEvent::MusicDirReloaded(music_dir),
+    )))))
 }
 
 impl ServerPrompt {
@@ -261,7 +294,11 @@ impl Machine for ServerPrompt {
 
     fn transition(&mut self, message: TextRequest) -> Result<Cmd, Unhandled> {
         match self {
-            ServerPrompt::Link { text_entry, .. } => text_entry.transition(message),
+            ServerPrompt::Link { text_entry, .. } => {
+                let cmd = text_entry.transition(message)?;
+                text_entry.error = Endpoint::parse(&text_entry.input).err();
+                Ok(cmd)
+            }
             ServerPrompt::User { text_entry, .. } => text_entry.transition(message),
             ServerPrompt::Password { text_entry, .. } => text_entry.transition(message),
         }
@@ -283,9 +320,10 @@ fn content_transition(
         (Overlay::SavePlaylist(text_entry), OverlayContentMessage::Text(message)) => {
             text_entry.transition(message)
         }
-        (Overlay::MusicDir(text_entry), OverlayContentMessage::Text(message)) => {
-            text_entry.transition(message)
-        }
+        (
+            Overlay::MusicDir { text_entry, .. },
+            OverlayContentMessage::Text(message),
+        ) => text_entry.transition(message),
         (Overlay::JumpToTime(text_entry), OverlayContentMessage::Text(message)) => {
             text_entry.transition(message)
         }
@@ -305,7 +343,7 @@ fn content_transition(
             | Overlay::ConfirmTrash(_)
             | Overlay::TrackDetails(_)
             | Overlay::JumpToTime(_)
-            | Overlay::MusicDir(_)
+            | Overlay::MusicDir { .. }
             | Overlay::AddServer(_)
             | Overlay::Servers(_)
             | Overlay::ConfirmRemove(_),

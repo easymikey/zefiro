@@ -89,7 +89,10 @@ impl Machine for Engine {
         } = self;
         match (&mut *state, engine_message) {
             (_, EngineMessage::Reported(Some(position))) => {
-                Ok(Cmd::message(AudioEvent::PositionReported(position)))
+                Ok(Cmd::message(AudioEvent::PositionReported {
+                    position,
+                    revision: revisions.seek_revision,
+                }))
             }
             (_, EngineMessage::Error(error)) => self.failed(error),
             (_, EngineMessage::Interrupted(_, error)) => state.interrupted(error),
@@ -99,7 +102,7 @@ impl Machine for Engine {
             (_, EngineMessage::Opened(device_opened)) => Ok(self.opened(device_opened)),
             (_, EngineMessage::NotFound) => Ok(self.fell_back()),
             (EngineState::Closed(closed), EngineMessage::Cmds(batch)) => {
-                closed.transition(ClosedMessage::Cmds(batch))
+                closed.transition(revisions, ClosedMessage::Cmds(batch))
             }
             (_, EngineMessage::Reported(None))
             | (
@@ -223,7 +226,7 @@ impl Engine {
                 Ok(Cmd::message(AudioEvent::Error(error)))
             }
             (EngineState::Closed(closed), error @ AudioError::OpenDevice { .. }) => {
-                closed.transition(ClosedMessage::Error(error))
+                closed.transition(revisions, ClosedMessage::Error(error))
             }
             (
                 EngineState::Closed(_),
@@ -256,7 +259,7 @@ mod tests {
     use std::{path::PathBuf, sync::Arc, time::Duration};
 
     use kernel::{
-        cmd::{AudioCmd, Cmds, Effect},
+        cmd::{AudioCmd, Cmd, Cmds, Effect},
         domain::{
             bounded::Bounded,
             crossfade::Crossfade,
@@ -299,11 +302,13 @@ mod tests {
             tests::{
                 TRACK_A_DURATION,
                 awaiting,
+                closed,
                 cmd,
                 driver_with,
                 executed,
                 first,
                 live,
+                load,
                 playing,
                 playing_with_crossfade,
                 settings,
@@ -334,6 +339,33 @@ mod tests {
         assert_eq!(
             executed(driver_with(EngineState::Live(live())).transition(audio_message)),
             executed(expected)
+        );
+    }
+
+    #[rstest]
+    #[case::live(EngineState::Live(playing()), vec![])]
+    #[case::closed_then_loaded(closed(), vec![load("/b")])]
+    fn a_report_after_a_seek_carries_the_seek_revision(
+        #[case] engine_state: EngineState,
+        #[case] later_engine_messages: Vec<EngineMessage>,
+    ) {
+        let position = Duration::from_secs(5);
+        let mut engine = Engine::new(engine_state);
+        let seek = cmd(AudioCmd::Seek {
+            target: position,
+            revision: first(),
+        });
+
+        for engine_message in std::iter::once(seek).chain(later_engine_messages) {
+            assert!(engine.transition(engine_message).is_ok());
+        }
+
+        assert_eq!(
+            executed(engine.transition(EngineMessage::Reported(Some(position)))),
+            executed(Ok(Cmd::message(AudioEvent::PositionReported {
+                position,
+                revision: first(),
+            })))
         );
     }
 

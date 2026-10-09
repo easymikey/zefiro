@@ -4,9 +4,7 @@ assertion_line: 28
 expression: round_tripped
 ---
 TomlSettings {
-    music_dir: Some(
-        "/music",
-    ),
+    music_dir: None,
     theme_choice: Named(
         ThemeName(
             "noir",
@@ -35,4 +33,38 @@ TomlSettings {
     },
     keymap: {},
     servers: [],
+    card: TomlCard {
+        format_chips: Hidden,
+        speed_chip: Always,
+    },
+    progress: TomlProgress {
+        height: Pixels(
+            4,
+        ),
+        radius: None,
+        fill: None,
+        groove: None,
+        progress_time: Elapsed,
+    },
+    cover: TomlCover {
+        mode: Vinyl,
+        cover_cells: TomlCoverCells {
+            width: 20,
+            height: 8,
+        },
+        brackets: Hidden,
+    },
+    layout: TomlLayout {
+        full_min_width: 60,
+        full_min_height: 19,
+        compact_min_width: 30,
+        compact_min_height: 13,
+        min_width: 48,
+        min_height: 16,
+        mode: Auto,
+    },
+    window: TomlWindow {
+        animations: On,
+        key_hints: Shown,
+    },
 }

@@ -258,7 +258,16 @@ fn seek(
     target: Duration,
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
-    player::update_player(playback_parts, PlayerMessage::Seek { target, now }, now)
+    let revision = playback_parts.revisions.seek.next();
+    player::update_player(
+        playback_parts,
+        PlayerMessage::Seek {
+            target,
+            now,
+            revision,
+        },
+        now,
+    )
 }
 
 fn clamped(player: &Player, target: Duration) -> Option<Duration> {
@@ -433,7 +442,7 @@ mod tests {
     fn seeks_to(cmd: &Cmd, expected: Duration) -> bool {
         matches!(
             cmd.effects().as_slice(),
-            [Effect::Audio(AudioCmd::Seek(target)), ..] if *target == expected
+            [Effect::Audio(AudioCmd::Seek { target, .. }), ..] if *target == expected
         )
     }
 }

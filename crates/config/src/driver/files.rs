@@ -1,7 +1,7 @@
 use std::{io, io::Write, path::Path};
 
 use kernel::domain::{
-    config::{ConfigError, ConfigName},
+    config::{ConfigError, ConfigName, Diagnostic},
     io_error::IoError,
 };
 
@@ -21,6 +21,25 @@ pub(crate) fn store(path: &Path, contents: &[u8]) -> Result<(), IoError> {
     let parent = parent_dir(path).ok_or(IoError::Missing)?;
     std::fs::create_dir_all(parent).map_err(|error| IoError::from(error.kind()))?;
     write_atomic(path, contents).map_err(|error| IoError::from(error.kind()))
+}
+
+pub(crate) fn save(
+    path: &Path,
+    produce: impl FnOnce(&str) -> Result<String, crate::error::Error>,
+) -> Result<String, ConfigError> {
+    let old_text = read_if_present(path)
+        .map_err(|error| save_failed(IoError::from(error.kind())))?;
+    let text = produce(old_text.as_deref().unwrap_or(""))
+        .map_err(|error| ConfigError::from(Diagnostic::from_error(&error)))?;
+    store(path, text.as_bytes()).map_err(save_failed)?;
+    Ok(text)
+}
+
+pub(crate) fn save_failed(error: IoError) -> ConfigError {
+    ConfigError::Save {
+        name: ConfigName::Config,
+        error,
+    }
 }
 
 pub(crate) fn read_if_present(path: &Path) -> io::Result<Option<String>> {

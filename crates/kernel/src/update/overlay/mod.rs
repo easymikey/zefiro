@@ -26,7 +26,7 @@ use crate::{
         player::Player,
         playlist::Playlist,
         revision::Revisions,
-        server::{Server, ServerName},
+        server::{Endpoint, Server, ServerName},
         setting_row::SettingRow,
         workspace::Workspace,
     },
@@ -88,10 +88,13 @@ pub(crate) fn update(
                 OverlayMessage::Content(OverlayContentMessage::Settings(message)),
             )
         }
-        OverlayRequest::Text(message) => update_overlay(
-            parts.workspace,
-            OverlayMessage::Content(OverlayContentMessage::Text(message)),
-        ),
+        OverlayRequest::Text(message) => {
+            let cmd = update_overlay(
+                parts.workspace,
+                OverlayMessage::Content(OverlayContentMessage::Text(message)),
+            )?;
+            Ok(cmd.then(probe(&mut parts)))
+        }
         OverlayRequest::History(request) => update_overlay(
             parts.workspace,
             OverlayMessage::Content(OverlayContentMessage::History(HistoryMessage {
@@ -139,7 +142,20 @@ fn confirm_request(parts: &mut OverlayParts<'_>) -> Result<Cmd, Unhandled> {
         parts.workspace.overlay,
         Some(Overlay::AddServer(ServerPrompt::Link { .. }))
     );
-    let cmd = update_overlay(parts.workspace, OverlayMessage::Confirm)?;
+    let settled = matches!(
+        parts.workspace.overlay,
+        Some(Overlay::MusicDir {
+            verdict: Some(_),
+            revision: None,
+            ..
+        })
+    );
+    let confirmed = update_overlay(parts.workspace, OverlayMessage::Confirm)?;
+    let cmd = if settled {
+        confirmed.then(probe(parts))
+    } else {
+        confirmed
+    };
     if from_link
         && let Some(Overlay::AddServer(ServerPrompt::User {
             origin_server_name,
@@ -203,10 +219,45 @@ fn open_request(
         Cmd::none()
     };
     let opened = overlay_for(parts, name)?;
-    Ok(load_history.then(update_overlay(
-        parts.workspace,
-        OverlayMessage::Open(opened),
-    )?))
+    Ok(load_history
+        .then(update_overlay(
+            parts.workspace,
+            OverlayMessage::Open(opened),
+        )?)
+        .then(probe(parts)))
+}
+
+fn prompt(music_dir: &Path) -> Overlay {
+    Overlay::MusicDir {
+        text_entry: TextEntry {
+            input: music_dir.to_str().map_or_else(String::new, str::to_owned),
+            error: None,
+        },
+        verdict: None,
+        revision: None,
+    }
+}
+
+fn probe(parts: &mut OverlayParts<'_>) -> Cmd {
+    let Some(Overlay::MusicDir {
+        text_entry,
+        verdict,
+        revision,
+    }) = parts.workspace.overlay.as_mut()
+    else {
+        return Cmd::none();
+    };
+    let path = text_entry.path();
+    if path.as_os_str().is_empty() {
+        *verdict = None;
+        *revision = None;
+        return Cmd::none();
+    }
+    Effect::Library(LibraryCmd::Probe {
+        path,
+        revision: *revision.insert(parts.revisions.issue_effect()),
+    })
+    .into()
 }
 
 fn search_request(
@@ -247,6 +298,10 @@ fn overlay_for(
     parts: &OverlayParts<'_>,
     name: OverlayName,
 ) -> Result<Overlay, Unhandled> {
+    let track = parts
+        .playlist
+        .tracks
+        .get(parts.workspace.browse.selected().get());
     match name {
         OverlayName::Help => Ok(Overlay::Help),
         OverlayName::Search | OverlayName::ServerSearch => match parts.catalog_name {
@@ -266,32 +321,22 @@ fn overlay_for(
         OverlayName::SavePlaylist => Ok(Overlay::SavePlaylist(TextEntry::default())),
         OverlayName::History => Ok(Overlay::History(CursorOver::default())),
         OverlayName::Settings => Ok(Overlay::Settings(SettingRow::first())),
-        OverlayName::ConfirmTrash => parts
-            .playlist
-            .tracks
-            .get(parts.workspace.browse.selected().get())
-            .cloned()
-            .map(Overlay::ConfirmTrash)
-            .ok_or(Unhandled),
-        OverlayName::TrackDetails => parts
-            .playlist
-            .tracks
-            .get(parts.workspace.browse.selected().get())
+        OverlayName::ConfirmTrash => {
+            track.cloned().map(Overlay::ConfirmTrash).ok_or(Unhandled)
+        }
+        OverlayName::TrackDetails => track
             .cloned()
             .or_else(|| parts.player.current().cloned())
             .map(Overlay::TrackDetails)
             .ok_or(Unhandled),
         OverlayName::JumpToTime => Ok(Overlay::JumpToTime(TextEntry::default())),
-        OverlayName::MusicDir => Ok(Overlay::MusicDir(TextEntry {
-            input: parts
-                .music_dir
-                .to_str()
-                .map_or_else(String::new, str::to_owned),
-            error: None,
-        })),
+        OverlayName::MusicDir => Ok(prompt(parts.music_dir)),
         OverlayName::AddServer => Ok(Overlay::AddServer(ServerPrompt::Link {
             origin_server_name: None,
-            text_entry: TextEntry::default(),
+            text_entry: TextEntry {
+                input: String::new(),
+                error: Endpoint::parse("").err(),
+            },
         })),
         OverlayName::Servers => Ok(Overlay::Servers(servers_cursor(
             parts.workspace.overlay.as_ref(),
@@ -324,7 +369,7 @@ mod tests {
             catalog::{Catalog, CatalogName},
             cursor::Cursor,
             cursor_over::CursorOver,
-            key::{Key, KeyCode, KeyPress},
+            key::{Key, KeyCode, KeyPress, Modifiers},
             model::Model,
             overlay::{Overlay, ServerPrompt, TextEntry},
             server::{
@@ -396,7 +441,7 @@ mod tests {
             origin_server_name: None,
             text_entry: TextEntry {
                 input: input.to_owned(),
-                error: None,
+                error: Endpoint::parse(input).err(),
             },
         })
     }
@@ -465,6 +510,25 @@ mod tests {
         press(&mut model, code).unwrap();
 
         assert_eq!(model.workspace.overlay, Some(expected));
+    }
+
+    #[test]
+    fn the_link_step_opens_with_the_verdict_that_clearing_it_gives() {
+        let mut opened = model_with(two_servers(), None);
+        press(&mut opened, KeyCode::Char('u')).unwrap();
+        let mut cleared = model_with(two_servers(), Some(link("https://m")));
+        let key = Key {
+            code: KeyCode::Char('u'),
+            modifiers: Modifiers::CTRL,
+        };
+        update(
+            &mut cleared,
+            Message::Key(KeyPress { key, typed: key }),
+            Moment::default(),
+        )
+        .unwrap();
+
+        assert_eq!(opened.workspace.overlay, cleared.workspace.overlay);
     }
 
     fn type_text(model: &mut Model, text: &str) {

@@ -73,10 +73,7 @@ pub(crate) fn track_row_line<'a>(
     let playing = playing_marker(track_row.playing);
     let markers_width = usize::from(MARKERS_WIDTH);
     let body_width = track_row.row_width.count().saturating_sub(markers_width);
-    let queued_number = match track_row.playing {
-        Playing::Yes => None,
-        Playing::No => track_row.queued_number,
-    };
+    let queued_number = track_row.queued_number;
     let chip = queued_number.into_iter().flat_map(QueueNumber::chip);
     let chip_width: usize = chip.clone().map(UnicodeWidthStr::width).sum();
     let title_width = match queued_number {
@@ -116,7 +113,8 @@ mod tests {
 
     use crate::{
         primitive::{
-            marker::MARKERS_WIDTH,
+            glyphs,
+            marker::{MARKERS_WIDTH, QueueNumber},
             track_row::{Playing, Selected, TrackRow, track_row_line},
         },
         test_support::noir,
@@ -162,5 +160,22 @@ mod tests {
                 .iter()
                 .any(|span| matches!(&span.content, Cow::Borrowed("song")))
         );
+    }
+
+    #[test]
+    fn a_queued_playing_row_shows_its_queue_chip() {
+        let row_width = Cells(20);
+        let text = track_row_line(
+            &TrackRow {
+                playing: Playing::Yes,
+                queued_number: Some(QueueNumber::new(3)),
+                ..base_props("song", row_width)
+            },
+            &ActiveTheme::new(&noir(), ColorDepth::TrueColor).colors(),
+        )
+        .to_string();
+        let chip: String = QueueNumber::new(3).chip().collect();
+        assert!(text.contains(glyphs::playlist::PLAYING));
+        assert!(text.ends_with(&format!("song {chip}")));
     }
 }

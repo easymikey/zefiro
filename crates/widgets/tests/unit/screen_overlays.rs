@@ -1,6 +1,7 @@
 use kernel::domain::{
     cursor_over::CursorOver,
-    overlay::{Overlay, SearchQuery, TextEntry},
+    overlay::{Overlay, SearchQuery, TextEntry, Verdict},
+    revision::Revision,
     setting_row::SettingRow,
 };
 use ratatui::layout::Rect;
@@ -33,13 +34,29 @@ fn frame_with_overlay(overlay: Overlay) -> String {
 #[case::confirm_trash(Overlay::ConfirmTrash(track("Moon River")), "MOVE TO TRASH?")]
 #[case::jump_to_time(Overlay::JumpToTime(TextEntry::default()), "JUMP TO TIME")]
 #[case::track_details(Overlay::TrackDetails(track("Moon River")), "TRACK INFO")]
-#[case::music_dir(Overlay::MusicDir(TextEntry::default()), "LIBRARY FOLDER")]
+#[case::music_dir(Overlay::MusicDir { text_entry: TextEntry::default(), verdict: None, revision: None }, "LIBRARY FOLDER")]
 fn an_overlay_is_painted_over_the_full_frame(
     #[case] overlay: Overlay,
     #[case] title: &str,
 ) {
     let text = frame_with_overlay(overlay);
     assert!(text.contains(title), "got {text:?}");
+}
+
+#[test]
+fn the_music_folder_hint_offers_check_while_a_check_runs() {
+    let text = frame_with_overlay(Overlay::MusicDir {
+        text_entry: TextEntry {
+            input: "/Users/me/Music".to_string(),
+            error: None,
+        },
+        verdict: Some(Verdict::Readable),
+        revision: Some(Revision::default()),
+    });
+    assert!(
+        text.contains("Enter check") && !text.contains("Enter save"),
+        "got {text:?}"
+    );
 }
 
 #[test]

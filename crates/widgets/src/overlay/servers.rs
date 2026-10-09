@@ -16,7 +16,7 @@ use crate::{
 };
 
 const TITLE: &str = "Servers";
-const HINT: &str = "Enter edit · t reconnect · d remove · u add";
+const HINT: &str = "Enter edit · t reconnect · d remove · u add · Esc close";
 const EMPTY_PLACEHOLDER: &str = "No servers · u adds one";
 const MARKER: &str = "> ";
 const MIN_WIDTH: Cells = Cells(44);
@@ -115,7 +115,8 @@ impl<'a> ServersTable<'a> {
             .map(|[.., status]| start + status.width())
             .max()
             .unwrap_or(EMPTY_PLACEHOLDER.width())
-            .max(TITLE.width());
+            .max(TITLE.width())
+            .max(HINT.width());
         Self {
             rows,
             starts,

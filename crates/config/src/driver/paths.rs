@@ -6,7 +6,6 @@ use kernel::domain::theme::ThemeName;
 #[derive(Debug, Clone)]
 pub struct ConfigPaths {
     pub config_path: PathBuf,
-    pub appearance_path: PathBuf,
     pub themes_dir: PathBuf,
     pub default_music_dir: Option<PathBuf>,
     pub theme_name: Option<ThemeName>,
@@ -15,6 +14,5 @@ pub struct ConfigPaths {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SeenTexts {
-    pub appearance: Option<String>,
     pub config: Option<String>,
 }

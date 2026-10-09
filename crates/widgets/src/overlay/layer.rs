@@ -38,7 +38,7 @@ use crate::{
         settings::{SettingsTable, SettingsWidget, view::SettingsView},
         track_details::{TrackDetailsRow, TrackDetailsWidget},
     },
-    primitive::canvas::Canvas,
+    primitive::{canvas::Canvas, glyphs},
     screen::frame_layout::{FrameLayout, OverlayContent},
     theme::active_theme::ActiveTheme,
 };
@@ -86,8 +86,16 @@ impl<'a> OverlayView<'a> {
             Overlay::TrackDetails(track) => {
                 OverlayContent::TrackDetails(TrackDetailsRow::all(track))
             }
-            Overlay::MusicDir(entry) => {
-                OverlayContent::Prompt(music_dir::prompt(entry, self.active_theme))
+            Overlay::MusicDir {
+                text_entry,
+                verdict,
+                revision,
+            } => {
+                let prompt = music_dir::prompt(text_entry, *verdict, self.active_theme);
+                OverlayContent::Prompt(match revision {
+                    Some(_) => prompt.hint(glyphs::music_dir::HINT),
+                    None => prompt,
+                })
             }
             Overlay::AddServer(server_prompt) => OverlayContent::Prompt(
                 add_server::prompt(server_prompt, self.active_theme),

@@ -10,7 +10,6 @@ use crate::{
         HistoryRequest,
         Message,
         OverlayRequest,
-        SearchEdit,
         SearchRequest,
         SettingRowRequest,
         TextRequest,
@@ -30,8 +29,12 @@ fn search(request: SearchRequest) -> Message {
     overlay(OverlayRequest::Search(request))
 }
 
-fn edit(edit: SearchEdit) -> Message {
-    search(SearchRequest::Edit(edit))
+fn edit(text_request: TextRequest) -> Message {
+    search(SearchRequest::Edit(text_request))
+}
+
+fn text(text_request: TextRequest) -> Message {
+    overlay(OverlayRequest::Text(text_request))
 }
 
 fn history(request: HistoryRequest) -> Message {
@@ -60,53 +63,62 @@ fn rows_in(
         .collect()
 }
 
+fn edits(request: fn(TextRequest) -> Message) -> Vec<(KeyPattern, Message)> {
+    vec![
+        (
+            held(Modifiers::CTRL, KeyCode::Char('u')),
+            request(TextRequest::Clear),
+        ),
+        (
+            held(Modifiers::CTRL, KeyCode::Char('w')),
+            request(TextRequest::DeleteWord),
+        ),
+        (
+            held(Modifiers::ALT, KeyCode::Backspace),
+            request(TextRequest::DeleteWord),
+        ),
+        (
+            held(Modifiers::SUPER, KeyCode::Backspace),
+            request(TextRequest::Clear),
+        ),
+        (plain(KeyCode::Backspace), request(TextRequest::Backspace)),
+    ]
+}
+
 fn text_prompt_rows() -> Vec<KeyBinding> {
     rows_in(
         KeyContext::TextPrompt,
-        vec![
-            (plain(KeyCode::Enter), confirm()),
-            (plain(KeyCode::Esc), close()),
-            (
-                plain(KeyCode::Backspace),
-                overlay(OverlayRequest::Text(TextRequest::Backspace)),
-            ),
-        ],
+        [
+            vec![
+                (plain(KeyCode::Enter), confirm()),
+                (plain(KeyCode::Esc), close()),
+            ],
+            edits(text),
+        ]
+        .concat(),
     )
 }
 
 fn search_rows() -> Vec<KeyBinding> {
     rows_in(
         KeyContext::Search,
-        vec![
-            (
-                held(Modifiers::CTRL, KeyCode::Char('u')),
-                edit(SearchEdit::Clear),
-            ),
-            (
-                held(Modifiers::CTRL, KeyCode::Char('w')),
-                edit(SearchEdit::DeleteWord),
-            ),
-            (
-                held(Modifiers::ALT, KeyCode::Backspace),
-                edit(SearchEdit::DeleteWord),
-            ),
-            (
-                held(Modifiers::SUPER, KeyCode::Backspace),
-                edit(SearchEdit::Clear),
-            ),
-            (plain(KeyCode::Esc), close()),
-            (plain(KeyCode::Enter), confirm()),
-            (plain(KeyCode::Backspace), edit(SearchEdit::Backspace)),
-            (
-                plain(KeyCode::Down),
-                search(SearchRequest::Navigate(Direction::Next)),
-            ),
-            (
-                plain(KeyCode::Up),
-                search(SearchRequest::Navigate(Direction::Previous)),
-            ),
-            (plain(KeyCode::Tab), search(SearchRequest::Enqueue)),
-        ],
+        [
+            edits(edit),
+            vec![
+                (plain(KeyCode::Esc), close()),
+                (plain(KeyCode::Enter), confirm()),
+                (
+                    plain(KeyCode::Down),
+                    search(SearchRequest::Navigate(Direction::Next)),
+                ),
+                (
+                    plain(KeyCode::Up),
+                    search(SearchRequest::Navigate(Direction::Previous)),
+                ),
+                (plain(KeyCode::Tab), search(SearchRequest::Enqueue)),
+            ],
+        ]
+        .concat(),
     )
 }
 
@@ -195,15 +207,15 @@ fn confirm_trash_rows() -> Vec<KeyBinding> {
 fn jump_rows() -> Vec<KeyBinding> {
     rows_in(
         KeyContext::JumpToTime,
-        vec![
-            (plain(KeyCode::Esc), close()),
-            (letter('q'), close()),
-            (plain(KeyCode::Enter), confirm()),
-            (
-                plain(KeyCode::Backspace),
-                overlay(OverlayRequest::Text(TextRequest::Backspace)),
-            ),
-        ],
+        [
+            vec![
+                (plain(KeyCode::Esc), close()),
+                (letter('q'), close()),
+                (plain(KeyCode::Enter), confirm()),
+            ],
+            edits(text),
+        ]
+        .concat(),
     )
 }
 

@@ -119,13 +119,44 @@ fn patch_appearance(
     )
 }
 
+fn patched(
+    text: &str,
+    patch: impl FnOnce(&mut DocumentMut) -> Result<(), Error>,
+) -> Result<String, Error> {
+    let mut doc: DocumentMut = text.parse()?;
+    let before = doc
+        .iter()
+        .map(|(key, _)| key.to_owned())
+        .collect::<Vec<_>>();
+    patch(&mut doc)?;
+    let trailing = doc
+        .trailing()
+        .as_str()
+        .map(str::trim_end)
+        .filter(|trailing| !trailing.is_empty())
+        .map(str::to_owned);
+    let added = doc.iter_mut().find_map(|(key, item)| {
+        if before.iter().any(|name| name == key.get()) {
+            return None;
+        }
+        match item {
+            Item::Table(table) => Some(table.decor_mut()),
+            Item::ArrayOfTables(tables) => tables.get_mut(0).map(Table::decor_mut),
+            Item::None | Item::Value(_) => None,
+        }
+    });
+    if let (Some(trailing), Some(decor)) = (trailing, added) {
+        decor.set_prefix(format!("{trailing}\n\n"));
+        doc.set_trailing("");
+    }
+    Ok(doc.to_string())
+}
+
 pub fn patched_appearance_text(
     text: &str,
     patch: AppearancePatch,
 ) -> Result<String, Error> {
-    let mut doc: DocumentMut = text.parse()?;
-    patch_appearance(&mut doc, patch)?;
-    Ok(doc.to_string())
+    patched(text, |doc| patch_appearance(doc, patch))
 }
 
 fn format_crossfade(crossfade: Crossfade) -> String {
@@ -239,9 +270,7 @@ fn patch_config(doc: &mut DocumentMut, patch: ConfigPatch) -> Result<(), Error> 
 }
 
 pub fn patched_config_text(text: &str, patch: ConfigPatch) -> Result<String, Error> {
-    let mut doc: DocumentMut = text.parse()?;
-    patch_config(&mut doc, patch)?;
-    Ok(doc.to_string())
+    patched(text, |doc| patch_config(doc, patch))
 }
 
 #[cfg(test)]
@@ -276,13 +305,10 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        config_file::parse_config_settings,
+        config_file::{parse_config, parse_config_settings},
         error::Error,
         patch::{patched_appearance_text, patched_config_text},
     };
-
-    const COMMENTED_UI: &str =
-        include_str!("../tests/fixtures/zefiro-ui_commented.toml");
 
     fn every_appearance_field_in_text() -> AppearancePatch {
         AppearancePatch {
@@ -300,7 +326,7 @@ mod tests {
     #[rstest]
     #[case::an_empty_patch_changes_nothing(
         "empty_patch",
-        COMMENTED_UI,
+        COMMENTED_CONFIG,
         AppearancePatch::default()
     )]
     #[case::minimal_sections_on_an_empty_document(
@@ -330,7 +356,7 @@ mod tests {
     )]
     #[case::one_field_keeps_every_comment(
         "one_field",
-        COMMENTED_UI,
+        COMMENTED_CONFIG,
         AppearancePatch {
             cover_brackets: Some(CoverBrackets::Shown),
             ..AppearancePatch::default()
@@ -354,7 +380,7 @@ mod tests {
     )]
     #[case::every_field_in_text_over_a_commented_file(
         "every_field_text",
-        COMMENTED_UI,
+        COMMENTED_CONFIG,
         every_appearance_field_in_text()
     )]
     fn an_appearance_patch_writes_only_the_fields_it_sets(
@@ -389,8 +415,7 @@ mod tests {
         });
     }
 
-    const COMMENTED_CONFIG: &str =
-        include_str!("../tests/fixtures/config_commented.toml");
+    const COMMENTED_CONFIG: &str = include_str!("../config.toml");
 
     const CONFIG_WITH_DEVICE: &str =
         "[audio]\ndevice = \"Speakers\"\nreplay_gain = false\n";
@@ -470,7 +495,10 @@ mod tests {
                 .ok(),
             Some(Vec::new())
         );
-        assert!(!emptied.contains("[[server]]"), "was {emptied}");
+        assert!(
+            !emptied.lines().any(|line| line.starts_with("[[server]]")),
+            "was {emptied}"
+        );
     }
 
     #[rstest]
@@ -542,5 +570,83 @@ mod tests {
         #[case] table: &'static str,
     ) {
         assert_eq!(refused, Err(Error::NotATable(table)));
+    }
+
+    #[rstest]
+    #[case::config(patched_config_text(
+        COMMENTED_CONFIG,
+        ConfigPatch {
+            crossfade: Some(crossfade_seconds(3)),
+            ..ConfigPatch::default()
+        },
+    ))]
+    #[case::appearance(patched_appearance_text(
+        COMMENTED_CONFIG,
+        AppearancePatch {
+            cover_brackets: Some(CoverBrackets::Shown),
+            ..AppearancePatch::default()
+        },
+    ))]
+    fn a_top_level_key_uncommented_after_a_patch_of_the_template_stays_top_level(
+        #[case] patched: Result<String, Error>,
+    ) {
+        let edited = patched.unwrap().replace("# volume = 50", "volume = 70");
+
+        assert_eq!(
+            parse_config(&edited).map(|settings| settings.volume).ok(),
+            Some(Percent::clamped(70)),
+            "was {edited}"
+        );
+    }
+
+    #[rstest]
+    #[case::config(
+        patched_config_text(
+            COMMENTED_CONFIG,
+            ConfigPatch {
+                crossfade: Some(crossfade_seconds(3)),
+                ..ConfigPatch::default()
+            },
+        ),
+        "# replay_gain = false",
+        "audio"
+    )]
+    #[case::servers(
+        patched_config_text(
+            COMMENTED_CONFIG,
+            ConfigPatch {
+                accounts: Some(accounts()),
+                ..ConfigPatch::default()
+            },
+        ),
+        "# animations = true",
+        "window"
+    )]
+    #[case::appearance(
+        patched_appearance_text(
+            COMMENTED_CONFIG,
+            AppearancePatch {
+                cover_brackets: Some(CoverBrackets::Shown),
+                ..AppearancePatch::default()
+            },
+        ),
+        "# mode = \"vinyl\"",
+        "cover"
+    )]
+    fn a_table_key_uncommented_after_a_patch_of_the_template_lands_in_its_table(
+        #[case] patched: Result<String, Error>,
+        #[case] line: &str,
+        #[case] table: &str,
+    ) {
+        let live = line.strip_prefix("# ").unwrap();
+        let (key, _) = live.split_once(" = ").unwrap();
+        let edited = patched.unwrap().replacen(line, live, 1);
+
+        let landed = toml::from_str::<toml::Value>(&edited)
+            .ok()
+            .and_then(|parsed| parsed.get(table)?.get(key).cloned());
+
+        assert!(parse_config(&edited).is_ok(), "was {edited}");
+        assert!(landed.is_some(), "was {edited}");
     }
 }

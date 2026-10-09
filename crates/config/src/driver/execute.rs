@@ -2,8 +2,7 @@ use std::{ffi::OsStr, fs::ReadDir, io, path::Path};
 
 use kernel::{
     domain::{
-        config::{ConfigError, ConfigName, Diagnostic},
-        io_error::IoError,
+        config::{ConfigError, ConfigName},
         theme::ThemeName,
     },
     update::machine::Driver,
@@ -14,9 +13,9 @@ use crate::{
         Appearance,
         ConfigDriver,
         effect::ConfigEffect,
-        files::{read_error, read_if_present, store},
+        files::{read_error, read_if_present, save},
         message::ConfigMessage,
-        watch::{ConfigWatchEffect, ConfigWatchMessage, SavedFile},
+        watch::{ConfigWatchEffect, ConfigWatchMessage},
     },
     patch::{patched_appearance_text, patched_config_text},
     theme_file::TomlTheme,
@@ -33,16 +32,16 @@ impl<P: Fn(TomlTheme), A: Fn(Appearance)> Driver for ConfigDriver<P, A> {
                 Some(read(name, &path))
             }
             ConfigEffect::Watch(ConfigWatchEffect::List(dir)) => Some(list(&dir)),
-            ConfigEffect::SaveConfig(patch) => Some(save(
-                SavedFile::Config,
-                self.watch.path(SavedFile::Config),
-                |text| patched_config_text(text, patch),
-            )),
-            ConfigEffect::SaveAppearance(patch) => Some(save(
-                SavedFile::Appearance,
-                self.watch.path(SavedFile::Appearance),
-                |text| patched_appearance_text(text, patch),
-            )),
+            ConfigEffect::SaveConfig(patch) => {
+                Some(saved(save(self.watch.path(), |text| {
+                    patched_config_text(text, patch)
+                })))
+            }
+            ConfigEffect::SaveAppearance(patch) => {
+                Some(saved(save(self.watch.path(), |text| {
+                    patched_appearance_text(text, patch)
+                })))
+            }
             ConfigEffect::PublishTheme(theme) => {
                 (self.publish_theme)(theme);
                 None
@@ -110,31 +109,9 @@ fn list_failed(error: &io::Error) -> ConfigMessage {
     ConfigMessage::Error(ConfigError::ListThemes(error.kind().into()))
 }
 
-fn save(
-    saved_file: SavedFile,
-    path: &Path,
-    produce: impl FnOnce(&str) -> Result<String, crate::error::Error>,
-) -> ConfigMessage {
-    let old_text = match read_if_present(path) {
-        Ok(old_text) => old_text,
-        Err(error) => return save_failed(saved_file, IoError::from(error.kind())),
-    };
-    let text = match produce(old_text.as_deref().unwrap_or("")) {
-        Ok(text) => text,
-        Err(error) => {
-            return ConfigMessage::Error(Diagnostic::from_error(&error).into());
-        }
-    };
-    match store(path, text.as_bytes()) {
-        Ok(()) => ConfigMessage::Watch(ConfigWatchMessage::Saved { saved_file, text }),
-        Err(error) => save_failed(saved_file, error),
-    }
-}
-
-fn save_failed(saved_file: SavedFile, error: IoError) -> ConfigMessage {
-    ConfigMessage::Error(ConfigError::Save {
-        name: saved_file.into(),
-        error,
+fn saved(result: Result<String, ConfigError>) -> ConfigMessage {
+    result.map_or_else(ConfigMessage::Error, |text| {
+        ConfigMessage::Watch(ConfigWatchMessage::Saved(text))
     })
 }
 
@@ -151,6 +128,7 @@ mod tests {
             config::{ConfigError, ConfigName},
             crossfade::Crossfade,
             io_error::IoError,
+            percent::Percent,
             setting_row::{AppearanceField, OptionIndex},
             theme::ThemeName,
         },
@@ -159,13 +137,14 @@ mod tests {
     use rstest::{fixture, rstest};
 
     use crate::{
+        config_file::parse_config,
         driver::{
             Appearance,
             ConfigDriver,
             effect::ConfigEffect,
             message::ConfigMessage,
             paths::{ConfigPaths, SeenTexts},
-            watch::{ConfigWatchEffect, ConfigWatchMessage, SavedFile},
+            watch::{ConfigWatchEffect, ConfigWatchMessage},
         },
         theme_file::TomlTheme,
     };
@@ -183,7 +162,6 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let paths = ConfigPaths {
             config_path: directory.path().join("config.toml"),
-            appearance_path: directory.path().join("zefiro-ui.toml"),
             themes_dir: directory.path().join("themes"),
             default_music_dir: None,
             theme_name: None,
@@ -328,7 +306,6 @@ mod tests {
         name: &'static str,
         text: &'static str,
         save: fn() -> ConfigEffect,
-        saved_file: SavedFile,
     }
 
     #[rstest]
@@ -336,31 +313,24 @@ mod tests {
         name: "appearance_missing",
         text: "",
         save: save_cover_brackets,
-        saved_file: SavedFile::Appearance,
     })]
     #[case::appearance_updates_one_key_of_an_existing_file(SaveRow {
         name: "appearance_existing",
         text: EXISTING_UI,
         save: save_cover_brackets,
-        saved_file: SavedFile::Appearance,
     })]
     #[case::config_creates_a_minimal_file(SaveRow {
         name: "config_missing",
         text: "",
         save: save_theme,
-        saved_file: SavedFile::Config,
     })]
     #[case::config_updates_one_key_of_an_existing_file(SaveRow {
         name: "config_existing",
         text: EXISTING_CONFIG,
         save: save_crossfade,
-        saved_file: SavedFile::Config,
     })]
     fn a_save_lands_on_disk(#[case] save_row: SaveRow, mut disk: Disk) {
-        let path = match save_row.saved_file {
-            SavedFile::Appearance => disk.paths.appearance_path.clone(),
-            SavedFile::Config => disk.paths.config_path.clone(),
-        };
+        let path = disk.paths.config_path.clone();
         if !save_row.text.is_empty() {
             std::fs::write(&path, save_row.text).unwrap();
         }
@@ -370,10 +340,9 @@ mod tests {
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(
             saved,
-            Some(ConfigMessage::Watch(ConfigWatchMessage::Saved {
-                saved_file: save_row.saved_file,
-                text: text.clone()
-            })),
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Saved(
+                text.clone()
+            ))),
             "the reported text is the text on disk"
         );
         assert!(toml::from_str::<toml::Value>(&text).is_ok());
@@ -410,7 +379,6 @@ mod tests {
     fn a_save_to_a_path_without_a_parent_reports_missing() {
         let paths = ConfigPaths {
             config_path: "config.toml".into(),
-            appearance_path: "zefiro-ui.toml".into(),
             themes_dir: "themes".into(),
             default_music_dir: None,
             theme_name: None,
@@ -429,16 +397,7 @@ mod tests {
         );
     }
 
-    const COMMENTED_APPEARANCE: &str = r#"# zefiro-ui.toml
-[cover]
-# the noir look
-mode = "vinyl"
-brackets = false
-
-[card]
-format_chips = true
-speed_chip = "always"
-"#;
+    const COMMENTED_CONFIG: &str = include_str!("../../config.toml");
 
     fn option_at(field: AppearanceField, option_index: usize) -> OptionIndex {
         APPEARANCE_ROWS
@@ -475,27 +434,36 @@ speed_chip = "always"
         assert_eq!(flag_at(parsed, "progress", "remaining"), Some(true));
         assert_eq!(flag_at(parsed, "window", "key_hints"), Some(false));
         assert_eq!(text_at(parsed, "layout", "mode"), Some("compact"));
-        assert_eq!(text_at(parsed, "card", "speed_chip"), Some("always"));
+        assert_eq!(text_at(parsed, "card", "speed_chip"), None);
     }
 
     #[rstest]
     fn save_appearance_round_trips_a_full_patch_onto_an_existing_commented_file(
         mut disk: Disk,
     ) {
-        std::fs::write(&disk.paths.appearance_path, COMMENTED_APPEARANCE).unwrap();
+        std::fs::write(&disk.paths.config_path, COMMENTED_CONFIG).unwrap();
 
         let saved = disk
             .driver
             .execute(ConfigEffect::SaveAppearance(full_patch()));
 
-        let text = std::fs::read_to_string(&disk.paths.appearance_path).unwrap();
+        let text = std::fs::read_to_string(&disk.paths.config_path).unwrap();
         assert_eq!(
             saved,
-            Some(ConfigMessage::Watch(ConfigWatchMessage::Saved {
-                saved_file: SavedFile::Appearance,
-                text: text.clone()
-            }))
+            Some(ConfigMessage::Watch(ConfigWatchMessage::Saved(
+                text.clone()
+            )))
         );
+        assert!(
+            COMMENTED_CONFIG
+                .lines()
+                .filter(|line| line.contains('#'))
+                .all(|line| text.contains(line)),
+            "was {text}"
+        );
+        let settings = parse_config(&text).unwrap();
+        assert_eq!(settings.volume, Percent::clamped(50));
+        assert_eq!(settings.music_dir, None);
         insta::assert_snapshot!(text);
         let parsed: toml::Value = toml::from_str(&text).unwrap();
         assert_appearance_rows_landed(&parsed);

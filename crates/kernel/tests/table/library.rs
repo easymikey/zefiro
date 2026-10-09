@@ -22,8 +22,8 @@ use kernel::{
         LibrarySubject,
         Message,
         OverlayRequest,
-        SearchEdit,
         SearchRequest,
+        TextRequest,
     },
     update::machine::Unhandled,
 };
@@ -201,7 +201,7 @@ fn a_relist_under_an_open_search_keeps_enter_on_the_highlighted_track() {
     send(
         &mut model,
         Message::Overlay(OverlayRequest::Search(SearchRequest::Edit(
-            SearchEdit::Char('a'),
+            TextRequest::Char('a'),
         ))),
     );
 

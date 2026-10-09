@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    io,
+    process::{Command, ExitStatus, Stdio},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -8,7 +10,7 @@ use std::{
 use crossbeam_channel::Sender;
 use kernel::{
     cmd::{Cmd, Cmds, MacosCmd},
-    domain::{percent::Percent, track::Track},
+    domain::{io_error::IoError, percent::Percent, track::Track},
     message::{MacosError, MacosEvent, OsStatus, PlaybackRequest},
     update::machine::{Driver, LoopEffect, Machine, Unhandled},
 };
@@ -32,6 +34,9 @@ use crate::{
     now_playing::{NowPlaying, show},
     remote_input::RemoteInput,
 };
+
+const URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders";
 
 #[derive(Debug)]
 pub struct MacosDriver {
@@ -66,7 +71,13 @@ impl MacosDriver {
         let last_volume = cmds.iter().rev().find_map(volume_of);
         let publish = cmds
             .iter()
-            .any(|cmd| volume_of(cmd).is_none())
+            .any(|cmd| match cmd {
+                MacosCmd::NowPlaying(_)
+                | MacosCmd::SetPlayback(_)
+                | MacosCmd::SetPosition(_)
+                | MacosCmd::SetSpeed(_) => true,
+                MacosCmd::SetVolume(_) | MacosCmd::Privacy => false,
+            })
             .then_some(MacosEffect::ShowNowPlaying);
         let moved = cmds.into_iter().fold(Cmd::none(), |moved, cmd| {
             moved.then(self.move_now_playing(cmd, at))
@@ -100,6 +111,7 @@ impl MacosDriver {
                 Cmd::none()
             }
             MacosCmd::SetVolume(_) => Cmd::none(),
+            MacosCmd::Privacy => Cmd::effect(LoopEffect::Execute(MacosEffect::Privacy)),
         }
     }
 
@@ -199,6 +211,15 @@ impl Driver for MacosDriver {
                 self.media_item_artwork = artwork(&bytes);
                 None
             }
+            MacosEffect::Privacy => run_error(
+                Command::new("open")
+                    .arg(URL)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status(),
+            )
+            .map(|io_error| MacosMessage::Error(MacosError::Privacy(io_error))),
         })
     }
 }
@@ -209,7 +230,8 @@ fn volume_of(macos_cmd: &MacosCmd) -> Option<Percent> {
         MacosCmd::NowPlaying(_)
         | MacosCmd::SetPlayback(_)
         | MacosCmd::SetPosition(_)
-        | MacosCmd::SetSpeed(_) => None,
+        | MacosCmd::SetSpeed(_)
+        | MacosCmd::Privacy => None,
     }
 }
 
@@ -225,6 +247,13 @@ fn remote(input: RemoteInput) -> Result<Cmd<MacosEffect, MacosEvent>, Unhandled>
     }
 }
 
+fn run_error(result: io::Result<ExitStatus>) -> Option<IoError> {
+    match result {
+        Ok(exit_status) => (!exit_status.success()).then_some(IoError::Other),
+        Err(error) => Some(error.kind().into()),
+    }
+}
+
 fn failed(cause: fn(OsStatus) -> MacosError, error: core_audio::Error) -> MacosMessage {
     MacosMessage::Error(cause(error.status()))
 }
@@ -232,7 +261,10 @@ fn failed(cause: fn(OsStatus) -> MacosError, error: core_audio::Error) -> MacosM
 #[cfg(test)]
 mod tests {
     use std::{
+        io,
+        os::unix::process::ExitStatusExt,
         path::Path,
+        process::ExitStatus,
         sync::Arc,
         time::{Duration, Instant},
     };
@@ -243,6 +275,7 @@ mod tests {
         domain::{
             bounded::Bounded,
             direction::Direction,
+            io_error::IoError,
             percent::Percent,
             revision::Revision,
             speed::Speed,
@@ -257,7 +290,7 @@ mod tests {
     use crate::{
         artwork::Artwork,
         clock::NowPlayingClock,
-        driver::MacosDriver,
+        driver::{MacosDriver, run_error},
         effect::MacosEffect,
         hardware::{Hardware, HardwareMessage, HardwarePoll},
         job::{MacosJob, MacosLoopCmd},
@@ -360,6 +393,10 @@ mod tests {
     #[case::no_volume_at_all(
         cmds(vec![MacosCmd::SetPlayback(Playback::Playing)]),
         Cmd::effect(MacosEffect::ShowNowPlaying)
+    )]
+    #[case::the_privacy_pane_opens_without_a_now_playing(
+        cmds(vec![MacosCmd::Privacy]),
+        Cmd::effect(MacosEffect::Privacy)
     )]
     #[case::nothing_playing_yet_keeps_the_artwork(
         cmds(vec![MacosCmd::NowPlaying(None)]),
@@ -631,5 +668,19 @@ mod tests {
         let mut macos_driver = MacosDriver::new(callback_sender);
         assert!(macos_driver.execute(macos_effect).is_none());
         assert!(macos_driver.media_item_artwork.is_none());
+    }
+
+    #[rstest]
+    #[case::opened(Ok(ExitStatus::from_raw(0)), None)]
+    #[case::a_failed_exit(Ok(ExitStatus::from_raw(256)), Some(IoError::Other))]
+    #[case::no_open_command(
+        Err(io::Error::from(io::ErrorKind::NotFound)),
+        Some(IoError::Missing)
+    )]
+    fn opening_the_privacy_pane_answers_its_failure(
+        #[case] status: io::Result<ExitStatus>,
+        #[case] expected: Option<IoError>,
+    ) {
+        assert_eq!(run_error(status), expected);
     }
 }

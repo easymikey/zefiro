@@ -40,6 +40,8 @@ pub struct Revisions {
     pub sleep: Revision,
     pub lookahead: Revision,
     pub list: Revision,
+    pub seek: Revision,
+    pub(crate) reported: Revision,
     pub(crate) scrobble: Option<Revision>,
 }
 

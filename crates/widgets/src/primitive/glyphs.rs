@@ -131,7 +131,15 @@ pub(crate) mod jump_to_time {
 
 pub(crate) mod music_dir {
     pub(crate) const TITLE_WORD: &str = "LIBRARY FOLDER";
-    pub(crate) const HINT: &str = "Enter save · Esc cancel";
+    pub(crate) const HINT: &str = "Enter check · Esc cancel";
+
+    pub(crate) mod readable {
+        pub(crate) const HINT: &str = "Enter save · Esc cancel";
+    }
+
+    pub(crate) mod denied {
+        pub(crate) const HINT: &str = "Enter open Privacy & Security \u{b7} Esc cancel";
+    }
 }
 
 pub(crate) mod settings {

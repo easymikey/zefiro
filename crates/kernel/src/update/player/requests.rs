@@ -11,10 +11,7 @@ use crate::{
     },
     update::{
         machine::Unhandled,
-        player::{
-            events::seek_effect,
-            stamp::{Anchor, Stamp, StartOrigin},
-        },
+        player::stamp::{Anchor, Stamp, StartOrigin},
     },
 };
 
@@ -41,15 +38,15 @@ impl Player {
         &mut self,
         target: Duration,
         now: Moment,
-    ) -> Result<Cmd, Unhandled> {
+    ) -> Result<(), Unhandled> {
         match self {
             Player::Playing { playhead, .. } => {
                 *playhead = Playhead::anchored(target, now, playhead.speed);
-                Ok(seek_effect(target))
+                Ok(())
             }
             Player::Paused { position, .. } => {
                 *position = target;
-                Ok(seek_effect(target))
+                Ok(())
             }
             Player::Loading(..) | Player::Stopped => Err(Unhandled),
         }

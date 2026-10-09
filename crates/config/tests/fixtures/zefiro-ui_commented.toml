@@ -1,9 +1,0 @@
-# zefiro-ui.toml
-[cover]
-# the noir look
-mode = "vinyl"
-brackets = false
-
-[card]
-format_chips = true
-speed_chip = "always"

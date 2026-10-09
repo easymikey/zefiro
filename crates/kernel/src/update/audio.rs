@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::{
     cmd::Cmd,
@@ -35,14 +35,11 @@ pub(crate) fn update(
     now: Moment,
 ) -> Result<Cmd, Unhandled> {
     match event {
-        AudioEvent::PositionReported(position) => {
-            let cmd = player::update_player(
-                playback_parts,
-                PlayerMessage::PositionReported { position, now },
-                now,
-            )?;
-            playback_parts.transport.output_ready();
-            Ok(cmd)
+        AudioEvent::PositionReported { position, revision } => {
+            if revision != playback_parts.revisions.seek {
+                return Err(Unhandled);
+            }
+            reported(playback_parts, position, now)
         }
         AudioEvent::TrackChanged => track_changed(playback_parts, now),
         AudioEvent::Ended => {
@@ -300,6 +297,33 @@ fn jump(
         .inspect(|_cmd| playback_parts.playlist.point_at(index)))
 }
 
+fn reported(
+    playback_parts: &mut PlaybackParts<'_>,
+    position: Duration,
+    now: Moment,
+) -> Result<Cmd, Unhandled> {
+    let seek_revision = playback_parts.revisions.seek;
+    let position = if playback_parts.revisions.reported == seek_revision {
+        position
+    } else {
+        let lag_duration = Duration::from_millis(250);
+        position.max(
+            playback_parts
+                .player
+                .position_at(now)
+                .saturating_sub(lag_duration),
+        )
+    };
+    let cmd = player::update_player(
+        playback_parts,
+        PlayerMessage::PositionReported { position, now },
+        now,
+    )?;
+    playback_parts.revisions.reported = seek_revision;
+    playback_parts.transport.output_ready();
+    Ok(cmd)
+}
+
 pub(crate) fn lookahead_fired(
     playback_parts: &mut PlaybackParts<'_>,
     revision: Revision,
@@ -319,7 +343,11 @@ pub(crate) fn lookahead_fired(
             position,
             lookahead,
         },
-        |target| PlayerMessage::Seek { target, now },
+        |target| PlayerMessage::Seek {
+            target,
+            now,
+            revision: playback_parts.revisions.seek.next(),
+        },
     );
     player::update_player(playback_parts, message, now)
 }

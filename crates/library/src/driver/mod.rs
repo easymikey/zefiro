@@ -100,6 +100,12 @@ impl<P> LibraryDriver<P> {
             LibraryCmd::Disk(disk) => Ok(Cmd::effect(LoopEffect::Execute(
                 LibraryEffect::Execute(disk),
             ))),
+            LibraryCmd::Probe { path, revision } => {
+                Ok(Cmd::effect(LoopEffect::Run(LibraryJob::Probe {
+                    path,
+                    revision,
+                })))
+            }
         }
     }
 
@@ -237,6 +243,9 @@ impl<P> Machine for LibraryDriver<P> {
             }
             LibraryMessage::Trashed(path) => {
                 Ok(Cmd::message(LibraryEvent::Trashed(path)))
+            }
+            LibraryMessage::Checked { verdict, revision } => {
+                Ok(Cmd::message(LibraryEvent::Checked { verdict, revision }))
             }
             LibraryMessage::HistoryLoaded { entries, skipped } => {
                 Ok(reported(LibraryEvent::HistoryLoaded(entries), skipped))
@@ -385,6 +394,9 @@ mod tests {
                 revision,
                 ..
             } => format!("list {} @ {}", music_dir.display(), revision.get()),
+            LibraryJob::Probe { path, revision } => {
+                format!("probe {} @ {}", path.display(), revision.get())
+            }
         }
     }
 

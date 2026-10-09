@@ -6,6 +6,7 @@ use kernel::{
         favorites::Favorites,
         history::HistoryEntry,
         io_error::IoError,
+        overlay::Verdict,
         revision::Revision,
         track::Track,
     },
@@ -47,6 +48,10 @@ pub enum LibraryMessage {
     },
     FavoritesLoaded(Favorites),
     Trashed(PathBuf),
+    Checked {
+        verdict: Verdict,
+        revision: Revision,
+    },
     HistoryLoaded {
         entries: Vec<HistoryEntry>,
         skipped: Option<Error>,

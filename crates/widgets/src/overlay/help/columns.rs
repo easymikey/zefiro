@@ -132,13 +132,13 @@ fn height_spread(
     )
 }
 
-fn three_columns(groups: [&Arc<HelpGroup>; 4]) -> (HelpColumn, HelpColumn, HelpColumn) {
-    let [playback, general, navigation, playlist] = groups;
+fn three_columns(groups: [&Arc<HelpGroup>; 5]) -> (HelpColumn, HelpColumn, HelpColumn) {
+    let [playback, general, navigation, playlist, text] = groups;
     let playback_column = HelpColumn::new(&[playback]);
     let general_and_navigation_column = HelpColumn::new(&[general, navigation]);
-    let playlist_column = HelpColumn::new(&[playlist]);
+    let playlist_column = HelpColumn::new(&[playlist, text]);
     let general_column = HelpColumn::new(&[general]);
-    let navigation_and_playlist_column = HelpColumn::new(&[navigation, playlist]);
+    let navigation_and_playlist_column = HelpColumn::new(&[navigation, playlist, text]);
 
     let navigation_after_general = height_spread(
         playback_column.height,
@@ -240,22 +240,24 @@ pub(crate) fn select_help_columns(
         navigation_group: navigation,
         playlist_group: playlist,
         general_group: general,
+        text_group: text,
     } = groups;
 
     let available_height = list_capacity(screen, Hint::Hidden).height;
 
-    let single_column = HelpColumn::new(&[playback, navigation, playlist, general]);
+    let single_column =
+        HelpColumn::new(&[playback, navigation, playlist, general, text]);
     let columns: Vec<HelpColumn> = if single_column.height <= available_height {
         vec![single_column]
     } else {
         let (left, middle, right) =
-            three_columns([playback, general, navigation, playlist]);
+            three_columns([playback, general, navigation, playlist, text]);
         columns_that_fit(
             [
                 vec![left, middle, right],
                 vec![
                     HelpColumn::new(&[playback]),
-                    HelpColumn::new(&[general, navigation, playlist]),
+                    HelpColumn::new(&[general, navigation, playlist, text]),
                 ],
                 vec![single_column],
             ],
@@ -299,9 +301,9 @@ mod tests {
     }
 
     #[rstest]
-    #[case::navigation_joins_the_middle(Balance { group_rows: [18, 8, 2, 16], heights: (Cells(19), Cells(13), Cells(17)) })]
-    #[case::navigation_joins_the_last(Balance { group_rows: [19, 14, 7, 2], heights: (Cells(20), Cells(15), Cells(12)) })]
-    #[case::the_smaller_spread_wins_within_twice_the_shortest(Balance { group_rows: [19, 19, 1, 16], heights: (Cells(20), Cells(20), Cells(20)) })]
+    #[case::navigation_joins_the_middle(Balance { group_rows: [18, 8, 2, 16], heights: (Cells(19), Cells(13), Cells(19)) })]
+    #[case::navigation_joins_the_last(Balance { group_rows: [19, 14, 7, 2], heights: (Cells(20), Cells(15), Cells(14)) })]
+    #[case::the_smaller_spread_wins_within_twice_the_shortest(Balance { group_rows: [19, 19, 1, 16], heights: (Cells(20), Cells(20), Cells(22)) })]
     fn three_columns_moves_navigation_to_the_column_that_balances_better(
         #[case] balance: Balance,
     ) {
@@ -311,8 +313,9 @@ mod tests {
         let general = synthetic_group("General", general_rows);
         let navigation = synthetic_group("Navigation", navigation_rows);
         let playlist = synthetic_group("Playlist", playlist_rows);
+        let text = synthetic_group("Text editing", 0);
         let (left, middle, right) =
-            three_columns([&playback, &general, &navigation, &playlist]);
+            three_columns([&playback, &general, &navigation, &playlist, &text]);
         assert_eq!((left.height, middle.height, right.height), balance.heights);
     }
 

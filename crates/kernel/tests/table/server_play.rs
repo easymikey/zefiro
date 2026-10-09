@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use kernel::{
-    cmd::{AudioCmd, Cmd, Effect, GrowingMedia, Media, RemoteCmd},
+    cmd::{AudioCmd, Cmd, Effect, GrowingMedia, Media, Playback, RemoteCmd, TrackLoad},
     domain::{
         catalog::{BrowseLevel, CatalogName, Paging},
         cursor::Cursor,
@@ -155,6 +155,59 @@ fn a_fetched_track_loads_at_the_start_margin_or_when_complete(
         })
         .collect();
     assert_eq!(medias, media(revision).into_iter().collect::<Vec<_>>());
+}
+
+#[test]
+fn a_completed_m4a_download_loads_after_the_play_order_it_keeps() {
+    let mut model = album_model(online(), "m4a");
+    let played = kernel::update::update(
+        &mut model,
+        Message::Browse(BrowseRequest::PlaySelected),
+        Moment::default(),
+    );
+    let revision = model
+        .downloads
+        .first()
+        .map_or_else(Revision::default, |download| download.media_fetch.revision);
+
+    let fetched = kernel::update::update(
+        &mut model,
+        Message::Remote(RemoteEvent::Fetched {
+            revision,
+            result: Ok(Fetched {
+                media_path: media_path(),
+                downloaded: 9 * MIB,
+                byte_len: 9 * MIB,
+            }),
+        }),
+        Moment::default(),
+    );
+
+    let audio_cmds: Vec<AudioCmd> = played
+        .into_iter()
+        .flatten()
+        .chain(fetched.into_iter().flatten())
+        .filter_map(|effect| {
+            if let Effect::Audio(
+                audio_cmd @ (AudioCmd::SetPlayback(_) | AudioCmd::Load(_)),
+            ) = effect
+            {
+                Some(audio_cmd)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        matches!(
+            audio_cmds.as_slice(),
+            [
+                AudioCmd::SetPlayback(Playback::Playing),
+                AudioCmd::Load(TrackLoad { media: Media::Local(path), .. }),
+            ] if *path == media_path()
+        ),
+        "a played m4a must order Playing and then load the completed file, got {audio_cmds:?}"
+    );
 }
 
 fn entered_album_model() -> Model {
@@ -452,7 +505,10 @@ fn local_before_a_preloaded_server_track() -> Model {
     };
     drop(update(
         &mut model,
-        Message::Audio(AudioEvent::PositionReported(Duration::from_secs(95))),
+        Message::Audio(AudioEvent::PositionReported {
+            position: Duration::from_secs(95),
+            revision: Revision::default(),
+        }),
         Moment::default(),
     ));
     let mark = model.revisions.lookahead;
@@ -530,7 +586,10 @@ fn a_stale_preload_cancelled_leaves_the_new_preload_and_its_download() {
         Message::Playback(PlaybackRequest::Stop),
         Message::Playback(PlaybackRequest::Play),
         Message::Audio(AudioEvent::Loaded(None)),
-        Message::Audio(AudioEvent::PositionReported(Duration::from_secs(95))),
+        Message::Audio(AudioEvent::PositionReported {
+            position: Duration::from_secs(95),
+            revision: Revision::default(),
+        }),
     ] {
         drop(update(&mut model, message, Moment::default()));
     }

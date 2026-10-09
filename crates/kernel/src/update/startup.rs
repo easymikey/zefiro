@@ -307,7 +307,7 @@ mod tests {
         let broken_error =
             ConfigError::from(Diagnostic::from_error(&std::io::Error::other("broken")));
         let unreadable_error = ConfigError::Read {
-            name: ConfigName::Appearance,
+            name: ConfigName::Config,
             error: IoError::Other,
         };
         let startup = Startup {
@@ -316,7 +316,7 @@ mod tests {
                     ConfigName::Theme(ThemeName::from_static("ghost")),
                     broken_error.clone(),
                 ),
-                (ConfigName::Appearance, unreadable_error.clone()),
+                (ConfigName::Config, unreadable_error.clone()),
             ],
             ..stock_startup()
         };
@@ -334,7 +334,7 @@ mod tests {
             model
                 .workspace
                 .config_errors
-                .replace(ConfigName::Appearance, unreadable_error),
+                .replace(ConfigName::Config, unreadable_error),
             Err(Unhandled)
         );
         assert_eq!(

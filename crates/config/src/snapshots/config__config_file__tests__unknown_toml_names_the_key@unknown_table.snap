@@ -2,5 +2,5 @@
 source: crates/config/src/config_file.rs
 expression: error.to_string()
 ---
-unknown field `nope`, expected one of `music_dir`, `theme`, `volume`, `audio`, `keymap`, `server`
+unknown field `nope`, expected one of `music_dir`, `theme`, `volume`, `audio`, `keymap`, `server`, `card`, `progress`, `cover`, `layout`, `window`
 config.toml:1

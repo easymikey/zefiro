@@ -525,9 +525,12 @@ expression: "walked(model, messages)"
                 OverlayClosed,
             ),
             Audio(
-                Seek(
-                    100s,
-                ),
+                Seek {
+                    target: 100s,
+                    revision: Revision(
+                        1,
+                    ),
+                },
             ),
             Macos(
                 SetPosition(

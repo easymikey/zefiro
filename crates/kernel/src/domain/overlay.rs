@@ -1,10 +1,11 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, path::PathBuf, sync::Arc};
 
 use strum::{EnumDiscriminants, EnumIter, IntoStaticStr};
 
 use crate::domain::{
     cursor_over::CursorOver,
     index::ViewIndex,
+    io_error::IoError,
     playlist::PlaylistFileNameError,
     revision::Revision,
     server::{
@@ -37,7 +38,11 @@ pub enum Overlay {
     ConfirmTrash(Arc<Track>),
     JumpToTime(TextEntry<TimecodeError>),
     TrackDetails(Arc<Track>),
-    MusicDir(TextEntry<MusicDirError>),
+    MusicDir {
+        text_entry: TextEntry<MusicDirError>,
+        verdict: Option<Verdict>,
+        revision: Option<Revision>,
+    },
     AddServer(ServerPrompt),
     Servers(CursorOver<()>),
     ConfirmRemove(ServerName),
@@ -50,7 +55,7 @@ impl Overlay {
             Overlay::Search(_)
             | Overlay::ServerSearch(_)
             | Overlay::SavePlaylist(_)
-            | Overlay::MusicDir(_)
+            | Overlay::MusicDir { .. }
             | Overlay::AddServer(_) => true,
             Overlay::Help
             | Overlay::History(_)
@@ -98,6 +103,44 @@ impl Accepts for PlaylistFileNameError {
 pub enum MusicDirError {
     #[error("enter a folder path")]
     Empty,
+    #[error("checking the folder")]
+    Pending,
+}
+
+impl TextEntry<MusicDirError> {
+    #[must_use]
+    pub fn path(&self) -> PathBuf {
+        let trimmed = self.input.trim();
+        let path = trimmed.trim_end_matches('/');
+        if path.is_empty() && !trimmed.is_empty() {
+            PathBuf::from("/")
+        } else {
+            PathBuf::from(path)
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    Readable,
+    Missing,
+    NotADirectory,
+    Denied,
+    Unreadable(IoError),
+}
+
+impl fmt::Display for Verdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Verdict::Readable => f.write_str("a readable folder"),
+            Verdict::Missing => f.write_str("no such path"),
+            Verdict::NotADirectory => f.write_str("not a folder"),
+            Verdict::Denied => f.write_str(
+                "no permission: allow the terminal in Privacy & Security, Files and Folders",
+            ),
+            Verdict::Unreadable(error) => write!(f, "cannot be read: {error}"),
+        }
+    }
 }
 
 impl Accepts for MusicDirError {

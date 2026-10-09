@@ -1,20 +1,23 @@
-use std::path::Path;
+use std::{io, path::Path};
 
-use kernel::domain::{
-    config::{ConfigError, ConfigName, Diagnostic},
-    theme::ThemeName,
+use kernel::{
+    cmd::ConfigPatch,
+    domain::{
+        config::{ConfigError, ConfigName, Diagnostic},
+        theme::ThemeName,
+    },
 };
 
 use crate::{
-    appearance_file::{TomlAppearance, parse_appearance},
     config_file::{TomlSettings, parse_config},
     driver::{
-        files::{read_error, read_if_present},
+        files::{read_error, read_if_present, save, save_failed, store},
         paths::{ConfigPaths, SeenTexts},
     },
     embedded_theme::{embedded_theme, theme_name},
     error::Error,
     file_name::theme_file_path,
+    patch::patched_config_text,
     theme_file::{TomlTheme, parse_theme},
 };
 
@@ -22,7 +25,6 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Loaded {
     pub toml_settings: TomlSettings,
-    pub toml_appearance: TomlAppearance,
     pub theme_name: ThemeName,
     pub toml_theme: Option<TomlTheme>,
     pub texts: SeenTexts,
@@ -35,13 +37,23 @@ struct Parsed<T> {
     error: Option<(ConfigName, ConfigError)>,
 }
 
-pub fn load(paths: &ConfigPaths) -> Loaded {
+pub fn load(paths: &ConfigPaths, patch: Option<ConfigPatch>) -> Loaded {
+    let save_error = match std::fs::symlink_metadata(&paths.config_path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => store(
+            &paths.config_path,
+            include_str!("../config.toml").as_bytes(),
+        )
+        .err(),
+        Ok(_) | Err(_) => None,
+    }
+    .map(save_failed)
+    .or_else(|| {
+        patch.and_then(|patch| {
+            save(&paths.config_path, |text| patched_config_text(text, patch)).err()
+        })
+    })
+    .map(|error| (ConfigName::Config, error));
     let config = read_parsed(&paths.config_path, ConfigName::Config, parse_config);
-    let appearance = read_parsed(
-        &paths.appearance_path,
-        ConfigName::Appearance,
-        parse_appearance,
-    );
     let theme_name = paths
         .theme_name
         .clone()
@@ -52,15 +64,13 @@ pub fn load(paths: &ConfigPaths) -> Loaded {
     };
     Loaded {
         texts: SeenTexts {
-            appearance: appearance.text,
             config: config.text,
         },
-        errors: [config.error, appearance.error, theme_error]
+        errors: [save_error, config.error, theme_error]
             .into_iter()
             .flatten()
             .collect(),
         toml_settings: config.value,
-        toml_appearance: appearance.value,
         theme_name,
         toml_theme: theme,
     }
@@ -131,7 +141,7 @@ fn read_theme(
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{os::unix::fs::PermissionsExt, path::Path};
 
     use kernel::domain::{
         config::{ConfigError, ConfigName},
@@ -141,7 +151,6 @@ mod tests {
     use rstest::rstest;
 
     use crate::{
-        appearance_file::TomlAppearance,
         config_file::TomlSettings,
         driver::paths::{ConfigPaths, SeenTexts},
         load::{Loaded, load},
@@ -149,11 +158,11 @@ mod tests {
 
     const COMPACT: &str = "[layout]\nmode = \"compact\"\n";
     const BROKEN: &str = "[volume]\nmode = \"text\"\n";
+    const COMMENTED_CONFIG: &str = include_str!("../config.toml");
 
     fn paths(directory_path: &Path, theme: Option<&'static str>) -> ConfigPaths {
         ConfigPaths {
             config_path: directory_path.join("config.toml"),
-            appearance_path: directory_path.join("zefiro-ui.toml"),
             themes_dir: directory_path.join("themes"),
             default_music_dir: None,
             theme_name: theme.map(ThemeName::from_static),
@@ -162,7 +171,7 @@ mod tests {
     }
 
     fn loaded(directory_path: &Path, theme: Option<&'static str>) -> Loaded {
-        load(&paths(directory_path, theme))
+        load(&paths(directory_path, theme), None)
     }
 
     fn mine() -> ConfigName {
@@ -227,14 +236,88 @@ mod tests {
     ) {
         let directory = tempfile::tempdir().unwrap();
         if let Some(text) = text {
-            std::fs::write(directory.path().join("zefiro-ui.toml"), text).unwrap();
+            std::fs::write(directory.path().join("config.toml"), text).unwrap();
         }
 
         let loaded = loaded(directory.path(), None);
 
-        assert_eq!(loaded.toml_appearance == TomlAppearance::default(), !parsed);
-        assert_eq!(loaded.texts.appearance.as_deref(), text);
+        assert_eq!(loaded.toml_settings == TomlSettings::default(), !parsed);
+        assert_eq!(
+            loaded.texts.config.as_deref(),
+            Some(text.unwrap_or(COMMENTED_CONFIG))
+        );
         assert_eq!(loaded.errors.len(), errors);
+    }
+
+    #[test]
+    fn a_missing_config_is_written_from_the_template_and_loads_the_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_dir = directory.path().join("zefiro");
+
+        let loaded = loaded(&config_dir, None);
+
+        assert_eq!(
+            std::fs::read_to_string(config_dir.join("config.toml")).unwrap(),
+            COMMENTED_CONFIG
+        );
+        assert_eq!(loaded.toml_settings, TomlSettings::default());
+        assert_eq!(loaded.texts.config.as_deref(), Some(COMMENTED_CONFIG));
+        assert_eq!(loaded.errors, []);
+    }
+
+    #[rstest]
+    #[case::valid(COMPACT)]
+    #[case::broken(BROKEN)]
+    #[case::empty("")]
+    fn an_existing_config_stays_byte_identical(#[case] text: &str) {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        std::fs::write(&config_path, text).unwrap();
+
+        let seen = loaded(directory.path(), None).texts.config;
+
+        assert_eq!(seen.as_deref(), Some(text));
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), text);
+    }
+
+    #[test]
+    fn a_dangling_config_link_is_left_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        std::os::unix::fs::symlink("dotfiles.toml", &config_path).unwrap();
+
+        let loaded = loaded(directory.path(), None);
+
+        assert_eq!(
+            std::fs::read_link(&config_path).unwrap(),
+            Path::new("dotfiles.toml")
+        );
+        assert!(!directory.path().join("dotfiles.toml").exists());
+        assert_eq!(loaded.toml_settings, TomlSettings::default());
+    }
+
+    #[test]
+    fn a_failed_template_write_reports_it_and_loads_the_defaults() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut permissions =
+            std::fs::metadata(directory.path()).unwrap().permissions();
+        permissions.set_mode(0o555);
+        std::fs::set_permissions(directory.path(), permissions).unwrap();
+
+        let loaded = loaded(directory.path(), None);
+
+        assert_eq!(loaded.toml_settings, TomlSettings::default());
+        assert_eq!(loaded.texts.config, None);
+        assert_eq!(
+            loaded.errors,
+            [(
+                ConfigName::Config,
+                ConfigError::Save {
+                    name: ConfigName::Config,
+                    error: IoError::Denied,
+                }
+            )]
+        );
     }
 
     #[test]

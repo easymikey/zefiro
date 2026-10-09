@@ -47,10 +47,10 @@ XEffect ─► XDriver::execute          XEvent ─► DriverLoop ─► inbox �
 | Widget | widgets | every type with `impl Widget`, overlays included; every widget type ends in `Widget` (`ToastWidget`, `CardWidget`, `TooSmallWidget`); built as in ratatui and ratcn: `XWidget::new(..)` takes what the widget cannot paint without (its `input`, then the `ActiveTheme` when it paints in theme colours), every optional knob is a consuming setter named after the field (`style(XStyle)`, `speed_chip(SpeedChip)`, …); fields are private, so there is never a struct literal outside its module and never a `builder()`; `input` is `&` one Model slice or one `XView` | `XWidget`, never `*Overlay` | guard |
 | Style | widgets | a component's look; built only by `XStyle::from_theme(&ActiveTheme)`; an input beyond the theme rides on `ActiveTheme` through a builder (`with_progress_bar`); fields are semantic colours (`foreground`, `muted_foreground`, `background`, `border`, `accent`, …) | `XStyle` | review |
 | Colors | widgets | only the theme palette | `Colors` | guard |
-| raw TOML | config | every serde shape of a file or a section; each carries `#[serde(expecting = "…")]` in user words (`"a [cover] table"`), so a Rust name never reaches a toast | `Toml*` (`TomlTheme`, `TomlAppearance`, `TomlKeymap`, `TomlCard`, `TomlColors`, `TomlAudio`) | guard |
+| raw TOML | config | every serde shape of a file or a section; each carries `#[serde(expecting = "…")]` in user words (`"a [cover] table"`), so a Rust name never reaches a toast | `Toml*` (`TomlTheme`, `TomlSettings`, `TomlCover`, `TomlKeymap`, `TomlCard`, `TomlColors`, `TomlAudio`) | guard |
 | parsed value | kernel, widgets | what inner code uses; parsed once at the boundary, never re-checked | bare noun (`Theme`, `Keymap`, `Appearance`) | review |
 | user settings | kernel | values the user edits in a file or the settings overlay | `XSettings` (`Settings`, `AudioSettings`, `AppearanceSettings`) | review |
-| config file id | kernel | `ConfigName { Config, Appearance, Theme(ThemeName) }` | `ConfigName` | review |
+| config file id | kernel | `ConfigName { Config, Theme(ThemeName) }` | `ConfigName` | review |
 | read result | config | the outcome of reading and parsing one file at startup | `Parsed<T>` | review |
 | test-table row | tests | one row of an `rstest` table | `XRow` | review |
 
@@ -205,7 +205,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | error inside an error | `IoError`, `DecodeError`; value `source` as a field of an error type, `error` everywhere else | `kind`, `err`, `failure`, `error` for the cause field of an error type |
 | parser text shown to the user | `Diagnostic`, built only by `Diagnostic::from_error(&impl Error)` in the crate that owns the parser; kernel `ConfigError::Parse(Diagnostic)`; value `diagnostic` where named | `reason`, `detail: String` |
 | music dir | `PathBuf`; value `music_dir` | `target`, `source_dir` |
-| config paths | `PathBuf`; values `config_path`, `appearance_path`, `themes_dir` | `config`, `appearance`, `themes` for paths |
+| config paths | `PathBuf`; values `config_path`, `themes_dir` | `config`, `themes` for paths |
 | raw TOML text | `String`; value `text` | `source`, `raw`, `existing` |
 | laid-out cover side | `Pixels`; value `side` (`cover_side`) | `size`, `vinyl_size`, `size_px` |
 | shell to core: what the user asks | `*Request`; value `request` | `playback_request`, `browse_request`, private `Input::Key`, `Ui`, `UiRequest`, `UiPreset`, `UiMessage` |
@@ -282,7 +282,7 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | small label | chip (`format_chips`, `speed_chip`) | badge, `tech_chips`, `TechChips`, `TechChipColors` |
 | preload-due / A-B-end timer | `Lookahead` (`Timer::Lookahead`) | `Mark` |
 | A-B point | `AbMark` (`AbLoop::mark`) | — |
-| render part of `zefiro-ui.toml` | kernel `domain::appearance::Appearance` (`CoverCells`, `Breakpoints`, `ProgressBar`; built by `TomlAppearance::to_appearance`) | `Look`, `Custom*`, `UiOptions`, `[ui]` |
+| render part of the appearance tables of `config.toml` | kernel `domain::appearance::Appearance` (`CoverCells`, `Breakpoints`, `ProgressBar`; built by `TomlSettings::to_appearance`) | `Look`, `Custom*`, `UiOptions`, `[ui]` |
 | choices the settings overlay edits | kernel `AppearanceSettings` (field `Settings.appearance`) | `SettingsValues`, `SettingsReadout`, `AppearanceSetting` |
 | step a setting / volume / speed | `Step` + `Direction { Next, Previous }` (`Message::Step { row, direction }`, `StepVolume(Direction)`); size is a constant beside the value (`VOLUME_STEP = 5`) | `Adjust`, `Nudge`, `steps: i8`, `Adjusted` |
 | absolute input (remote, IPC, macOS) | `Set*(value)` (`SetVolume`, as cliamp) | — |
@@ -318,8 +318,8 @@ Editor-shaped concepts take Zed's word (`Theme`, `Keymap`, `Workspace`, `Toast`;
 | CPU-parallel work inside one job (tag reading) | allowed: `thread::scope` inside a job body, joined before the job returns (decided 2026-10-04) | detached threads in jobs |
 | turning the raw `TomlTheme` into the widgets `Theme` | the shell (zefiro) does it: `Theme` is a widgets type and config sits below widgets; config publishes `TomlTheme` (decided 2026-10-04) | config depending on widgets |
 | which cover to decode and at what size | the kernel decides: the shell reports the laid-out cover side through `Message::Viewport` (`Pixels`), kernel emits `Effect::Library(LibraryCmd::DecodeCover(CoverJob))` on track or side change; no shell→driver side channel (decided 2026-10-04) | paint path sending `LibraryMessage::Cover` |
-| config reloaded | kernel `ConfigReload { name: ConfigName, result: Result<(), ConfigError> }` (§6.3), `config_reloaded`; the per-file errors held by the workspace are `ConfigErrors`, field `config_errors`; startup shows one toast with the first error and records the rest; the live values parsed from `config.toml` are `ConfigSettings { keymap_overrides, music_dir }` | `SourceOutcome`, `source_result` |
-| applying a patch | `patched` (`TomlAppearance::patched`, kernel `AppearanceSettings::patched(patch)`) | `apply` |
+| config reloaded | kernel `ConfigReload { name: ConfigName, result: Result<(), ConfigError> }` (§6.3), `config_reloaded`; the per-file errors held by the workspace are `ConfigErrors`, field `config_errors`; startup shows one toast with the first error and records the rest; the live values parsed from `config.toml` are `ConfigSettings { keymap_overrides, music_dir, accounts, appearance_settings, appearance }` | `SourceOutcome`, `source_result` |
+| applying a patch | `patched` (kernel `AppearanceSettings::patched(patch)`; config `patched_config_text`, `patched_appearance_text`) | `apply` |
 | verbs, one meaning each | `transition` = machine step (message → `Cmd`); `execute` = driver runs an effect (IO); `Set*` = absolute command variant (`WindowColorsCmd::Set(ThemeName)`); `set_*` = method replacing one held value (`Painter::set_window_colors`); `patched` = value + patch → new value; `paint` = drawing into a buffer. Today's `apply_*` machines became `transition` | `apply` |
 | animation | `Animation`, `Cue`, `AnimationStage` | `Effect*` for animation |
 | the subsystem only | `Config` (crate, `ConfigCmd`, `ConfigDriver`, `config.toml`) | `Config` / `File` as suffix of a raw or parsed shape |

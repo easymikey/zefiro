@@ -8,10 +8,10 @@ use kernel::{
 
 use crate::{
     AudioDriver,
-    deck::{Deck, mixer::MixerOrder},
+    deck::Deck,
     engine::{
         effect::EngineEffect,
-        message::{AudioMessage, EngineMessage, SinkRole},
+        message::{AudioMessage, EngineMessage},
     },
     error::{DeviceError, device_error},
     gain::Gain,
@@ -136,14 +136,10 @@ fn resume_current(
     position: Duration,
     playback: Playback,
 ) -> Option<AudioMessage> {
-    let refusal = deck.append_staged();
-    if let (Playback::Paused, Some(output)) = (playback, deck.output.as_mut()) {
-        output.current_playback = Playback::Paused;
-        output.mixer_control.order(MixerOrder::RolePlayback {
-            role: SinkRole::Current,
-            playback: Playback::Paused,
-        });
+    if let Some(output) = deck.output.as_mut() {
+        output.current_playback = playback;
     }
+    let refusal = deck.append_staged();
     deck.seek(position);
     refusal
 }
@@ -158,7 +154,7 @@ mod tests {
 
     use kernel::{
         cmd::Playback,
-        domain::{revision::Revision, settings::AudioSettings},
+        domain::{revision::Revision, settings::AudioSettings, speed::Speed},
         update::machine::Driver,
     };
     use rstest::rstest;
@@ -212,7 +208,7 @@ mod tests {
     }
 
     impl Listening {
-        fn playing_ramp(frames: usize) -> Self {
+        fn started(frames: usize, start: impl FnOnce(&mut Deck, DecodedTrack)) -> Self {
             let file = ramp_file(1, frames);
             let (feed_sender, feed_receiver) = crossbeam_channel::unbounded();
             let (spectrum_buffers, _spectrum_tap) = tap::spectrum_channel();
@@ -220,20 +216,35 @@ mod tests {
             let (output, mixer) = mixed_output(RAMP_RATE, &spectrum_buffers);
             let mut deck = Deck::new(spectrum_buffers, callback_sender, feed_sender);
             deck.output = Some(output);
-            deck.stage(DecodedTrack {
-                revision: Revision::default().next(),
-                decoder: decode(file.path()).unwrap(),
-            });
-            assert!(execute(EngineEffect::Start(Gain::UNITY), &mut deck).is_none());
-            let Ok(FeedCmd::Serve(feed)) = feed_receiver.try_recv() else {
+            start(
+                &mut deck,
+                DecodedTrack {
+                    revision: Revision::default().next(),
+                    decoder: decode(file.path()).unwrap(),
+                },
+            );
+            let Some(feed) = feed_receiver.try_iter().find_map(|cmd| {
+                if let FeedCmd::Serve(feed) = cmd {
+                    Some(feed)
+                } else {
+                    None
+                }
+            }) else {
                 panic!("start sends its feed to the feeder");
             };
-            let mut listening = Self {
+            Self {
                 deck,
                 mixer,
                 heard: Vec::new(),
                 feed: *feed,
-            };
+            }
+        }
+
+        fn playing_ramp(frames: usize) -> Self {
+            let mut listening = Self::started(frames, |deck, decoded_track| {
+                deck.stage(decoded_track);
+                assert!(execute(EngineEffect::Start(Gain::UNITY), deck).is_none());
+            });
             assert!(listening.execute(EngineEffect::Play).is_none());
             listening.pull(4_000);
             listening
@@ -347,6 +358,21 @@ mod tests {
     }
 
     #[test]
+    fn a_report_right_after_a_seek_answers_the_target() {
+        let target = Duration::from_secs(5);
+        let mut listening = Listening::playing_ramp(80_000);
+
+        assert!(listening.execute(EngineEffect::Seek(target)).is_none());
+        let Some(AudioMessage::Engine(EngineMessage::Reported(Some(reported)))) =
+            listening.execute(EngineEffect::Report)
+        else {
+            panic!("a report answers the position");
+        };
+
+        assert_eq!(reported, target);
+    }
+
+    #[test]
     fn more_retires_than_retired_slots_all_reach_the_driver() {
         let (callback_sender, _callback_receiver) = crossbeam_channel::bounded(64);
         let (feed_sender, feed_receiver) = crossbeam_channel::unbounded();
@@ -431,6 +457,83 @@ mod tests {
             panic!("a report answers the position");
         };
         assert!(reported >= target && reported < target + Duration::from_millis(1));
+    }
+
+    #[rstest]
+    #[case::play_after_the_load([
+        EngineEffect::StartLoad(Speed::default()),
+        EngineEffect::Play,
+    ])]
+    #[case::play_before_the_load([
+        EngineEffect::Play,
+        EngineEffect::StartLoad(Speed::default()),
+    ])]
+    #[case::play_before_the_handover([
+        EngineEffect::Play,
+        EngineEffect::StartHandover(Speed::default()),
+    ])]
+    fn a_play_before_the_decode_answer_leaves_the_current_voice_playing(
+        #[case] engine_effects: [EngineEffect; 2],
+    ) {
+        let mut listening = Listening::started(80_000, |deck, decoded_track| {
+            for effect in engine_effects.into_iter().chain([
+                EngineEffect::Stage(decoded_track),
+                EngineEffect::Start(Gain::UNITY),
+            ]) {
+                assert!(execute(effect, deck).is_none());
+            }
+        });
+
+        assert_eq!(
+            listening.heard_since(usize::from(DECLICK_FRAMES), 200),
+            ramp_from(Duration::ZERO, usize::from(DECLICK_FRAMES), 200)
+        );
+    }
+
+    #[test]
+    fn a_pause_before_a_load_leaves_the_new_voice_paused() {
+        let mut listening = Listening::playing_ramp(80_000);
+        let file = ramp_file(1, 80_000);
+        let decoded_track = DecodedTrack {
+            revision: Revision::default().next().next(),
+            decoder: decode(file.path()).unwrap(),
+        };
+        for effect in [
+            EngineEffect::Pause,
+            EngineEffect::StartLoad(Speed::default()),
+            EngineEffect::Stage(decoded_track),
+            EngineEffect::Start(Gain::UNITY),
+        ] {
+            assert!(listening.execute(effect).is_none());
+        }
+        let start = listening.heard.len();
+
+        listening.pull(8_000);
+        listening.pull(8_000);
+
+        assert!(listening.heard.len() <= start + usize::from(DECLICK_FRAMES));
+    }
+
+    #[test]
+    fn a_playing_resume_on_a_reopened_output_plays_from_the_position() {
+        let target = Duration::from_secs(5);
+        let mut listening = Listening::started(80_000, |deck, decoded_track| {
+            for effect in [
+                EngineEffect::Stage(decoded_track),
+                EngineEffect::Resume {
+                    gain: Gain::UNITY,
+                    position: target,
+                    playback: Playback::Playing,
+                },
+            ] {
+                assert!(execute(effect, deck).is_none());
+            }
+        });
+
+        assert_eq!(
+            listening.heard_since(usize::from(DECLICK_FRAMES), 200),
+            ramp_from(target, usize::from(DECLICK_FRAMES), 200)
+        );
     }
 
     fn crossfade_revisions() -> [Revision; 2] {

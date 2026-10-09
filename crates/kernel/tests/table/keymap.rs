@@ -9,7 +9,7 @@ use kernel::{
         geometry::Cells,
         key::{Key, KeyCode, KeyPress, Modifiers},
         keymap::{KeyContext, KeymapOverrides},
-        overlay::{Overlay, TextEntry},
+        overlay::{Overlay, SearchQuery, ServerPrompt, TextEntry},
         setting_row::SettingRow,
         time::Moment,
         toast::Toast,
@@ -20,7 +20,6 @@ use kernel::{
         HistoryRequest,
         Message,
         OverlayRequest,
-        SearchEdit,
         SearchRequest,
         SettingRowRequest,
         TextRequest,
@@ -82,7 +81,11 @@ fn saving_a_playlist() -> Workspace {
 }
 
 fn naming_a_source_dir() -> Workspace {
-    with_overlay(Overlay::MusicDir(TextEntry::default()))
+    with_overlay(Overlay::MusicDir {
+        text_entry: TextEntry::default(),
+        verdict: None,
+        revision: None,
+    })
 }
 
 fn typed_text(message: TextRequest) -> Option<Message> {
@@ -97,9 +100,9 @@ fn with(code: KeyCode, modifiers: Modifiers) -> Key {
     Key { code, modifiers }
 }
 
-fn search_edit(edit: SearchEdit) -> Option<Message> {
+fn search_edit(text_request: TextRequest) -> Option<Message> {
     Some(Message::Overlay(OverlayRequest::Search(
-        SearchRequest::Edit(edit),
+        SearchRequest::Edit(text_request),
     )))
 }
 
@@ -123,7 +126,7 @@ fn close() -> Option<Message> {
 #[case::search_alt_backspace_deletes_a_word(
     searching(),
     with(KeyCode::Backspace, Modifiers::ALT),
-    search_edit(SearchEdit::DeleteWord)
+    search_edit(TextRequest::DeleteWord)
 )]
 #[case::history_g_arms_the_chord(
     history(),
@@ -156,6 +159,46 @@ fn close() -> Option<Message> {
     saving_a_playlist(),
     character('q'),
     typed_text(TextRequest::Char('q'))
+)]
+#[case::a_source_dir_prompt_ctrl_u_clears(
+    naming_a_source_dir(),
+    with(KeyCode::Char('u'), Modifiers::CTRL),
+    typed_text(TextRequest::Clear)
+)]
+#[case::a_source_dir_prompt_ctrl_w_deletes_a_word(
+    naming_a_source_dir(),
+    with(KeyCode::Char('w'), Modifiers::CTRL),
+    typed_text(TextRequest::DeleteWord)
+)]
+#[case::a_source_dir_prompt_alt_backspace_deletes_a_word(
+    naming_a_source_dir(),
+    with(KeyCode::Backspace, Modifiers::ALT),
+    typed_text(TextRequest::DeleteWord)
+)]
+#[case::jump_ctrl_u_clears(
+    jumping(),
+    with(KeyCode::Char('u'), Modifiers::CTRL),
+    typed_text(TextRequest::Clear)
+)]
+#[case::jump_ctrl_w_deletes_a_word(
+    jumping(),
+    with(KeyCode::Char('w'), Modifiers::CTRL),
+    typed_text(TextRequest::DeleteWord)
+)]
+#[case::jump_alt_backspace_deletes_a_word(
+    jumping(),
+    with(KeyCode::Backspace, Modifiers::ALT),
+    typed_text(TextRequest::DeleteWord)
+)]
+#[case::search_ctrl_u_clears(
+    searching(),
+    with(KeyCode::Char('u'), Modifiers::CTRL),
+    search_edit(TextRequest::Clear)
+)]
+#[case::search_ctrl_w_deletes_a_word(
+    searching(),
+    with(KeyCode::Char('w'), Modifiers::CTRL),
+    search_edit(TextRequest::DeleteWord)
 )]
 #[case::a_source_dir_prompt_types_a_letter(
     naming_a_source_dir(),
@@ -224,6 +267,101 @@ fn a_key_press_routes_through_update(
     }
 }
 
+fn search_typed(input: &str) -> Overlay {
+    let mut cursor_over = CursorOver::<SearchQuery>::default();
+    cursor_over.content.input = input.to_string();
+    Overlay::Search(cursor_over)
+}
+
+fn entry_typed<E>(input: &str) -> TextEntry<E> {
+    TextEntry {
+        input: input.to_string(),
+        error: None,
+    }
+}
+
+fn save_typed(input: &str) -> Overlay {
+    Overlay::SavePlaylist(entry_typed(input))
+}
+
+fn music_dir_typed(input: &str) -> Overlay {
+    Overlay::MusicDir {
+        text_entry: entry_typed(input),
+        verdict: None,
+        revision: None,
+    }
+}
+
+fn jump_typed(input: &str) -> Overlay {
+    Overlay::JumpToTime(entry_typed(input))
+}
+
+fn link_typed(input: &str) -> Overlay {
+    Overlay::AddServer(ServerPrompt::Link {
+        origin_server_name: None,
+        text_entry: entry_typed(input),
+    })
+}
+
+fn typed_in(overlay: &Overlay) -> Option<&str> {
+    match overlay {
+        Overlay::Search(cursor_over) => Some(&cursor_over.content.input),
+        Overlay::ServerSearch(cursor_over) => Some(&cursor_over.content.input),
+        Overlay::SavePlaylist(text_entry) => Some(&text_entry.input),
+        Overlay::JumpToTime(text_entry) => Some(&text_entry.input),
+        Overlay::MusicDir { text_entry, .. } => Some(&text_entry.input),
+        Overlay::AddServer(ServerPrompt::Link { text_entry, .. }) => {
+            Some(&text_entry.input)
+        }
+        Overlay::AddServer(ServerPrompt::User { text_entry, .. }) => {
+            Some(&text_entry.input)
+        }
+        Overlay::AddServer(ServerPrompt::Password { text_entry, .. }) => {
+            Some(&text_entry.input)
+        }
+        Overlay::Help
+        | Overlay::History(_)
+        | Overlay::Settings(_)
+        | Overlay::ConfirmTrash(_)
+        | Overlay::TrackDetails(_)
+        | Overlay::Servers(_)
+        | Overlay::ConfirmRemove(_) => None,
+    }
+}
+
+#[rstest]
+#[case::search(search_typed, "foo bar", "foo ")]
+#[case::playlist_name(save_typed, "road trip", "road ")]
+#[case::music_folder(music_dir_typed, "/music/my songs", "/music/my ")]
+#[case::time_jump(jump_typed, "1:23", "")]
+#[case::server_link(link_typed, "music.example.com", "")]
+fn every_text_field_clears_all_and_deletes_the_last_word(
+    #[case] typed: fn(&str) -> Overlay,
+    #[case] input: &str,
+    #[case] word_deleted: &str,
+) {
+    let edits = [
+        (with(KeyCode::Char('u'), Modifiers::CTRL), ""),
+        (with(KeyCode::Backspace, Modifiers::SUPER), ""),
+        (with(KeyCode::Char('w'), Modifiers::CTRL), word_deleted),
+        (with(KeyCode::Backspace, Modifiers::ALT), word_deleted),
+    ];
+    for (key, expected) in edits {
+        let mut model = crate::support::model_with_tracks(3);
+        model.workspace.overlay = Some(typed(input));
+        let press = KeyPress { key, typed: key };
+        let routed = update(&mut model, Message::Key(press), Moment::default());
+        assert_eq!(
+            (
+                routed.is_ok(),
+                model.workspace.overlay.as_ref().and_then(typed_in)
+            ),
+            (true, Some(expected)),
+            "{key:?}"
+        );
+    }
+}
+
 #[rstest]
 #[case::digits('0', '9')]
 #[case::lowercase_letters('a', 'z')]
@@ -238,7 +376,7 @@ fn the_search_query_swallows_every_printable_hotkey(
         let press = KeyPress { key, typed: key };
         assert_eq!(
             route(&workspace, press),
-            search_edit(SearchEdit::Char(typed)),
+            search_edit(TextRequest::Char(typed)),
             "'{typed}' must type into the query, not fire a hotkey"
         );
     }

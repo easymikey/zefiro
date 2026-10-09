@@ -122,10 +122,10 @@ fn a_bad_chord_keeps_its_toast_through_the_config_reload_that_follows() {
 #[case::recovery_of_a_source_nobody_is_showing_keeps_the_toast(
     &[
         Message::Config(fail(theme(), "Theme: boom")),
-        Message::Config(fail(ConfigName::Appearance, "UI: broken")),
+        Message::Config(fail(ConfigName::Config, "Config: broken")),
         Message::Config(recovered(theme())),
     ],
-    Some("UI: broken")
+    Some("Config: broken")
 )]
 fn config_errors_decide_which_toast_is_on_screen(
     #[case] messages: &[Message],
@@ -154,7 +154,7 @@ fn a_config_error_shows_the_kernels_own_words() {
     let cmd = reduce(
         &mut model,
         Message::Config(ConfigEvent::Error(ConfigError::Read {
-            name: ConfigName::Appearance,
+            name: ConfigName::Config,
             error: IoError::Denied,
         })),
     );
@@ -166,7 +166,7 @@ fn a_config_error_shows_the_kernels_own_words() {
             .toasts
             .first()
             .and_then(|toast| toast.text.clone()),
-        Some("the appearance file is unreadable: permission denied".to_string())
+        Some("the config file is unreadable: permission denied".to_string())
     );
 }
 

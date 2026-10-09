@@ -1,6 +1,6 @@
 [package]
 name = "config"
-description = "On-disk formats: config.toml, zefiro-ui.toml, keymap section, patch documents"
+description = "On-disk formats: config.toml with its appearance tables, keymap section, patch documents"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

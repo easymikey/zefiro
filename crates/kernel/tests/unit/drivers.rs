@@ -301,7 +301,7 @@ fn an_audio_restart_resumes_from_the_same_place(#[case] row: ResumeRow) {
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,
-        Effect::Audio(AudioCmd::Seek(seek)) if *seek == row.position
+        Effect::Audio(AudioCmd::Seek { target: seek, .. }) if *seek == row.position
     )));
     assert!(effects.iter().any(|effect| matches!(
         effect,

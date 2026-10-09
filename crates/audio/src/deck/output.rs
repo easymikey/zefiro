@@ -81,7 +81,6 @@ impl Output {
     pub(crate) fn swap_current(&mut self, speed: Speed) {
         self.outgoing_fader = None;
         self.current_control = None;
-        self.current_playback = Playback::Paused;
         self.mixer_control
             .order(MixerOrder::Drop(SinkRole::Outgoing));
         self.mixer_control
@@ -92,7 +91,6 @@ impl Output {
     pub(crate) fn retire_current(&mut self, speed: Speed) {
         self.outgoing_fader =
             self.current_control.take().map(|control| Fader { control });
-        self.current_playback = Playback::Paused;
         self.mixer_control.order(MixerOrder::Retire);
         self.mixer_control.order(MixerOrder::Speed(speed));
     }

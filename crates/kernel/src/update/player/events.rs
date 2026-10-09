@@ -259,9 +259,9 @@ pub(crate) fn next_decision(
     Some((target - current).div_f32(playhead.speed.get()))
 }
 
-pub(crate) fn seek_effect(target: Duration) -> Cmd {
+pub(crate) fn seek_effect(target: Duration, revision: Revision) -> Cmd {
     Cmd::from_iter([
-        Effect::Audio(AudioCmd::Seek(target)),
+        Effect::Audio(AudioCmd::Seek { target, revision }),
         Effect::Macos(MacosCmd::SetPosition(target)),
     ])
 }

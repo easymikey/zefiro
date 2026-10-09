@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use kernel::{
     cmd::{AudioCmd, Cmd, Effect, MacosCmd, Playback},
     domain::{
@@ -194,4 +196,24 @@ fn playing_while_the_output_is_lost_with_no_track_is_refused(
         model.transport.output_status,
         OutputStatus::Lost(OutputError::DeviceGone)
     );
+}
+
+#[test]
+fn a_report_after_a_seek_while_lost_and_a_load_sets_the_output_ready() {
+    let mut model = lost_while_playing(3);
+    for message in [
+        Message::Playback(PlaybackRequest::SeekTo(Duration::from_secs(5))),
+        Message::Playback(PlaybackRequest::Play),
+        Message::Audio(AudioEvent::Loaded(None)),
+    ] {
+        assert!(update(&mut model, message, Moment::default()).is_ok());
+    }
+
+    let report_message = Message::Audio(AudioEvent::PositionReported {
+        position: Duration::from_secs(1),
+        revision: Revision::default().next(),
+    });
+
+    assert!(update(&mut model, report_message, Moment::default()).is_ok());
+    assert_eq!(model.transport.output_status, OutputStatus::Ready);
 }

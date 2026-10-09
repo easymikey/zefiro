@@ -5,10 +5,11 @@ use kernel::{
         keymap::Action,
         transport::{SEEK_LARGE, SEEK_MEDIUM, SEEK_SMALL},
     },
+    message::{Message, OverlayRequest, TextRequest},
     update::keymap::chord::KeyBinding,
 };
 
-use crate::key_hints::chords_for_action;
+use crate::key_hints::{chords, chords_for_action};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HelpRow {
@@ -119,6 +120,11 @@ const GENERAL_ACTIONS: &[(Action, HelpLabel)] = &[
     (Action::Quit, HelpLabel::Text("Quit")),
 ];
 
+const TEXT_EDITS: &[(TextRequest, &str)] = &[
+    (TextRequest::Clear, "Clear the field"),
+    (TextRequest::DeleteWord, "Delete a word"),
+];
+
 const HELP_GROUPS: [HelpGroupEntry; 4] = [
     HelpGroupEntry {
         title: "Playback",
@@ -181,6 +187,7 @@ pub(crate) struct HelpGroups {
     pub(crate) navigation_group: Arc<HelpGroup>,
     pub(crate) playlist_group: Arc<HelpGroup>,
     pub(crate) general_group: Arc<HelpGroup>,
+    pub(crate) text_group: Arc<HelpGroup>,
 }
 
 impl HelpGroups {
@@ -207,6 +214,21 @@ impl HelpGroups {
             navigation_group: make(navigation),
             playlist_group: make(playlist),
             general_group: make(general),
+            text_group: Arc::new(HelpGroup {
+                title: "Text editing",
+                help_rows: TEXT_EDITS
+                    .iter()
+                    .map(|&(request, label)| HelpRow {
+                        chord: chords(bindings, |binding| {
+                            binding.message
+                                == Message::Overlay(OverlayRequest::Text(request))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" / "),
+                        label: Cow::Borrowed(label),
+                    })
+                    .collect(),
+            }),
         }
     }
 }

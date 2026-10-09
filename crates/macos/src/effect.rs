@@ -11,4 +11,5 @@ pub enum MacosEffect {
     ShowNowPlaying,
     ClearArtwork,
     ShowArtwork(Vec<u8>),
+    Privacy,
 }

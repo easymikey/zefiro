@@ -210,6 +210,10 @@ impl EnvelopeControl {
         self.envelope_readout.pace(playback);
     }
 
+    pub(crate) fn publish(&self, position: Duration) {
+        self.envelope_readout.publish(position);
+    }
+
     pub(crate) fn revision(&self) -> Revision {
         self.revision
     }

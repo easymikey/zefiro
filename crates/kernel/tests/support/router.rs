@@ -26,7 +26,6 @@ use kernel::{
         OverlayRequest,
         PlaybackRequest,
         QueueRequest,
-        SearchEdit,
         SearchRequest,
         TextRequest,
         Timer,
@@ -67,13 +66,13 @@ pub(crate) fn typed(text: &str, into: fn(char) -> Message) -> Vec<Message> {
 
 pub(crate) fn search_char(character: char) -> Message {
     Message::Overlay(OverlayRequest::Search(SearchRequest::Edit(
-        SearchEdit::Char(character),
+        TextRequest::Char(character),
     )))
 }
 
 pub(crate) fn search_backspace() -> Message {
     Message::Overlay(OverlayRequest::Search(SearchRequest::Edit(
-        SearchEdit::Backspace,
+        TextRequest::Backspace,
     )))
 }
 
@@ -176,7 +175,10 @@ pub(crate) fn queued(mut model: Model, rows: &[usize]) -> Model {
 }
 
 pub(crate) fn near_the_end() -> Message {
-    Message::Audio(AudioEvent::PositionReported(Duration::from_secs(95)))
+    Message::Audio(AudioEvent::PositionReported {
+        position: Duration::from_secs(95),
+        revision: Revision::default(),
+    })
 }
 
 pub(crate) fn handed_off() -> Message {

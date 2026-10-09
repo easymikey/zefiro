@@ -13,6 +13,9 @@ const SECRET_DOT: &str = "•";
 const TITLE: &str = "Add server";
 const HINT: &str = "Enter next · Esc cancel";
 const MIN_WIDTH: Cells = Cells(40);
+const LINK_HINT: &str = "http(s)://host[:port], like https://music.example.com";
+const USER_HINT: &str = "The user name on that server";
+const PASSWORD_HINT: &str = "Kept in the macOS Keychain once the server accepts it";
 
 fn answer<'a>(
     label: &'static str,
@@ -40,6 +43,7 @@ pub(crate) fn prompt<'a>(
     match server_prompt {
         ServerPrompt::Link { text_entry, .. } => {
             widget(Cow::Borrowed(text_entry.input.as_str()))
+                .field_hint(LINK_HINT)
                 .error(text_entry.error.as_ref())
         }
         ServerPrompt::User {
@@ -48,6 +52,7 @@ pub(crate) fn prompt<'a>(
             ..
         } => widget(Cow::Borrowed(text_entry.input.as_str()))
             .answers(vec![answer("Link  ", endpoint.as_str(), active_theme)])
+            .field_hint(USER_HINT)
             .error(text_entry.error.as_ref()),
         ServerPrompt::Password {
             endpoint,
@@ -61,6 +66,7 @@ pub(crate) fn prompt<'a>(
             answer("Link  ", endpoint.as_str(), active_theme),
             answer("User  ", user_name.as_str(), active_theme),
         ])
+        .field_hint(PASSWORD_HINT)
         .error(text_entry.error.as_ref()),
     }
 }
@@ -73,7 +79,7 @@ mod tests {
     };
 
     use crate::{
-        overlay::add_server::prompt,
+        overlay::add_server::{LINK_HINT, prompt},
         primitive::canvas::Canvas,
         test_support::{noir, rendered},
         theme::{active_theme::ActiveTheme, rgb::ColorDepth},
@@ -91,12 +97,16 @@ mod tests {
     }
 
     fn frame(server_prompt: &ServerPrompt) -> String {
+        frame_at(100, server_prompt)
+    }
+
+    fn frame_at(width: u16, server_prompt: &ServerPrompt) -> String {
         let theme = noir();
         let widget = prompt(
             server_prompt,
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
-        rendered(100, 30, |frame| {
+        rendered(width, 30, |frame| {
             let area = frame.area();
             widget.paint(
                 widget.areas(area, &[]),
@@ -123,6 +133,27 @@ mod tests {
             origin_server_name: None,
             text_entry: entry("music.example.com", Some(EndpointError::Scheme)),
         }));
+    }
+
+    #[test]
+    fn add_server_link_step_shows_the_live_verdict_under_the_hint() {
+        insta::assert_snapshot!(frame(&ServerPrompt::Link {
+            origin_server_name: None,
+            text_entry: entry("https://", Some(EndpointError::Host)),
+        }));
+    }
+
+    #[test]
+    fn add_server_link_step_opens_with_its_whole_hint_at_80_columns() {
+        let screen = frame_at(
+            80,
+            &ServerPrompt::Link {
+                origin_server_name: None,
+                text_entry: entry("", Some(EndpointError::Empty)),
+            },
+        );
+        assert!(screen.contains(LINK_HINT));
+        insta::assert_snapshot!(screen);
     }
 
     #[test]

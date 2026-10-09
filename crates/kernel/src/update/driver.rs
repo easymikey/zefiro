@@ -134,7 +134,11 @@ pub(crate) fn resume_driver(
         revisions,
     } = parts;
     let Some((track, playback)) = (match driver_name {
-        DriverName::Audio => resumed(player),
+        DriverName::Audio => {
+            revisions.seek = Revision::default();
+            revisions.reported = Revision::default();
+            resumed(player)
+        }
         DriverName::Library
         | DriverName::Config
         | DriverName::Macos
@@ -169,7 +173,10 @@ pub(crate) fn resume_driver(
     Cmd::from_iter(
         [
             AudioCmd::Load(load),
-            AudioCmd::Seek(player.position_at(now)),
+            AudioCmd::Seek {
+                target: player.position_at(now),
+                revision: revisions.seek,
+            },
         ]
         .into_iter()
         .chain(audio_cmds)
@@ -444,7 +451,10 @@ mod tests {
                 TrackLoad::for_track(&track(), Revisions::default().issue_effect())
                     .unwrap(),
             )),
-            Effect::Audio(AudioCmd::Seek(position)),
+            Effect::Audio(AudioCmd::Seek {
+                target: position,
+                revision: Revision::default(),
+            }),
             Effect::Audio(AudioCmd::SetPlayback(playback)),
             Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
         ])
@@ -525,7 +535,7 @@ mod tests {
         revisions: Revisions::default(),
         cmd: Cmd::from_iter([
             Effect::Audio(AudioCmd::Load(served("tr-1"))),
-            Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+            Effect::Audio(AudioCmd::Seek { target: Duration::from_secs(5), revision: Revision::default() }),
             Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
             Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
             Effect::Audio(AudioCmd::Preload(served("tr-2"))),
@@ -568,7 +578,7 @@ mod tests {
         },
         cmd: Cmd::from_iter([
             Effect::Audio(AudioCmd::Load(served("tr-1"))),
-            Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+            Effect::Audio(AudioCmd::Seek { target: Duration::from_secs(5), revision: Revision::default() }),
             Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
             Effect::Audio(AudioCmd::SetSpeed(Speed::default())),
             Effect::Audio(AudioCmd::Preload(
@@ -655,7 +665,10 @@ mod tests {
                 Effect::Audio(AudioCmd::Load(
                     TrackLoad::for_track(&track(), revision).unwrap()
                 )),
-                Effect::Audio(AudioCmd::Seek(Duration::from_secs(5))),
+                Effect::Audio(AudioCmd::Seek {
+                    target: Duration::from_secs(5),
+                    revision: Revision::default()
+                }),
                 Effect::Audio(AudioCmd::SetPlayback(Playback::Playing)),
                 Effect::Audio(AudioCmd::SetSpeed(speed)),
                 Effect::Audio(AudioCmd::Preload(
