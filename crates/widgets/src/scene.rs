@@ -24,7 +24,7 @@ use kernel::{
         theme::{ThemeChoice, Themes},
         time::Moment,
         toast::Toast,
-        track::{Track, TrackSource},
+        track::Track,
         transport::Transport,
     },
     update::keymap::chord::KeyBinding,
@@ -70,7 +70,7 @@ pub struct Scene<'a> {
     pub playlist: &'a Playlist,
     pub playlist_source: &'a PlaylistSource,
     pub rows: PlaylistRows<'a>,
-    pub queue: &'a [TrackSource],
+    pub queue: &'a [Arc<Track>],
     pub favorites: &'a Favorites,
     pub themes: &'a Themes,
     pub settings: &'a Settings,
@@ -281,6 +281,7 @@ impl<'a> CatalogView<'a> {
                     .servers
                     .iter()
                     .find(|server| server.account.server_name == *server_name)?,
+                queue: scene.queue,
                 favorites: scene.favorites,
                 playing_track_source: scene
                     .player
@@ -441,6 +442,10 @@ mod tests {
     }
 
     fn server_track(title: &str) -> CatalogRow {
+        CatalogRow::Track(tagged_server_track(title))
+    }
+
+    fn tagged_server_track(title: &str) -> Arc<Track> {
         let server_name = ServerName::new("home");
         let server_track_id = ServerTrackId::new(title);
         let source = kernel::domain::track::TrackSource::Server {
@@ -452,7 +457,7 @@ mod tests {
             ..kernel::domain::track::Tags::default()
         };
         let duration = std::time::Duration::from_secs(545);
-        CatalogRow::Track(Arc::new(Track::tagged(source, duration, tags)))
+        Arc::new(Track::tagged(source, duration, tags))
     }
 
     fn albums(paging: Paging) -> Catalog {
@@ -473,6 +478,13 @@ mod tests {
         catalog: Catalog,
         width: u16,
     ) -> String {
+        frame_of(server_model(server_status, catalog), width)
+    }
+
+    fn server_model(
+        server_status: ServerStatus,
+        catalog: Catalog,
+    ) -> kernel::domain::model::Model {
         let mut model = model_with_tracks(0);
         let endpoint = Endpoint::parse("https://music.example.com").unwrap();
         let user_name = UserName::new("mikey").unwrap();
@@ -488,6 +500,10 @@ mod tests {
         }];
         model.catalogs = vec![catalog];
         model.catalog_name = kernel::domain::catalog::CatalogName::Server(server_name);
+        model
+    }
+
+    fn frame_of(model: kernel::domain::model::Model, width: u16) -> String {
         let sources = SceneSources::new(model);
         let scene = sources.scene();
         let widget =
@@ -635,6 +651,26 @@ mod tests {
         let text = server_frame(online(), catalog, 80);
         assert!(text.contains("newest › Kind of Blue"), "got {text:?}");
         assert!(text.contains("So What"), "got {text:?}");
+        insta::assert_snapshot!(text);
+    }
+
+    #[test]
+    fn a_queued_server_row_wears_its_queue_number() {
+        let mut catalog = albums(Paging::Complete);
+        catalog.album_level = Some(BrowseLevel {
+            listing: Listing::Album(AlbumId::new("a-1")),
+            catalog_rows: vec![server_track("So What"), server_track("Blue in Green")],
+            cursor: Cursor::at(2, 0),
+            paging: Paging::Complete,
+            server_query: None,
+        });
+        let queue = vec![
+            tagged_server_track("Blue in Green"),
+            tagged_server_track("So What"),
+        ];
+        let mut model = server_model(online(), catalog);
+        model.queue = queue;
+        let text = frame_of(model, 80);
         insta::assert_snapshot!(text);
     }
 }

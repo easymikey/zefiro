@@ -94,15 +94,15 @@ pub(crate) fn row_window(fit: &WindowFit) -> RowWindow {
     }
 }
 
-fn queue_numbers<'a>(
-    queue: &[TrackSource],
+pub(crate) fn queue_numbers<'a>(
+    queue: &[Arc<Track>],
     tracks: impl IntoIterator<Item = &'a Arc<Track>>,
 ) -> HashMap<&'a TrackSource, QueueNumber> {
     let track_sources: HashSet<&TrackSource> =
         tracks.into_iter().map(|track| track.source()).collect();
     let mut positions = HashMap::new();
     for (index, queued) in queue.iter().enumerate() {
-        if let Some(&source) = track_sources.get(queued) {
+        if let Some(&source) = track_sources.get(queued.source()) {
             positions
                 .entry(source)
                 .or_insert_with(|| QueueNumber::new(index + 1));
@@ -263,7 +263,8 @@ mod tests {
     fn a_queued_row_takes_the_first_position_the_whole_queue_scan_would_find() {
         let playlist = library(4);
         let source = |index: usize| playlist.tracks[index].source().clone();
-        let queue = [source(3), source(1), source(3), source(0)];
+        let queued = |index: usize| Arc::clone(&playlist.tracks[index]);
+        let queue = [queued(3), queued(1), queued(3), queued(0)];
         let visible_tracks = playlist.tracks.get(1..3).unwrap_or(&[]);
 
         let positions = queue_numbers(&queue, visible_tracks);
@@ -273,7 +274,7 @@ mod tests {
             .map(|track| {
                 queue
                     .iter()
-                    .position(|queued| queued == track.source())
+                    .position(|entry| entry.source() == track.source())
                     .map(|index| index + 1)
             })
             .collect();

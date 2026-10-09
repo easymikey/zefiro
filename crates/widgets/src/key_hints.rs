@@ -25,7 +25,7 @@ use crate::{
 const KEY_HINTS: &[(Action, &str, Scope)] = &[
     (Action::PlayPause, "Play", Scope::Everywhere),
     (Action::PlaySelected, "Open", Scope::Everywhere),
-    (Action::Enqueue, "Queue", Scope::Local),
+    (Action::Enqueue, "Queue", Scope::Tracks),
     (Action::NextCatalog, "Sources", Scope::Servers),
     (Action::CycleView, "View", Scope::ServerTab),
     (Action::CycleSort, "Order", Scope::Albums),
@@ -75,7 +75,7 @@ pub(crate) fn chords(
 #[derive(Debug, Clone, Copy)]
 enum Scope {
     Everywhere,
-    Local,
+    Tracks,
     Servers,
     ServerTab,
     Albums,
@@ -184,9 +184,14 @@ impl KeyHintsView<'_> {
     fn shows(self, scope: Scope) -> bool {
         match scope {
             Scope::Everywhere => true,
-            Scope::Local => self.listing.is_none(),
+            Scope::Tracks => {
+                !matches!(self.listing, Some(Listing::Albums(_) | Listing::Playlists))
+            }
             Scope::Servers => !self.servers.is_empty(),
-            Scope::ServerTab => self.listing.is_some(),
+            Scope::ServerTab => matches!(
+                self.listing,
+                Some(Listing::Songs | Listing::Albums(_) | Listing::Playlists)
+            ),
             Scope::Albums => matches!(self.listing, Some(Listing::Albums(_))),
             Scope::Opened => {
                 matches!(self.listing, Some(Listing::Album(_) | Listing::Playlist(_)))

@@ -1,4 +1,4 @@
-use std::{iter::once, time::Duration};
+use std::{iter::once, sync::Arc, time::Duration};
 
 use kernel::domain::{
     catalog::{Catalog, Paging},
@@ -6,7 +6,7 @@ use kernel::domain::{
     index::ViewIndex,
     overlay::ServerQuery,
     server::{AlbumOrder, Listing, Server, ServerAlbum, ServerPlaylist, ServerStatus},
-    track::CatalogRow,
+    track::{CatalogRow, Track},
 };
 use ratatui::{
     buffer::Buffer,
@@ -20,7 +20,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::{
     playlist::{
         chrome::{pane_block, title_budget},
-        row::{PlaylistAreas, WindowFit, cursor_band, row_window},
+        row::{PlaylistAreas, WindowFit, cursor_band, queue_numbers, row_window},
         view::CatalogView,
     },
     primitive::{
@@ -148,6 +148,15 @@ impl<'a> CatalogWidget<'a> {
         );
     }
 
+    fn playing_row(&self, visible: &[CatalogRow]) -> Option<usize> {
+        visible.iter().position(|catalog_row| match catalog_row {
+            CatalogRow::Track(track) => {
+                self.catalog_view.playing(track) == Playing::Yes
+            }
+            CatalogRow::Album(_) | CatalogRow::Playlist(_) => false,
+        })
+    }
+
     fn paint_rows(&self, areas: &PlaylistAreas, buffer: &mut Buffer) {
         let colors = self.active_theme.colors();
         let level = self.catalog_view.level();
@@ -155,6 +164,7 @@ impl<'a> CatalogWidget<'a> {
         let rows = areas.scroll_areas.rows;
         let row_width = Cells(rows.width);
         let visible = level.rows().get(window.start..window.end).unwrap_or(&[]);
+        let queued_numbers = queue_numbers(self.catalog_view.queue, tracks_of(visible));
         let lines: Vec<Line<'_>> = visible
             .iter()
             .zip(window.start..)
@@ -181,7 +191,7 @@ impl<'a> CatalogWidget<'a> {
                                 .favorites
                                 .favorite(track.source()),
                             playing: self.catalog_view.playing(track),
-                            queued_number: None,
+                            queued_number: queued_numbers.get(track.source()).copied(),
                             row_width,
                         },
                         &colors,
@@ -189,12 +199,7 @@ impl<'a> CatalogWidget<'a> {
                 }
             })
             .collect();
-        let playing_row = visible.iter().position(|catalog_row| match catalog_row {
-            CatalogRow::Track(track) => {
-                self.catalog_view.playing(track) == Playing::Yes
-            }
-            CatalogRow::Album(_) | CatalogRow::Playlist(_) => false,
-        });
+        let playing_row = self.playing_row(visible);
         StatefulWidget::render(
             List::new(lines)
                 .highlight_spacing(HighlightSpacing::Never)
@@ -207,6 +212,13 @@ impl<'a> CatalogWidget<'a> {
             buffer.set_style(band, Style::default().bg(colors.selection_background));
         }
     }
+}
+
+fn tracks_of(rows: &[CatalogRow]) -> impl Iterator<Item = &Arc<Track>> {
+    rows.iter().filter_map(|catalog_row| match catalog_row {
+        CatalogRow::Track(track) => Some(track),
+        CatalogRow::Album(_) | CatalogRow::Playlist(_) => None,
+    })
 }
 
 fn title_line<'a>(
@@ -536,6 +548,7 @@ mod tests {
                 server: &server,
                 favorites: &favorites,
                 playing_track_source: None,
+                queue: &[],
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
@@ -575,6 +588,7 @@ mod tests {
                 server: &server,
                 favorites: &favorites,
                 playing_track_source: Some(playing.source()),
+                queue: &[],
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
             Rect::new(0, 0, 60, 10),
@@ -599,6 +613,7 @@ mod tests {
                     server: &server,
                     favorites: &favorites,
                     playing_track_source: None,
+                    queue: &[],
                 },
                 ActiveTheme::new(&theme, ColorDepth::TrueColor),
                 pane,
@@ -628,6 +643,7 @@ mod tests {
                 server: &server,
                 favorites: &favorites,
                 playing_track_source: None,
+                queue: &[],
             },
             &ActiveTheme::new(&theme, ColorDepth::TrueColor),
         );
@@ -650,6 +666,7 @@ mod tests {
             server: &server,
             favorites: &favorites,
             playing_track_source: None,
+            queue: &[],
         };
         let active_theme = ActiveTheme::new(&theme, ColorDepth::TrueColor);
         let title = title_line(Rect::new(0, 0, 80, 10), catalog_view, &active_theme);
@@ -703,6 +720,7 @@ mod tests {
                 server: &server,
                 favorites: &favorites,
                 playing_track_source: None,
+                queue: &[],
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
             pane,
@@ -760,6 +778,7 @@ mod tests {
                 server: &server,
                 favorites: &favorites,
                 playing_track_source: None,
+                queue: &[],
             },
             ActiveTheme::new(&theme, ColorDepth::TrueColor),
             pane,

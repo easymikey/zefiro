@@ -201,7 +201,7 @@ mod tests {
 
     fn status<'a>(
         playlist: &'a Playlist,
-        queue: &[kernel::domain::track::TrackSource],
+        queue: &[Arc<Track>],
         theme: &'a Theme,
     ) -> StatusLineView<'a> {
         StatusLineView {
@@ -238,12 +238,9 @@ mod tests {
         }
     }
 
-    fn queued(
-        playlist: &Playlist,
-        rows: &[usize],
-    ) -> Vec<kernel::domain::track::TrackSource> {
+    fn queued(playlist: &Playlist, rows: &[usize]) -> Vec<Arc<Track>> {
         rows.iter()
-            .map(|&row| playlist.tracks[row].source().clone())
+            .map(|&row| Arc::clone(&playlist.tracks[row]))
             .collect()
     }
 

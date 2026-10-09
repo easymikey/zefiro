@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kernel::domain::{
     catalog::{BrowseLevel, Catalog},
     favorites::Favorites,
@@ -18,7 +20,7 @@ pub enum LibraryStatus {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PlaylistView<'a> {
     pub(crate) rows: PlaylistRows<'a>,
-    pub(crate) queue: &'a [TrackSource],
+    pub(crate) queue: &'a [Arc<Track>],
     pub(crate) favorites: &'a Favorites,
     pub(crate) selected: ViewIndex,
     pub(crate) playing_index: Option<ViewIndex>,
@@ -31,6 +33,7 @@ pub(crate) struct PlaylistView<'a> {
 pub(crate) struct CatalogView<'a> {
     pub(crate) catalog: &'a Catalog,
     pub(crate) server: &'a Server,
+    pub(crate) queue: &'a [Arc<Track>],
     pub(crate) favorites: &'a Favorites,
     pub(crate) playing_track_source: Option<&'a TrackSource>,
 }

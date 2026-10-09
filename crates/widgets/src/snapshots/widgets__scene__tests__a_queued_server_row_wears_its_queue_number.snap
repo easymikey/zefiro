@@ -1,0 +1,13 @@
+---
+source: crates/widgets/src/scene.rs
+assertion_line: 671
+expression: text
+---
+"┏ home · Albums: newest › Kind of Blue ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
+"┃    So What [q2]                                                              ┃"
+"┃    Blue in Green [q1]                                                        ┃"
+"┃                                                                              ┃"
+"┃                                                                              ┃"
+"┃                                                                              ┃"
+"┃                                                                              ┃"
+"┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"

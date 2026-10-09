@@ -1,5 +1,6 @@
 ---
 source: crates/widgets/tests/unit/screen_snapshots.rs
+assertion_line: 170
 expression: hints
 ---
-"           Space  Play  Enter  Open  Tab  Sources  v  View  /  Find  ?/Ctrl+K  Help  q  Quit                            "
+"           Space  Play  Enter  Open  a  Queue  Tab  Sources  v  View  /  Find  ?/Ctrl+K  Help  q  Quit                  "
